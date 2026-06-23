@@ -1,0 +1,69 @@
+services:
+  # ── FastAPI Application ───────────────────────────────────────────────────
+  - type: web
+    name: saas-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+
+    envVars:
+      - key: ENV
+        value: production
+      - key: DEBUG
+        value: false
+      - key: PORT
+        value: 8000
+
+      # ── Secrets — set in Render dashboard ──────────────────────────────
+      - key: SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+
+      # ── Redis — from Render Redis service ──────────────────────────────
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: saas-cache
+          property: connectionString
+
+      # ── App URLs ────────────────────────────────────────────────────────
+      - key: APP_BASE_URL
+        fromService:
+          type: web
+          name: saas-backend
+          property: host
+      - key: FRONTEND_URL
+        sync: false   # set manually to your frontend URL
+
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 80
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  - type: redis
+    name: saas-cache
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
