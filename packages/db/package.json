@@ -8,10 +8,16 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-pgvector": "0.0.9",
+    "@synapse/core": "workspace:*",
+    "ai": "7.0.116",
     "drizzle-orm": "0.45.3",
     "postgres": "3.4.9"
   },
   "devDependencies": {
     "drizzle-kit": "0.31.11"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate"
   }
 }

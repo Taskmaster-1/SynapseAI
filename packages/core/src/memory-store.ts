@@ -94,12 +94,13 @@ export class MemoryStore implements RunStore {
   }
 
   async transitionToolCall(
+    runId: string,
     id: string,
     from: ToolCallRecord["status"][],
-    patch: Parameters<RunStore["transitionToolCall"]>[2],
+    patch: Parameters<RunStore["transitionToolCall"]>[3],
   ) {
     const call = this.toolCalls.get(id);
-    if (!call || !from.includes(call.status)) return false;
+    if (!call || call.runId !== runId || !from.includes(call.status)) return false;
     call.status = patch.status;
     if (patch.output) call.output = patch.output;
     if (patch.fullOutput) call.fullOutput = patch.fullOutput;

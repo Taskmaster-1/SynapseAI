@@ -184,7 +184,9 @@ async function settleToolCalls(
   // anything with side effects is marked unknown and reported, never retried.
   for (const call of calls.filter((c) => c.status === "executing")) {
     if (call.effect === "read") {
-      await opts.store.transitionToolCall(call.id, ["executing"], { status: "approved" });
+      await opts.store.transitionToolCall(call.runId, call.id, ["executing"], {
+        status: "approved",
+      });
       call.status = "approved";
     } else {
       await resolve(opts, call, ["executing"], "unknown", {
@@ -218,7 +220,11 @@ async function execute(
   limits: RuntimeLimits,
   signal: AbortSignal,
 ): Promise<void> {
-  if (!(await opts.store.transitionToolCall(call.id, ["approved"], { status: "executing" })))
+  if (
+    !(await opts.store.transitionToolCall(call.runId, call.id, ["approved"], {
+      status: "executing",
+    }))
+  )
     return;
   await opts.events.emit(run.id, { type: "tool.status", toolCallId: call.id, status: "executing" });
 
@@ -263,7 +269,7 @@ async function resolve(
   output: ToolOutput,
   fullOutput?: ToolOutput,
 ): Promise<void> {
-  const ok = await opts.store.transitionToolCall(call.id, from, {
+  const ok = await opts.store.transitionToolCall(call.runId, call.id, from, {
     status,
     output,
     ...(fullOutput ? { fullOutput } : {}),

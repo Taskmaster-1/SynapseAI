@@ -48,6 +48,7 @@ export interface RunStore {
   listToolCalls(runId: string): Promise<ToolCallRecord[]>;
   /** Compare-and-set on status. Returns false when the call was not in one of `from`. */
   transitionToolCall(
+    runId: string,
     id: string,
     from: ToolCallStatus[],
     patch: { status: ToolCallStatus; output?: ToolOutput; fullOutput?: ToolOutput },
