@@ -1,0 +1,111 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { parseModelRef } from "@synapse/core";
+import type { WebSearchConfig } from "@synapse/tools";
+import { z } from "zod";
+
+const csv = z.string().transform((s) =>
+  s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean),
+);
+
+const Env = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  PORT: z.coerce.number().default(8787),
+  /** postgres://… or pglite://<dir> (embedded, single process). */
+  DATABASE_URL: z.string().default("pglite://.data/pglite"),
+  /** Encrypts tokens and keys at rest and signs sessions. ≥ 32 chars. */
+  SYNAPSE_SECRET: z.string().min(32).optional(),
+  /** Public URL users open (the web app; it proxies /api to this server). */
+  PUBLIC_URL: z.string().url().default("http://localhost:3000"),
+  ROLE: z.enum(["all", "api", "worker"]).default("all"),
+  WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+  ALLOW_SIGNUP: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
+  SYNAPSE_MODELS: csv.default(["anthropic:claude-opus-5-5", "anthropic:claude-sonnet-5-5"]),
+  SYNAPSE_SUMMARY_MODEL: z.string().default("anthropic:claude-haiku-5-5"),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
+  OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
+  OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
+
+  WEB_SEARCH_PROVIDER: z.enum(["tavily", "brave", "exa"]).optional(),
+  WEB_SEARCH_API_KEY: z.string().optional(),
+  /** "openai:text-embedding-3-small" or "google:gemini-embedding-001"; unset = keyword search only. */
+  EMBEDDING_MODEL: z.string().optional(),
+
+  RUN_MAX_STEPS: z.coerce.number().int().default(25),
+  RUN_MAX_COST_USD: z.coerce.number().default(2),
+  DAY_MAX_COST_USD: z.coerce.number().default(20),
+
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+});
+
+export type Config = ReturnType<typeof loadConfig>;
+
+export function loadConfig(env: Record<string, string | undefined> = process.env) {
+  const parsed = Env.parse(env);
+  for (const ref of [...parsed.SYNAPSE_MODELS, parsed.SYNAPSE_SUMMARY_MODEL]) parseModelRef(ref);
+
+  const secret = parsed.SYNAPSE_SECRET ?? devSecret(parsed);
+
+  const webSearch: WebSearchConfig | null =
+    parsed.WEB_SEARCH_PROVIDER && parsed.WEB_SEARCH_API_KEY
+      ? { provider: parsed.WEB_SEARCH_PROVIDER, apiKey: parsed.WEB_SEARCH_API_KEY }
+      : null;
+
+  const embeddingProvider = parsed.EMBEDDING_MODEL?.split(":")[0];
+  const embeddingKey =
+    embeddingProvider === "openai"
+      ? parsed.OPENAI_API_KEY
+      : embeddingProvider === "google"
+        ? parsed.GOOGLE_GENERATIVE_AI_API_KEY
+        : undefined;
+
+  return {
+    ...parsed,
+    secret,
+    webSearch,
+    embedding:
+      parsed.EMBEDDING_MODEL && embeddingKey
+        ? { model: parsed.EMBEDDING_MODEL, apiKey: embeddingKey }
+        : null,
+    serverKeys: {
+      ...(parsed.ANTHROPIC_API_KEY ? { anthropic: parsed.ANTHROPIC_API_KEY } : {}),
+      ...(parsed.OPENAI_API_KEY ? { openai: parsed.OPENAI_API_KEY } : {}),
+      ...(parsed.GOOGLE_GENERATIVE_AI_API_KEY
+        ? { google: parsed.GOOGLE_GENERATIVE_AI_API_KEY }
+        : {}),
+      ...(parsed.OPENAI_COMPATIBLE_BASE_URL
+        ? {
+            openaiCompatible: {
+              baseURL: parsed.OPENAI_COMPATIBLE_BASE_URL,
+              ...(parsed.OPENAI_COMPATIBLE_API_KEY
+                ? { apiKey: parsed.OPENAI_COMPATIBLE_API_KEY }
+                : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+/** In development, persist a random secret next to the embedded database. */
+function devSecret(parsed: z.infer<typeof Env>): string {
+  if (parsed.NODE_ENV === "production") throw new Error("SYNAPSE_SECRET is required in production");
+  const path = ".data/secret";
+  if (existsSync(path)) return readFileSync(path, "utf8").trim();
+  mkdirSync(dirname(path), { recursive: true });
+  const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  writeFileSync(path, secret, { mode: 0o600 });
+  return secret;
+}

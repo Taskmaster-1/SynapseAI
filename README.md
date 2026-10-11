@@ -1,418 +1,123 @@
-﻿# SynapseAI
+# SynapseAI
 
-> **The AI agent that lives inside your workflow.**  
-> SynapseAI connects to your tools — Gmail, Slack, GitHub, Notion, and more — and takes real action on your behalf, with your approval.
+**An open-source agent that does real work in your tools — and can't be talked into doing the wrong thing.**
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python)](https://python.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)](https://typescriptlang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+SynapseAI connects to the services you already use (GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
 
----
+> v2 is a ground-up rewrite. The v1 FastAPI app is in git history (`main` before the v2 merge).
 
-## Table of Contents
+## Why another agent?
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
-- [API Reference](#api-reference)
-- [AI Agent Design](#ai-agent-design)
-- [Integrations](#integrations)
-- [Deployment](#deployment)
-- [Contributing](#contributing)
+Agent products that act in your tools share three problems: approvals that live in the prompt (so a malicious email can talk the agent out of them), runs that vanish when a server restarts, and bills you can't predict. SynapseAI is built around fixing those:
 
----
+| | |
+|---|---|
+| **Policy in code** | Every tool declares an effect — `read`, `write`, `send`, `destructive`. A rule engine decides allow / ask / block per tool and per argument (e.g. *"email to @mycompany.com: allow; anyone else: ask"*). The model never sees or edits the policy. |
+| **Taint tracking (Rule of Two)** | When a run reads untrusted content — an email body, a web page, an MCP result — it is marked tainted, and from then on no write or send is auto-approved, whatever the rules say. Prompt injection can still mislead the model, but it can't act without you. |
+| **Approvals you can edit** | Approval cards show the full payload. Edit the email before it goes, deny with a reason the agent sees, or approve from the inbox later — paused runs live in Postgres, not in a process. |
+| **Durable runs** | Runs are leased to workers and checkpointed at every step. Restart a server mid-run and another worker picks it up; side-effecting calls interrupted mid-flight are reported as *unknown*, never silently retried. |
+| **Steer while it works** | Send a message while the agent is busy and it reads it at the next step. Send one while it's waiting for approval and the pending action is dropped in favour of your new instruction. |
+| **Predictable cost** | Per-run and per-day budgets enforced before every model call, a fallback chain across providers, prompt-cache-friendly history, and cost on every run. |
+| **Yours** | MIT, self-hosted, one Postgres. Any model: Anthropic, OpenAI, Google, or anything OpenAI-compatible (Ollama, vLLM). Users can bring their own keys. |
 
-## Overview
+## Features
 
-SynapseAI is a **full-stack, production-ready AI Agent SaaS platform**. Users connect their third-party tools via OAuth and interact with a conversational AI agent that can:
+- Chat with live streaming (reasoning, tool calls, results) that resumes after reconnects
+- MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
+- Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
+- Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
+- Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
+- Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
+- Activity log: every run, tool call, decision, who decided, tokens and cost
+- Context management: tool outputs capped at ingest, old outputs cleared, then handover summaries
+- Eval harness with prompt-injection scenarios and pass^k reliability scoring
 
-- **Read and write** emails, calendar events, Slack messages, GitHub issues, and more
-- **Search the web** in real time via Tavily
-- **Search a personal knowledge base** (RAG over uploaded documents)
-- **Pause and ask for confirmation** before taking any sensitive or destructive action
+## Quick start
 
-The system is built around a **multi-step agentic tool loop** powered by Google Gemini (primary) with Groq LLaMA 3.3 70B as an automatic fallback.
+### Local (no Docker, embedded Postgres)
 
----
+Requires [Bun](https://bun.sh) 1.3+.
+
+```sh
+git clone https://github.com/Taskmaster-1/SynapseAI && cd SynapseAI
+bun install
+cp .env.example .env          # add ANTHROPIC_API_KEY (or another provider)
+bun run dev                   # API on :8787, web on :3000
+```
+
+Open http://localhost:3000 and create an account. With no `DATABASE_URL`, data lives in `.data/` using [PGlite](https://pglite.dev) (Postgres in WebAssembly) — fine for trying it out, single process only.
+
+### Docker Compose (Postgres + pgvector)
+
+```sh
+cp .env.example .env          # set SYNAPSE_SECRET (openssl rand -base64 32) and a model key
+docker compose up -d
+```
+
+### Scaling out
+
+The server is stateless apart from Postgres. Run the API and workers separately (`ROLE=api`, `ROLE=worker`) and as many replicas of each as you like; workers coordinate with row leases (`FOR UPDATE SKIP LOCKED`) and stream events to API instances through `LISTEN/NOTIFY`.
 
 ## Architecture
 
 ```
-+--------------------------------------------------+
-|                    Frontend                      |
-|            Next.js 14 (App Router)               |
-|   Landing  |  Auth  |  Dashboard  |  Agent Chat  |
-+------------------------+-------------------------+
-                         | HTTPS / WebSocket
-+------------------------v-------------------------+
-|                    Backend                       |
-|            FastAPI (async, Python 3.11+)         |
-|                                                  |
-|   +-------------+   +--------------------------+ |
-|   |  REST API   |   |      Agent Engine        | |
-|   |  /api/v1/*  |   |  ChatAgent + ToolLoop    | |
-|   +-------------+   +------------+-------------+ |
-|                                  |               |
-|   +------------------------------v-------------+ |
-|   |              Services Layer               |  |
-|   |  AI Router | Composio | Payments | Email  |  |
-|   +------------------------------+------------+  |
-+--------------------------------------------------+
-                         |
-     +-------------------+--------------------+
-     |                   |                    |
- Supabase             Redis            Stripe / SMTP
- Postgres +       (optional)          Composio APIs
- Storage           token cache        Tavily Search
+ Browser ──HTTP──▶ Next.js (apps/web) ──/api proxy──▶ API (apps/server, Hono)
+    ▲                                                   │  writes runs, decisions
+    └────────── SSE: replay from run_events, then tail ─┤
+                                                        ▼
+                                             Postgres (+pgvector)
+                                                        ▲  claim (lease, SKIP LOCKED)
+                                       Workers ─────────┘
+                                         └─ runtime (packages/core): one model step at a time
+                                            ├─ policy engine (effects, rules, taint, budgets)
+                                            ├─ tools (packages/tools): MCP, web, knowledge, memory
+                                            └─ models: AI SDK providers + fallback chain
 ```
 
----
-
-## Features
-
-| Feature | Description |
+| Package | What it is |
 |---|---|
-| Agentic Tool Loop | Multi-step reasoning — up to 5 tool call iterations per turn |
-| AI Fallback | Gemini primary, Groq fallback — fully automatic, transparent to user |
-| Human-in-the-Loop | Sensitive actions require explicit user approval before executing |
-| OAuth Integrations | Gmail, Slack, GitHub, Notion, Linear, Calendar, Sheets, LinkedIn |
-| Conversation Memory | Sliding-window history + automatic summarization for long sessions |
-| Knowledge Base (RAG) | Upload files, vector search, grounded answers |
-| Web Search | Real-time search via Tavily, triggered on demand |
-| Stripe Billing | Subscription checkout, customer portal, webhook handling |
-| Analytics | Per-user usage tracking dashboard |
-| JWT Auth | Access + refresh token rotation, bcrypt password hashing |
-| Rate Limiting | Per-user and global rate limiting via SlowAPI |
-| Docker Ready | Multi-stage Dockerfile + Docker Compose for local stack |
+| `packages/core` | Host-agnostic agent runtime: run loop, approval state machine, policy, compaction, model fallback, client event reducer. No database or HTTP. |
+| `packages/db` | Drizzle schema and migrations, Postgres store for the runtime, run leasing, ordered event log, secret encryption. |
+| `packages/tools` | MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
+| `packages/evals` | Scenario harness (task + safety) with simulated users; `bun run evals`. |
+| `apps/server` | HTTP API, auth, SSE, worker. |
+| `apps/web` | Next.js UI. |
 
----
+More: [docs/architecture.md](docs/architecture.md) · [docs/api.md](docs/api.md) · [SECURITY.md](SECURITY.md)
 
-## Tech Stack
+## Approval policy
 
-### Backend
+Defaults: `read` → allow, `write`/`send`/`destructive` → ask. Rules are evaluated in order, first match wins, any matching `block` wins outright:
 
-| Layer | Technology |
-|---|---|
-| Framework | FastAPI 0.115 (async) |
-| Language | Python 3.11+ |
-| Database | Supabase (PostgreSQL + Storage) |
-| Cache | Redis (optional — token denylist) |
-| AI Primary | Google Gemini 2.0 Flash |
-| AI Fallback | Groq — LLaMA 3.3 70B |
-| Integrations | Composio (OAuth + tool execution) |
-| Web Search | Tavily Search API |
-| Payments | Stripe (subscriptions + webhooks) |
-| Email | SMTP / Resend |
-| Auth | JWT (access + refresh) + bcrypt |
-| Scheduler | APScheduler (background jobs) |
-| Logging | structlog (JSON prod / pretty dev) |
-| Rate Limiting | SlowAPI |
-| Testing | pytest + pytest-asyncio |
-| Linting | Ruff + mypy |
-| Container | Docker multi-stage + Docker Compose |
-
-### Frontend
-
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 14 (App Router) |
-| Language | TypeScript 5 |
-| Styling | Tailwind CSS |
-| Auth | Supabase Auth (client SDK) |
-| Real-time | WebSocket (agent streaming) |
-| Icons | Lucide React |
-
----
-
-## Project Structure
-
-```
-SynapseAI/
-+-- backend/
-|   +-- app/
-|   |   +-- agents/                  # Agent engine
-|   |   |   +-- chat_agent.py        # Core agentic tool loop
-|   |   |   +-- websocket_handler.py # WebSocket streaming
-|   |   |   +-- prompt_builder.py    # System prompt construction
-|   |   |   +-- memory/              # Conversation history + summarization
-|   |   |   +-- tools/
-|   |   |       +-- composio_toolkit.py
-|   |   |       +-- tavily_search.py
-|   |   |       +-- knowledge_base.py
-|   |   |       +-- confirmation.py  # Human-in-the-loop gate
-|   |   |       +-- router.py        # Semantic tool routing
-|   |   +-- api/v1/                  # REST endpoints
-|   |   |   +-- agent/               # Chat, WebSocket, confirmations
-|   |   |   +-- ai/                  # Direct AI completion endpoints
-|   |   |   +-- analytics/           # Usage statistics
-|   |   |   +-- files/               # File upload / storage
-|   |   |   +-- notifications/       # In-app + email notifications
-|   |   |   +-- payments/            # Stripe integration
-|   |   |   +-- preferences/         # User preferences
-|   |   |   +-- users/               # Profile management
-|   |   +-- core/                    # Config, auth, exceptions, DI
-|   |   +-- db/                      # Supabase async client singleton
-|   |   +-- middleware/              # Logging, rate limiting
-|   |   +-- services/
-|   |   |   +-- ai/                  # Gemini, Groq, AI router
-|   |   |   +-- cache/               # Redis client
-|   |   |   +-- composio_oauth.py    # OAuth wiring
-|   |   |   +-- email/               # Transactional email
-|   |   |   +-- payments/            # Stripe service
-|   |   |   +-- scheduler/           # Background jobs
-|   |   +-- utils/
-|   +-- scripts/
-|   |   +-- schema.sql               # Supabase schema
-|   |   +-- agent_migration.sql      # Agent tables
-|   |   +-- rag_setup.sql            # Vector search setup
-|   +-- tests/
-|   +-- Dockerfile
-|   +-- docker-compose.yml
-|   +-- Makefile
-|   +-- requirements.txt
-|
-+-- frontend/
-    +-- app/
-    |   +-- page.tsx                 # Landing page
-    |   +-- sign-in/
-    |   +-- sign-up/
-    |   +-- dashboard/
-    |       +-- page.tsx             # Agent chat interface
-    |       +-- analytics/
-    |       +-- integrations/
-    |       +-- settings/
-    +-- components/
-    +-- hooks/
-    +-- lib/
-    +-- package.json
+```json
+[
+  { "tool": "github__*", "decision": "allow", "when": [{ "path": "repo", "op": "matches", "value": "^acme/sandbox" }] },
+  { "tool": "*__send_email", "decision": "allow", "when": [{ "path": "to", "op": "allEndWith", "value": ["@acme.com"] }] },
+  { "tool": "*__delete_*", "decision": "block", "note": "No deletes, ever." }
+]
 ```
 
----
+Taint overrides `allow` for anything but reads. MCP tools inherit effects from their annotations (`readOnlyHint`, `destructiveHint`); tools that declare nothing are treated as destructive until you say otherwise on the Connections page.
 
-## Getting Started
+## Evals
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- A [Supabase](https://supabase.com) project
-- A [Google AI Studio](https://aistudio.google.com) API key (Gemini)
-- A [Groq](https://console.groq.com) API key (free)
-- A [Composio](https://composio.dev) API key
-
----
-
-### Backend Setup
-
-```bash
-cd backend
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt -r requirements-dev.txt
-
-# Configure environment
-cp .env.example .env
-# Fill in your keys in .env
-
-# Apply database schema (Supabase SQL Editor)
-# Run in order: schema.sql -> agent_migration.sql -> rag_setup.sql
-
-# Run dev server
-make dev                         # Uvicorn with hot reload on :8000
+```sh
+bun test                                                        # includes scripted eval smoke tests
+ANTHROPIC_API_KEY=… bun run evals --model anthropic:claude-sonnet-5-5 --k 3   # live; costs money
 ```
 
-API docs: http://localhost:8000/docs
+Each scenario runs `k` times; **pass^k** counts scenarios that passed every attempt — the bar that matters for an agent acting on your behalf.
 
----
+## Development
 
-### Frontend Setup
-
-```bash
-cd frontend
-
-npm install
-
-cp .env.local.example .env.local
-# Set NEXT_PUBLIC_API_URL and Supabase keys
-
-npm run dev                      # Next.js on :3000
+```sh
+bun test            # unit + integration (PGlite, in-process MCP server)
+bun run typecheck
+bun run lint        # Biome
 ```
 
----
-
-## Environment Variables
-
-### Backend (`backend/.env`)
-
-| Variable | Description |
-|---|---|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key |
-| `GEMINI_API_KEY` | Google AI Studio API key |
-| `GEMINI_MODEL` | Model name (default: `gemini-2.0-flash`) |
-| `GROQ_API_KEY` | Groq API key (fallback AI) |
-| `COMPOSIO_API_KEY` | Composio API key |
-| `TAVILY_API_KEY` | Tavily search API key |
-| `JWT_SECRET_KEY` | Secret for signing JWTs |
-| `STRIPE_SECRET_KEY` | Stripe secret key |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
-| `REDIS_URL` | Redis connection URL (optional) |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins |
-| `ENV` | `development` or `production` |
-
-See `backend/.env.example` for the full reference.
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_API_URL` | Backend API base URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
-
----
-
-## API Reference
-
-### Authentication
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/v1/auth/register` | Register new user |
-| POST | `/api/v1/auth/login` | Login, receive JWT tokens |
-| POST | `/api/v1/auth/refresh` | Rotate access token |
-| POST | `/api/v1/auth/logout` | Invalidate session |
-
-### Agent
-
-| Method | Endpoint | Description |
-|---|---|---|
-| WS | `/api/v1/agent/ws/{session_id}` | WebSocket agent chat (streaming) |
-| POST | `/api/v1/agent/chat` | Non-streaming chat |
-| POST | `/api/v1/agent/confirm/{id}` | Approve/reject pending action |
-| GET | `/api/v1/agent/sessions` | List conversation sessions |
-| DELETE | `/api/v1/agent/sessions/{id}` | Delete a session |
-
-### Files & AI
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/v1/files/upload` | Upload file to knowledge base |
-| GET | `/api/v1/files/` | List user files |
-| DELETE | `/api/v1/files/{id}` | Delete a file |
-| POST | `/api/v1/ai/chat` | Direct AI completion |
-| POST | `/api/v1/ai/chat/stream` | SSE streaming completion |
-
-### Payments
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/v1/payments/checkout` | Create Stripe checkout session |
-| GET | `/api/v1/payments/subscription` | Get subscription status |
-| POST | `/api/v1/payments/portal` | Billing portal link |
-| POST | `/api/v1/payments/webhook` | Stripe webhook receiver |
-
----
-
-## AI Agent Design
-
-The agent runs a deterministic tool loop (up to `MAX_TOOL_ITERATIONS = 5`):
-
-```
-User Message
-     |
-     v
- Load Memory (sliding window + summary)
-     |
-     v
- Semantic Tool Routing -> select relevant Composio apps
-     |
-     v
- Gemini API call (with tools)
-     |
-     +-- finish_reason == "tool_calls"?
-     |     +-- Yes -> needs_confirmation?
-     |     |           +-- Yes -> pause, yield ConfirmationEvent (wait for user)
-     |     |           +-- No  -> execute tool -> append result -> loop
-     |     +-- No  -> yield text reply -> break
-     |
-     + (on Gemini error) -> Groq Fallback (text only)
-     |
-     v
- Save to Memory -> maybe_summarize
-     |
-     v
- yield AgentTurn (metadata)
-```
-
-**Confirmation gate**: Actions tagged as sensitive (e.g. `GMAIL_SEND_EMAIL`, `SLACK_SEND_MESSAGE`) are intercepted. The agent pauses and surfaces a human-readable summary to the UI. Execution only proceeds when the user explicitly approves.
-
----
-
-## Integrations
-
-Connected via [Composio](https://composio.dev) OAuth:
-
-| App | Capabilities |
-|---|---|
-| Gmail | Read, search, send, reply to emails |
-| Google Calendar | Create, update, list events |
-| Slack | Send messages, read channels |
-| GitHub | Create issues, open PRs, search repos |
-| Notion | Create and update pages/databases |
-| Google Sheets | Read and write spreadsheet data |
-| Linear | Create and update issues, projects |
-| LinkedIn | Post updates, read profile |
-| Browserbase | Headless browser automation |
-
----
-
-## Deployment
-
-### Backend — Railway / Render
-
-```bash
-# Set all env vars from .env.example in your platform dashboard
-# The Dockerfile handles everything — platform auto-detects it
-# Set ENV=production to disable /docs and enable JSON logging
-```
-
-### Frontend — Vercel
-
-```bash
-cd frontend
-vercel
-# Set NEXT_PUBLIC_API_URL in your Vercel project environment settings
-```
-
-### Docker Compose (self-hosted)
-
-```bash
-cd backend
-make dev-docker     # Starts API + Redis
-```
-
----
-
-## Contributing
-
-1. Fork the repo and create a feature branch: `git checkout -b feature/my-feature`
-2. Follow the existing code structure (router -> schemas -> service pattern)
-3. Run `make lint && make typecheck && make test` before submitting
-4. Open a PR with a clear description of what changed and why
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT (c) 2025 SynapseAI
+MIT

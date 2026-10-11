@@ -1,0 +1,21 @@
+{
+  "name": "@synapse/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "seed": "bun src/seed.ts"
+  },
+  "dependencies": {
+    "better-auth": "1.7.6",
+    "hono": "4.13.9",
+    "zod": "4.6.5",
+    "@synapse/core": "workspace:*",
+    "@synapse/db": "workspace:*",
+    "@synapse/tools": "workspace:*",
+    "ai": "7.0.116",
+    "drizzle-orm": "0.45.3"
+  }
+}
