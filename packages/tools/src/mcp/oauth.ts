@@ -86,6 +86,10 @@ export class ConnectionOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens) {
     this.tokenCache = tokens;
+    // The flow is complete: the verifier and state must not be reusable.
+    delete this.flow.codeVerifier;
+    delete this.flow.state;
+    await this.persistFlow();
     const [row] = await this.db
       .select({ auth: schema.connections.auth })
       .from(schema.connections)

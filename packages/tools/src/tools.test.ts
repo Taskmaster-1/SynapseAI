@@ -61,7 +61,8 @@ test("MCP effect mapping follows annotations, overrides win", () => {
   expect(effectFromAnnotations(t({ destructiveHint: false }), {})).toBe("write");
   expect(effectFromAnnotations(t(), {})).toBe("destructive");
   expect(effectFromAnnotations(t(), { t: "send" })).toBe("send");
-  expect(toolName("My GitHub!", "create.issue")).toBe("My_GitHub__create_issue");
+  expect(toolName("My GitHub!", "create.issue")).toBe("My-GitHub__create_issue");
+  expect(toolName("github", "x")).not.toBe(toolName("github-", "x"));
 });
 
 describe("with a database", () => {

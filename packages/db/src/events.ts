@@ -35,7 +35,9 @@ export class EventLog implements EventSink {
       const flushed = this.flush(runId);
       this.buffers.set(runId, {
         event,
-        timer: setTimeout(() => void this.flush(runId), this.flushMs),
+        timer: setTimeout(() => {
+          this.flush(runId).catch((error) => console.error("event flush failed", runId, error));
+        }, this.flushMs),
       });
       return flushed;
     }
@@ -63,9 +65,23 @@ export class EventLog implements EventSink {
           .where(eq(runEvents.runId, runId));
         seq = row!.max + 1;
       }
-      await db
+      // Another writer may have appended since our cache was filled (a previous worker of
+      // this run); on a seq conflict, re-read the tail and retry once.
+      const inserted = await db
         .insert(runEvents)
-        .values({ runId, seq, event: event as unknown as Record<string, unknown> });
+        .values({ runId, seq, event: event as unknown as Record<string, unknown> })
+        .onConflictDoNothing()
+        .returning({ seq: runEvents.seq });
+      if (inserted.length === 0) {
+        const [row] = await db
+          .select({ max: sql<number>`coalesce(max(${runEvents.seq}), 0)::int` })
+          .from(runEvents)
+          .where(eq(runEvents.runId, runId));
+        seq = row!.max + 1;
+        await db
+          .insert(runEvents)
+          .values({ runId, seq, event: event as unknown as Record<string, unknown> });
+      }
       this.nextSeq.set(runId, seq + 1);
       await this.database.notify(EVENTS_CHANNEL, JSON.stringify({ runId, seq }));
     });

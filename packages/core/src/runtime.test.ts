@@ -30,7 +30,7 @@ function makeTools(): ToolRegistry {
       inputSchema: obj,
       effect: "read",
       untrustedOutput: false,
-      source: "test",
+      source: "builtin",
       execute: async (input) => {
         executed.push("search");
         return { type: "json", value: { results: [`result for ${JSON.stringify(input)}`] } };
@@ -307,4 +307,124 @@ test("tool call ids reused across steps are made unique", async () => {
   const ids = (await store.listToolCalls(run.id)).map((c) => c.id);
   expect(new Set(ids).size).toBe(2);
   expect(JSON.stringify(m.calls[2]!.prompt)).toContain(ids[1]!);
+});
+
+describe("review fixes", () => {
+  test("an interrupted non-builtin read is not retried", async () => {
+    const { store, opts } = setup([{ text: "ok" }]);
+    await store.appendAssistantStep({
+      id: "m-x",
+      chatId: "chat1",
+      runId: opts.runId,
+      model: "x",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "i1", toolName: "read_inbox", input: {} }],
+      },
+      toolCalls: [
+        {
+          id: "i1",
+          name: "read_inbox",
+          input: {},
+          inputEdited: false,
+          effect: "read",
+          status: "executing",
+          decision: "allow",
+          decisionReason: null,
+          output: null,
+          decidedBy: null,
+        },
+      ],
+    });
+    expect(await runAgent(opts)).toBe("completed");
+    expect(executed).toEqual([]);
+    expect(store.toolCalls.get("i1")!.status).toBe("unknown");
+  });
+
+  test("a write proposed alongside an untrusted read is re-judged after the read", async () => {
+    const { store, events, opts } = setup([
+      {
+        toolCalls: [
+          { name: "read_inbox", input: {}, id: "r" },
+          { name: "send_email", input: { to: "a@b.com" }, id: "s" },
+        ],
+      },
+    ]);
+    store.rules = [{ id: "allow-send", tool: "send_email", decision: "allow" }];
+    expect(await runAgent(opts)).toBe("waiting");
+    expect(executed).toEqual(["read_inbox"]);
+    expect(store.toolCalls.get("s")!.status).toBe("awaiting_approval");
+    expect(events.events.some((e) => e.type === "approval.requested" && e.toolCallId === "s")).toBe(
+      true,
+    );
+  });
+
+  test("a lost lease (abort without cancel) leaves the run for another worker", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "search", input: {}, id: "a" }] },
+      { text: "x" },
+    ]);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(runAgent({ ...opts, signal: controller.signal })).rejects.toThrow("interrupted");
+    expect((await store.getRun(run.id)).status).toBe("running");
+  });
+
+  test("cancel after_step on a waiting run cancels instead of pausing again", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: {}, id: "c1" }] },
+    ]);
+    expect(await runAgent(opts)).toBe("waiting");
+    store.runs.get(run.id)!.cancelRequested = "after_step";
+    expect(await runAgent(opts)).toBe("cancelled");
+    expect(store.toolCalls.get("c1")!.status).toBe("denied");
+  });
+
+  test("a message that arrives while pausing replaces the approval", async () => {
+    const { store, m, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: {}, id: "c1" }] },
+      { text: "Okay, doing that instead." },
+    ]);
+    expect(await runAgent(opts)).toBe("waiting");
+    // Race: the message was queued while the run still looked "running", so nothing denied
+    // the approval or re-queued the run. The next pass must notice the input.
+    store.runs.get(opts.runId)!.status = "running";
+    store.pendingInputs.push({ chatId: "chat1", text: "never mind, just summarise" });
+    expect(await runAgent(opts)).toBe("completed");
+    expect(store.toolCalls.get("c1")!.status).toBe("denied");
+    expect(JSON.stringify(m.calls[1]!.prompt)).toContain("never mind");
+  });
+
+  test("an aborted in-flight write is marked unknown", async () => {
+    const controller = new AbortController();
+    const tools = new ToolRegistry([
+      {
+        name: "post",
+        description: "x",
+        inputSchema: { type: "object" },
+        effect: "send",
+        untrustedOutput: false,
+        source: "test",
+        execute: async () => {
+          controller.abort();
+          throw new Error("aborted");
+        },
+      },
+    ]);
+    const store = new MemoryStore();
+    const run = store.createRun({ chatId: "c", userId: "u", text: "x" });
+    store.runs.get(run.id)!.cancelRequested = null;
+    store.rules = [{ id: "a", tool: "*", decision: "allow" }];
+    const m = scriptedModel([{ toolCalls: [{ name: "post", input: {}, id: "p" }] }]);
+    await runAgent({
+      runId: run.id,
+      store,
+      events: new MemoryEvents(),
+      tools,
+      models: [m],
+      system: "s",
+      signal: controller.signal,
+    }).catch(() => {});
+    expect(store.toolCalls.get("p")!.status).toBe("unknown");
+  });
 });

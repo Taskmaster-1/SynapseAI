@@ -4,6 +4,70 @@ import type { Db } from "./client";
 import { chats, messages, pendingInputs, runs, toolCalls } from "./schema";
 
 export class NotFoundError extends Error {}
+
+/**
+ * Creates a queued run in a locked chat. Taint carries over: once untrusted content is in
+ * the chat history, every later run in that chat starts tainted. Messages left pending by
+ * an earlier run that ended are moved in first, in order.
+ */
+async function startRun(tx: Db, chatId: string, userId: string, trigger: string): Promise<string> {
+  const [run] = await tx
+    .insert(runs)
+    .values({
+      chatId,
+      userId,
+      trigger,
+      tainted: sql`exists (select 1 from runs r where r.chat_id = ${chatId} and r.tainted)`,
+    })
+    .returning({ id: runs.id });
+  const orphans = await tx
+    .select()
+    .from(pendingInputs)
+    .where(eq(pendingInputs.chatId, chatId))
+    .orderBy(asc(pendingInputs.id));
+  if (orphans.length > 0) {
+    await tx
+      .insert(messages)
+      .values(
+        orphans.map((p) => ({
+          chatId,
+          runId: run!.id,
+          message: { role: "user" as const, content: p.content },
+        })),
+      );
+    await tx.delete(pendingInputs).where(
+      inArray(
+        pendingInputs.id,
+        orphans.map((p) => p.id),
+      ),
+    );
+  }
+  await tx.update(chats).set({ updatedAt: new Date() }).where(eq(chats.id, chatId));
+  return run!.id;
+}
+
+/**
+ * After a run ends, messages that arrived too late for it must not be stranded: if the
+ * chat has pending inputs and no active run, start a new run for them.
+ */
+export async function continuePendingInputs(db: Db, chatId: string): Promise<string | null> {
+  return db.transaction(async (tx) => {
+    const [chat] = await tx.select().from(chats).where(eq(chats.id, chatId)).for("update");
+    if (!chat) return null;
+    const [active] = await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(and(eq(runs.chatId, chatId), inArray(runs.status, [...ACTIVE])));
+    if (active) return null;
+    const [pending] = await tx
+      .select({ id: pendingInputs.id })
+      .from(pendingInputs)
+      .where(eq(pendingInputs.chatId, chatId))
+      .limit(1);
+    if (!pending) return null;
+    return startRun(tx as unknown as Db, chatId, chat.userId, "chat");
+  });
+}
 export class ConflictError extends Error {}
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
@@ -18,7 +82,7 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
 export async function sendMessage(
   db: Db,
   args: { userId: string; chatId: string; content: string; trigger?: string },
-): Promise<{ runId: string; queued: "new_run" | "pending_input" }> {
+): Promise<{ runId: string; queued: "new_run" | "pending_input" | "skipped" }> {
   return db.transaction(async (tx) => {
     const [chat] = await tx
       .select({ id: chats.id })
@@ -33,18 +97,22 @@ export async function sendMessage(
       .where(and(eq(runs.chatId, chat.id), inArray(runs.status, [...ACTIVE])));
 
     if (!active) {
-      const [run] = await tx
-        .insert(runs)
-        .values({ chatId: chat.id, userId: args.userId, trigger: args.trigger ?? "chat" })
-        .returning({ id: runs.id });
+      const runId = await startRun(
+        tx as unknown as Db,
+        chat.id,
+        args.userId,
+        args.trigger ?? "chat",
+      );
       await tx.insert(messages).values({
         chatId: chat.id,
-        runId: run!.id,
+        runId,
         message: { role: "user", content: args.content },
       });
-      await tx.update(chats).set({ updatedAt: new Date() }).where(eq(chats.id, chat.id));
-      return { runId: run!.id, queued: "new_run" as const };
+      return { runId, queued: "new_run" as const };
     }
+
+    // Scheduled prompts never displace a run that is waiting on the user.
+    if (args.trigger === "schedule") return { runId: active.id, queued: "skipped" as const };
 
     await tx.insert(pendingInputs).values({ chatId: chat.id, content: args.content });
     if (active.status === "waiting") {
@@ -166,7 +234,13 @@ export const MAX_ATTEMPTS = 5;
  * Claims the oldest runnable run: queued, or running with an expired lease (its worker
  * died). SKIP LOCKED spreads runs across workers without contention.
  */
-export async function claimRun(db: Db, workerId: string, leaseMs: number): Promise<string | null> {
+export type Claim = { runId: string; exhausted: boolean };
+
+/**
+ * Claims the oldest runnable run. `exhausted` means it has failed too often; the caller
+ * must fail it (and tell the user) instead of driving it.
+ */
+export async function claimRun(db: Db, workerId: string, leaseMs: number): Promise<Claim | null> {
   const now = new Date();
   const [claimed] = await db
     .update(runs)
@@ -194,19 +268,7 @@ export async function claimRun(db: Db, workerId: string, leaseMs: number): Promi
     )
     .returning({ id: runs.id, attempts: runs.attempts });
   if (!claimed) return null;
-  if (claimed.attempts > MAX_ATTEMPTS) {
-    await db
-      .update(runs)
-      .set({
-        status: "failed",
-        error: "gave up after repeated worker failures",
-        leaseOwner: null,
-        finishedAt: now,
-      })
-      .where(eq(runs.id, claimed.id));
-    return null;
-  }
-  return claimed.id;
+  return { runId: claimed.id, exhausted: claimed.attempts > MAX_ATTEMPTS };
 }
 
 export async function renewLease(

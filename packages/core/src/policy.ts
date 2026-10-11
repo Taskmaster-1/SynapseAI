@@ -127,16 +127,44 @@ function matches(m: ArgMatcher, value: JSONValue | undefined): boolean {
       );
     }
     case "matches":
-      return typeof value === "string" && safeRegExp(m.value)?.test(value) === true;
+      return (
+        typeof value === "string" &&
+        safeRegExp(m.value)?.test(value.slice(0, MAX_MATCH_INPUT)) === true
+      );
   }
 }
 
-function safeRegExp(source: string): RegExp | null {
-  try {
-    return new RegExp(source);
-  } catch {
-    return null;
+const MAX_MATCH_INPUT = 10_000;
+const MAX_PATTERN = 500;
+
+/**
+ * Rule patterns run synchronously on model-generated input, so patterns prone to
+ * catastrophic backtracking are refused: nested quantifiers like `(a+)+` and backreferences.
+ */
+export function unsafePatternReason(source: string): string | null {
+  if (source.length > MAX_PATTERN) return `pattern longer than ${MAX_PATTERN} characters`;
+  if (/\\[1-9]|\\k</.test(source)) return "backreferences are not allowed";
+  if (/\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]/.test(source)) {
+    return "nested quantifiers (like (a+)+) are not allowed";
   }
+  try {
+    new RegExp(source);
+  } catch (error) {
+    return error instanceof Error ? error.message : "invalid pattern";
+  }
+  return null;
+}
+
+const compiled = new Map<string, RegExp | null>();
+
+function safeRegExp(source: string): RegExp | null {
+  let re = compiled.get(source);
+  if (re === undefined) {
+    re = unsafePatternReason(source) ? null : new RegExp(source);
+    if (compiled.size > 1000) compiled.clear();
+    compiled.set(source, re);
+  }
+  return re;
 }
 
 export function getPath(value: JSONValue, path: string): JSONValue | undefined {

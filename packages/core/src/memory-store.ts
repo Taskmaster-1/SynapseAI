@@ -105,7 +105,12 @@ export class MemoryStore implements RunStore {
     call.status = patch.status;
     if (patch.output) call.output = patch.output;
     if (patch.fullOutput) call.fullOutput = patch.fullOutput;
+    if (patch.decisionReason) call.decisionReason = patch.decisionReason;
     return true;
+  }
+
+  async hasPendingInputs(chatId: string) {
+    return this.pendingInputs.some((p) => p.chatId === chatId);
   }
 
   async drainPendingInputs(chatId: string, runId: string) {

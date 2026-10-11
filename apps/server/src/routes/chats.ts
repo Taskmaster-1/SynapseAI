@@ -71,14 +71,7 @@ export const chats = new Hono<AppEnv>()
       .where(eq(schema.runs.chatId, chat.id))
       .orderBy(desc(schema.runs.createdAt))
       .limit(1);
-    const lastSeq = run
-      ? ((
-          await db
-            .select({ max: sql<number>`coalesce(max(seq), 0)::int` })
-            .from(schema.runEvents)
-            .where(eq(schema.runEvents.runId, run.id))
-        )[0]?.max ?? 0)
-      : 0;
+    const lastSeq = run ? await resumePoint(db, run.id, new Set(rows.map((r) => r.id))) : 0;
     return c.json({
       chat: { id: chat.id, title: chat.title },
       messages: toUiMessages(rows, calls),
@@ -123,6 +116,36 @@ export const chats = new Hono<AppEnv>()
     await c.var.services.wake(sent.runId);
     return c.json(sent, 202);
   });
+
+/**
+ * Where the client should resume the event stream. If a message is still streaming (its
+ * events exist but its row was not stored when we read `rows`), resume just before its
+ * `message.start` so the client receives the whole message; otherwise from the end.
+ */
+async function resumePoint(
+  db: AppEnv["Variables"]["services"]["database"]["db"],
+  runId: string,
+  stored: Set<string>,
+) {
+  const [last] = await db
+    .select({ seq: schema.runEvents.seq, event: schema.runEvents.event })
+    .from(schema.runEvents)
+    .where(
+      and(
+        eq(schema.runEvents.runId, runId),
+        sql`${schema.runEvents.event}->>'type' = 'message.start'`,
+      ),
+    )
+    .orderBy(desc(schema.runEvents.seq))
+    .limit(1);
+  const [max] = await db
+    .select({ max: sql<number>`coalesce(max(seq), 0)::int` })
+    .from(schema.runEvents)
+    .where(eq(schema.runEvents.runId, runId));
+  const messageId = (last?.event as { messageId?: string } | undefined)?.messageId;
+  if (last && messageId && !stored.has(messageId)) return last.seq - 1;
+  return max?.max ?? 0;
+}
 
 async function ownChat(
   db: AppEnv["Variables"]["services"]["database"]["db"],

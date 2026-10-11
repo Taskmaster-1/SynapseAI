@@ -4,6 +4,12 @@ import { log } from "./log";
 import { createServices } from "./services";
 import { Worker } from "./worker";
 
+process.on("unhandledRejection", (reason) => {
+  log.error("unhandled rejection", {
+    error: reason instanceof Error ? (reason.stack ?? reason.message) : String(reason),
+  });
+});
+
 const config = loadConfig();
 const services = await createServices(config);
 

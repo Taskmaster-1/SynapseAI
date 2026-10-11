@@ -61,9 +61,9 @@ export async function fireDueAutomations(db: Db, now = new Date()): Promise<stri
         content: `[Scheduled: ${due.name}]\n\n${due.prompt}`,
         trigger: "schedule",
       });
-      return sent.runId;
+      return sent.queued === "skipped" ? "skipped" : sent.runId;
     });
     if (!runId) return fired;
-    fired.push(runId);
+    if (runId !== "skipped") fired.push(runId);
   }
 }

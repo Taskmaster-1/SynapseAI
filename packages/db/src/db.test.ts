@@ -147,11 +147,11 @@ describe("postgres store", () => {
     while (await claimRun(database.db, "drain", 60_000)) {}
     const chatId = await newChat();
     const { runId } = await sendMessage(database.db, { userId: "u1", chatId, content: "hi" });
-    expect(await claimRun(database.db, "w1", 1)).toBe(runId);
+    expect(await claimRun(database.db, "w1", 1)).toEqual({ runId, exhausted: false });
     await database.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId));
     await Bun.sleep(5);
     // w1's lease expired: w2 takes over.
-    expect(await claimRun(database.db, "w2", 60_000)).toBe(runId);
+    expect((await claimRun(database.db, "w2", 60_000))?.runId).toBe(runId);
     expect(await claimRun(database.db, "w3", 60_000)).toBeNull();
     await releaseRun(database.db, runId, "w2");
     const [r] = await database.db.select().from(runs).where(eq(runs.id, runId));
@@ -217,5 +217,84 @@ describe("automations", () => {
 
     const [run] = await database.db.select().from(runs).where(eq(runs.id, fired[0]!));
     expect(run).toMatchObject({ trigger: "schedule", status: "queued", chatId });
+  });
+});
+
+describe("review fixes", () => {
+  test("taint carries over to later runs in the same chat", async () => {
+    const { continuePendingInputs } = await import("./runs");
+    void continuePendingInputs;
+    const chatId = await newChat();
+    const first = await sendMessage(database.db, {
+      userId: "u1",
+      chatId,
+      content: "read that page",
+    });
+    await database.db
+      .update(runs)
+      .set({ status: "completed", tainted: true })
+      .where(eq(runs.id, first.runId));
+    const second = await sendMessage(database.db, { userId: "u1", chatId, content: "thanks" });
+    const [r] = await database.db.select().from(runs).where(eq(runs.id, second.runId));
+    expect(r!.tainted).toBe(true);
+    const other = await sendMessage(database.db, {
+      userId: "u1",
+      chatId: await newChat(),
+      content: "hi",
+    });
+    const [o] = await database.db.select().from(runs).where(eq(runs.id, other.runId));
+    expect(o!.tainted).toBe(false);
+  });
+
+  test("inputs left pending when a run ends get their own run, in order", async () => {
+    const { continuePendingInputs } = await import("./runs");
+    const chatId = await newChat();
+    const first = await sendMessage(database.db, { userId: "u1", chatId, content: "hi" });
+    await sendMessage(database.db, { userId: "u1", chatId, content: "also do X" });
+    await database.db.update(runs).set({ status: "failed" }).where(eq(runs.id, first.runId));
+    const next = await continuePendingInputs(database.db, chatId);
+    expect(next).toBeTruthy();
+    expect(await continuePendingInputs(database.db, chatId)).toBeNull();
+    const msgs = await new PgRunStore(database.db).listMessages(chatId);
+    expect(msgs.map((m) => m.message.content)).toEqual(["hi", "also do X"]);
+    expect(msgs[1]!.runId).toBe(next);
+  });
+
+  test("a scheduled fire never displaces a waiting run", async () => {
+    const chatId = await newChat();
+    const { runId } = await sendMessage(database.db, { userId: "u1", chatId, content: "x" });
+    await database.db.update(runs).set({ status: "waiting" }).where(eq(runs.id, runId));
+    const fired = await sendMessage(database.db, {
+      userId: "u1",
+      chatId,
+      content: "scheduled",
+      trigger: "schedule",
+    });
+    expect(fired.queued).toBe("skipped");
+    expect(
+      await database.db.select().from(pendingInputs).where(eq(pendingInputs.chatId, chatId)),
+    ).toEqual([]);
+  });
+
+  test("a worker without the lease cannot change run status", async () => {
+    const { LeaseLostError } = await import("./store");
+    const chatId = await newChat();
+    const { runId } = await sendMessage(database.db, { userId: "u1", chatId, content: "x" });
+    await database.db.update(runs).set({ leaseOwner: "w-new" }).where(eq(runs.id, runId));
+    await expect(
+      new PgRunStore(database.db, "w-old").updateRun(runId, { status: "failed" }),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+    await new PgRunStore(database.db, "w-new").updateRun(runId, { status: "running" });
+  });
+
+  test("event log recovers when another writer advanced the seq", async () => {
+    const chatId = await newChat();
+    const { runId } = await sendMessage(database.db, { userId: "u1", chatId, content: "x" });
+    const a = new EventLog(database, 0);
+    const b = new EventLog(database, 0);
+    await a.emit(runId, { type: "run.status", status: "running" });
+    await b.emit(runId, { type: "run.status", status: "running" });
+    await a.emit(runId, { type: "run.status", status: "completed" }); // a's cached seq is stale
+    expect((await readEvents(database, runId, 0)).map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 });

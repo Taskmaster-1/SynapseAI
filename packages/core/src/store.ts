@@ -53,8 +53,15 @@ export interface RunStore {
     runId: string,
     id: string,
     from: ToolCallStatus[],
-    patch: { status: ToolCallStatus; output?: ToolOutput; fullOutput?: ToolOutput },
+    patch: {
+      status: ToolCallStatus;
+      output?: ToolOutput;
+      fullOutput?: ToolOutput;
+      decisionReason?: string;
+    },
   ): Promise<boolean>;
+
+  hasPendingInputs(chatId: string): Promise<boolean>;
 
   /** Moves user messages that arrived while the run was busy into the chat, in order. */
   drainPendingInputs(chatId: string, runId: string): Promise<number>;

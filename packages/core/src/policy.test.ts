@@ -74,3 +74,24 @@ test("tool default decision applies when no rule matches, taint still wins", () 
       .decision,
   ).toBe("block");
 });
+
+test("patterns prone to catastrophic backtracking are refused and never match", () => {
+  const { unsafePatternReason } = require("./policy") as typeof import("./policy");
+  expect(unsafePatternReason("(a+)+$")).toContain("nested");
+  expect(unsafePatternReason("(\\w*)*")).toContain("nested");
+  expect(unsafePatternReason("(a)\\1")).toContain("backreference");
+  expect(unsafePatternReason("^acme/[a-z-]+$")).toBeNull();
+  const rules: PolicyRule[] = [
+    {
+      id: "r",
+      tool: "*",
+      decision: "block",
+      when: [{ path: "q", op: "matches", value: "(a+)+$" }],
+    },
+  ];
+  const started = performance.now();
+  expect(evaluatePolicy({ ...send, input: { q: `${"a".repeat(40)}b` } }, rules).decision).toBe(
+    "ask",
+  );
+  expect(performance.now() - started).toBeLessThan(50);
+});

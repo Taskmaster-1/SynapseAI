@@ -51,9 +51,22 @@ function toRecord(r: ToolCallRow): ToolCallRecord {
   };
 }
 
+export class LeaseLostError extends Error {
+  constructor(runId: string) {
+    super(`lease lost for run ${runId}`);
+  }
+}
+
 /** Postgres implementation of the runtime's persistence port. */
 export class PgRunStore implements RunStore {
-  constructor(private readonly db: Db) {}
+  /**
+   * @param leaseOwner when set, run status writes only apply while this worker still holds
+   * the lease, so a worker that lost its lease cannot overwrite the new owner's progress.
+   */
+  constructor(
+    private readonly db: Db,
+    private readonly leaseOwner?: string,
+  ) {}
 
   async getRun(runId: string): Promise<RunRecord> {
     const [r] = await this.db.select().from(runs).where(eq(runs.id, runId));
@@ -77,10 +90,14 @@ export class PgRunStore implements RunStore {
   async updateRun(runId: string, patch: Parameters<RunStore["updateRun"]>[1]) {
     const terminal =
       patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled";
-    await this.db
+    const updated = await this.db
       .update(runs)
       .set({ ...patch, ...(terminal ? { finishedAt: new Date() } : {}) })
-      .where(eq(runs.id, runId));
+      .where(
+        and(eq(runs.id, runId), this.leaseOwner ? eq(runs.leaseOwner, this.leaseOwner) : undefined),
+      )
+      .returning({ id: runs.id });
+    if (updated.length === 0) throw new LeaseLostError(runId);
   }
 
   async addUsage(runId: string, u: { inputTokens: number; outputTokens: number; costUsd: number }) {
@@ -169,10 +186,20 @@ export class PgRunStore implements RunStore {
         status: patch.status,
         ...(patch.output ? { output: patch.output } : {}),
         ...(patch.fullOutput ? { fullOutput: patch.fullOutput } : {}),
+        ...(patch.decisionReason ? { decisionReason: patch.decisionReason } : {}),
       })
       .where(and(eq(toolCalls.runId, runId), eq(toolCalls.id, id), inArray(toolCalls.status, from)))
       .returning({ id: toolCalls.id });
     return updated.length > 0;
+  }
+
+  async hasPendingInputs(chatId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: pendingInputs.id })
+      .from(pendingInputs)
+      .where(eq(pendingInputs.chatId, chatId))
+      .limit(1);
+    return Boolean(row);
   }
 
   async drainPendingInputs(chatId: string, runId: string): Promise<number> {

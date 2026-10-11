@@ -98,7 +98,7 @@ test("chat → approval → decision → completion, end to end", async () => {
   const { runId } = created.json!;
   const chatId = created.json!.chat.id;
 
-  await worker.process(runId);
+  await worker.processNow(runId);
   expect((await app.request(`/api/runs/${runId}/events`)).status).toBe(401);
 
   const chat = await ada(`/api/chats/${chatId}`);
@@ -139,7 +139,7 @@ test("policy block, approvals inbox and decisions over HTTP", async () => {
   ]);
   const { json } = await grace("/api/chats", { method: "POST", json: { content: "I like tea" } });
   const runId = json!.runId;
-  await worker.process(runId);
+  await worker.processNow(runId);
 
   const inbox = await grace("/api/approvals");
   expect(inbox.json!.approvals).toEqual([
@@ -167,7 +167,7 @@ test("policy block, approvals inbox and decisions over HTTP", async () => {
   ).toBe(204);
   expect((await grace(path, { method: "POST", json: { approved: true } })).status).toBe(409);
 
-  await worker.process(runId);
+  await worker.processNow(runId);
   const detail = await grace(`/api/runs/${runId}`);
   expect(detail.json!.run.status).toBe("completed");
   expect(detail.json!.toolCalls[0]).toMatchObject({
@@ -252,7 +252,7 @@ test("chat list shows latest run status and pending approvals per chat", async (
   });
   script([{ toolCalls: [{ name: "memory_save", input: { note: "x" }, id: "p1" }] }]);
   const { json } = await me("/api/chats", { method: "POST", json: { content: "remember x" } });
-  await worker.process(json!.runId);
+  await worker.processNow(json!.runId);
   await me("/api/chats", { method: "POST", json: {} });
   const list = (await me("/api/chats")).json!.chats;
   expect(list).toHaveLength(2);
@@ -264,4 +264,85 @@ test("chat list shows latest run status and pending approvals per chat", async (
     status: null,
     pendingApprovals: 0,
   });
+});
+
+test("SSE keeps streaming past an earlier pause", async () => {
+  const cookie = await signUp("sse@example.com");
+  const me = api(cookie);
+  await me("/api/policy", {
+    method: "PUT",
+    json: {
+      defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+      rules: [{ tool: "memory_save", decision: "ask" }],
+    },
+  });
+  script([
+    { toolCalls: [{ name: "memory_save", input: { note: "y" }, id: "q1" }] },
+    { text: "All set." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "remember y" } });
+  const runId = json!.runId;
+  await worker.processNow(runId);
+  await me(`/api/runs/${runId}/tool-calls/q1/decision`, {
+    method: "POST",
+    json: { approved: true },
+  });
+  await worker.processNow(runId);
+
+  // From the start, the stream must not stop at the old "waiting" status.
+  const all = await sse(cookie, runId, 0);
+  expect(all.at(-1)).toMatchObject({ type: "run.status", status: "completed" });
+  expect(
+    all.filter((e) => e.type === "run.status").map((e) => (e as { status: string }).status),
+  ).toContain("waiting");
+});
+
+test("edited approvals are re-checked against block rules; unsafe patterns are refused", async () => {
+  const cookie = await signUp("edit@example.com");
+  const me = api(cookie);
+  const bad = await me("/api/policy", {
+    method: "PUT",
+    json: {
+      defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+      rules: [
+        { tool: "*", decision: "block", when: [{ path: "q", op: "matches", value: "(a+)+$" }] },
+      ],
+    },
+  });
+  expect(bad.status).toBe(422);
+  await me("/api/policy", {
+    method: "PUT",
+    json: {
+      defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+      rules: [
+        {
+          tool: "memory_save",
+          decision: "block",
+          when: [{ path: "note", op: "matches", value: "password" }],
+        },
+        { tool: "memory_save", decision: "ask" },
+      ],
+    },
+  });
+  script([
+    { toolCalls: [{ name: "memory_save", input: { note: "likes jazz" }, id: "e1" }] },
+    { text: "ok" },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "remember jazz" } });
+  await worker.processNow(json!.runId);
+  const res = await me(`/api/runs/${json!.runId}/tool-calls/e1/decision`, {
+    method: "POST",
+    json: { approved: true, input: { note: "my password is hunter2" } },
+  });
+  expect(res.status).toBe(422);
+});
+
+test("user budgets can only tighten the operator cap", async () => {
+  const { capBudget } = await import("./worker");
+  expect(capBudget(undefined, 2)).toBe(2);
+  expect(capBudget(0, 2)).toBe(2);
+  expect(capBudget(1, 2)).toBe(1);
+  expect(capBudget(50, 2)).toBe(2);
+  expect(capBudget(5, 0)).toBe(5);
+  expect(capBudget(0, 0)).toBe(0);
 });

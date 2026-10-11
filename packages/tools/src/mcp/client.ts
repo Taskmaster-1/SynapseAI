@@ -17,7 +17,11 @@ export interface McpToolInfo {
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; title?: string };
 }
 
-/** Effect from MCP annotations. Per spec, a tool that is not read-only is assumed destructive. */
+/**
+ * Effect from MCP annotations. Per spec, a tool that is not read-only is assumed destructive.
+ * Annotations are hints from the server, so: users can override them per tool, MCP reads are
+ * never re-run after a crash, and all MCP output taints the run.
+ */
 export function effectFromAnnotations(
   tool: McpToolInfo,
   overrides: Record<string, Effect>,
@@ -28,9 +32,17 @@ export function effectFromAnnotations(
   return "destructive";
 }
 
+/**
+ * "<connection>__<tool>". Connection slugs never contain "_" (names are letters, digits,
+ * spaces and "-"), so the separator is unambiguous and one connection cannot shadow another.
+ */
 export function toolName(connection: string, tool: string): string {
-  const slug = (s: string) => s.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
-  return `${slug(connection)}__${slug(tool)}`.slice(0, 64);
+  const conn = connection
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9-]/g, "");
+  const name = tool.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return `${conn}__${name}`.slice(0, 64);
 }
 
 function toOutput(result: {

@@ -34,6 +34,8 @@ export interface RuntimeLimits {
   contextTokens: number;
   maxToolOutputChars: number;
   maxOutputTokens: number;
+  /** Token cap per run (input + output), the guard for models without a known price. */
+  maxTokens: number;
 }
 
 export const DEFAULT_LIMITS: RuntimeLimits = {
@@ -42,7 +44,17 @@ export const DEFAULT_LIMITS: RuntimeLimits = {
   contextTokens: 200_000,
   maxToolOutputChars: 24_000,
   maxOutputTokens: 16_000,
+  maxTokens: 3_000_000,
 };
+
+/** The signal aborted without a user cancel (e.g. the worker lost its lease). */
+export class RunInterruptedError extends Error {
+  constructor() {
+    super("run interrupted");
+  }
+}
+
+const NEW_MESSAGE_DENIAL = "The user sent a new message instead of approving this action.";
 
 export interface RunAgentOptions {
   runId: string;
@@ -85,12 +97,29 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
   try {
     for (;;) {
       run = await store.getRun(runId);
-      if (run.cancelRequested === "now" || signal.aborted)
-        return await cancel(opts, run, setStatus);
+      if (run.cancelRequested === "now") return await cancel(opts, run, setStatus);
+      if (signal.aborted) throw new RunInterruptedError();
 
       // 1. Settle tool calls from the latest assistant step.
       const pending = await settleToolCalls(opts, run, limits, signal);
-      if (pending === "waiting") return await setStatus("waiting");
+      if (pending === "waiting") {
+        run = await store.getRun(runId);
+        if (run.cancelRequested) return await cancel(opts, run, setStatus);
+        // A message that arrived meanwhile replaces the pending approvals.
+        if (await store.hasPendingInputs(run.chatId)) {
+          await denyAwaiting(opts, run, NEW_MESSAGE_DENIAL);
+          continue;
+        }
+        await setStatus("waiting");
+        // Decisions or messages that landed between our check and the status write saw a
+        // running run and did not re-queue it; pick them up here instead of stalling.
+        const stillAwaiting = (await store.listToolCalls(runId)).some(
+          (c) => c.status === "awaiting_approval",
+        );
+        if (stillAwaiting && !(await store.hasPendingInputs(run.chatId))) return "waiting";
+        await setStatus("running");
+        continue;
+      }
       if (run.cancelRequested === "after_step") return await cancel(opts, run, setStatus);
 
       // 2. Steering: messages the user sent while we were busy join the conversation now.
@@ -110,6 +139,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
         );
         return await setStatus("completed");
       }
+      if (run.inputTokens + run.outputTokens >= limits.maxTokens) {
+        await say(opts, run, "I stopped because this run reached its token limit.");
+        return await setStatus("failed", "budget_exceeded");
+      }
       if (limits.maxCostUsd > 0 && run.costUsd >= limits.maxCostUsd) {
         await say(
           opts,
@@ -124,7 +157,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
       await store.updateRun(runId, { steps: run.steps + 1 });
     }
   } catch (error) {
-    if (signal.aborted) return await cancel(opts, await store.getRun(runId), setStatus);
+    if (signal.aborted) {
+      const current = await store.getRun(runId);
+      if (current.cancelRequested === "now") return await cancel(opts, current, setStatus);
+      // Not ours to finish (lease lost or shutting down): leave state for the next worker.
+      throw error instanceof RunInterruptedError ? error : new RunInterruptedError();
+    }
     const message = error instanceof Error ? error.message : String(error);
     await events.emit(runId, { type: "error", message, retryable: isRetryable(error) });
     if (isRetryable(error)) throw error; // the worker retries the whole run later
@@ -151,6 +189,14 @@ async function cancel(
   }
   await writeToolResults(opts, run);
   return setStatus("cancelled");
+}
+
+async function denyAwaiting(opts: RunAgentOptions, run: RunRecord, reason: string) {
+  for (const call of await opts.store.listToolCalls(run.id)) {
+    if (call.status === "awaiting_approval") {
+      await resolve(opts, call, ["awaiting_approval"], "denied", { type: "denied", reason });
+    }
+  }
 }
 
 async function say(opts: RunAgentOptions, run: RunRecord, text: string): Promise<void> {
@@ -183,7 +229,8 @@ async function settleToolCalls(
   // Crash recovery: a call left "executing" was interrupted. Reads are safe to repeat;
   // anything with side effects is marked unknown and reported, never retried.
   for (const call of calls.filter((c) => c.status === "executing")) {
-    if (call.effect === "read") {
+    // Only built-in reads are known to be side-effect free; MCP annotations are hints.
+    if (call.effect === "read" && opts.tools.get(call.name)?.source === "builtin") {
       await opts.store.transitionToolCall(call.runId, call.id, ["executing"], {
         status: "approved",
       });
@@ -204,6 +251,44 @@ async function settleToolCalls(
   const reads = approved.filter((c) => c.effect === "read");
   const writes = approved.filter((c) => c.effect !== "read");
   await Promise.all(reads.map((c) => execute(opts, run, c, limits, signal)));
+
+  // Writes proposed in the same step as an untrusted read were judged before the run was
+  // tainted. Re-judge them now; anything auto-allowed goes back to the user.
+  if (run.tainted && reads.length > 0) {
+    let asked = false;
+    for (const c of writes.filter((w) => w.decision === "allow")) {
+      const reason =
+        "This step read untrusted content, so this action needs your approval before it runs.";
+      if (
+        await opts.store.transitionToolCall(run.id, c.id, ["approved"], {
+          status: "awaiting_approval",
+          decisionReason: reason,
+        })
+      ) {
+        asked = true;
+        await opts.events.emit(run.id, {
+          type: "tool.status",
+          toolCallId: c.id,
+          status: "awaiting_approval",
+          reason,
+        });
+        await opts.events.emit(run.id, {
+          type: "approval.requested",
+          toolCallId: c.id,
+          name: c.name,
+          input: c.input,
+          effect: c.effect,
+          reason,
+          preview: opts.tools.get(c.name)?.preview?.(c.input) ?? null,
+        });
+      }
+    }
+    if (asked) {
+      await writeToolResults(opts, run);
+      return "waiting";
+    }
+  }
+
   for (const c of writes) {
     if (signal.aborted) break;
     await execute(opts, run, c, limits, signal);
@@ -243,6 +328,15 @@ async function execute(
       });
     } catch (error) {
       full = { type: "error", value: error instanceof Error ? error.message : String(error) };
+    }
+    // Interrupted mid-flight: a side effect may already have happened.
+    if (signal.aborted && call.effect !== "read") {
+      await resolve(opts, call, ["executing"], "unknown", {
+        type: "error",
+        value:
+          "This action was interrupted while running. It may or may not have completed; it was not retried. Check before trying again.",
+      });
+      return;
     }
     if (def.untrustedOutput && full.type !== "error" && !run.tainted) {
       run.tainted = true;
@@ -554,6 +648,8 @@ async function compactIfNeeded(
   const rows = await opts.store.listMessages(run.chatId);
   const cutoff = rows.findLast((r) => r.kind === "message" && r.message.role === "user");
   if (!cutoff) return cleared;
+  // Already summarised up to this turn: summarising again would not shrink anything.
+  if (rows.some((r) => r.kind === "handover" && r.cutoffSeq === cutoff.seq)) return cleared;
   const before = buildHistory(
     rows.filter((r) => r.seq < cutoff.seq),
     candidate.spec.ref,
@@ -561,7 +657,7 @@ async function compactIfNeeded(
   if (before.length === 0) return cleared;
 
   const summarizer = opts.summaryModel ?? candidate;
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: summarizer.model,
     system: HANDOVER_PROMPT,
     messages: [
@@ -569,6 +665,11 @@ async function compactIfNeeded(
       { role: "user", content: "Write the handover note now." },
     ],
     maxOutputTokens: 4_000,
+  });
+  await opts.store.addUsage(run.id, {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    costUsd: costUsd(summarizer.spec.ref, usage),
   });
   const handover = await opts.store.appendMessage({
     chatId: run.chatId,

@@ -1,3 +1,4 @@
+import { unsafePatternReason } from "@synapse/core";
 import { schema } from "@synapse/db";
 import { ingestDocument, searchKnowledge } from "@synapse/tools";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
@@ -32,6 +33,12 @@ export const policy = new Hono<AppEnv>()
   .get("/", async (c) => c.json(await loadPolicy(c.var.services.database.db, c.var.user.id)))
   .put("/", async (c) => {
     const input = await body(c, z.object({ defaults: Defaults, rules: z.array(Rule).max(200) }));
+    for (const rule of input.rules) {
+      for (const m of rule.when ?? []) {
+        const problem = m.op === "matches" ? unsafePatternReason(m.value) : null;
+        if (problem) apiError(422, "invalid_pattern", `Rule for ${rule.tool}: ${problem}`);
+      }
+    }
     const { db } = c.var.services.database;
     const userId = c.var.user.id;
     await db.transaction(async (tx) => {

@@ -1,4 +1,6 @@
-import { decideToolCall, readEvents, requestCancel, schema } from "@synapse/db";
+import { evaluatePolicy } from "@synapse/core";
+import { decideToolCall, PgRunStore, readEvents, requestCancel, schema } from "@synapse/db";
+import type { JSONValue } from "ai";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -6,6 +8,7 @@ import { z } from "zod";
 import { type AppEnv, apiError, body } from "../http";
 
 const PAUSE_OR_END = new Set(["waiting", "completed", "failed", "cancelled"]);
+const EVENT_PAGE = 1000;
 
 export const runs = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -102,7 +105,12 @@ export const runs = new Hono<AppEnv>()
           for (const e of events) {
             await stream.writeSSE({ id: String(e.seq), data: JSON.stringify(e) });
             lastSeq = e.seq;
-            if (e.type === "run.status" && PAUSE_OR_END.has(e.status)) done = true;
+            // Only the latest status counts: a run can pause, be approved and resume.
+            if (e.type === "run.status") done = PAUSE_OR_END.has(e.status);
+          }
+          if (events.length === EVENT_PAGE) {
+            pending = true;
+            continue;
           }
           if (done) break;
           if (events.length === 0) {
@@ -131,6 +139,8 @@ export const runs = new Hono<AppEnv>()
       }),
     );
     const runId = c.req.param("id");
+    if (input.approved && input.input !== undefined)
+      await assertEditAllowed(c, runId, c.req.param("toolCallId"), input.input);
     await decideToolCall(c.var.services.database.db, {
       userId: c.var.user.id,
       runId,
@@ -179,6 +189,35 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
     .orderBy(desc(schema.toolCalls.createdAt));
   return c.json({ approvals: rows });
 });
+
+/** Edited arguments are re-checked against block rules: editing must not route around them. */
+async function assertEditAllowed(
+  c: { var: AppEnv["Variables"] },
+  runId: string,
+  toolCallId: string,
+  input: JSONValue,
+) {
+  const { db } = c.var.services.database;
+  const [call] = await db
+    .select({ name: schema.toolCalls.name, effect: schema.toolCalls.effect })
+    .from(schema.toolCalls)
+    .where(
+      and(
+        eq(schema.toolCalls.runId, runId),
+        eq(schema.toolCalls.id, toolCallId),
+        eq(schema.toolCalls.userId, c.var.user.id),
+      ),
+    );
+  if (!call) apiError(404, "not_found", "Action not found.");
+  const policy = await new PgRunStore(db).getPolicy(c.var.user.id);
+  const verdict = evaluatePolicy(
+    { tool: call.name, effect: call.effect, input, tainted: true },
+    policy.rules,
+    policy.defaults,
+  );
+  if (verdict.decision === "block")
+    apiError(422, "blocked", `The edited action is blocked: ${verdict.reason}`);
+}
 
 async function ownRun(c: { var: AppEnv["Variables"] }, id: string) {
   const [run] = await c.var.services.database.db

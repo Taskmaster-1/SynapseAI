@@ -97,7 +97,8 @@ export const connections = new Hono<AppEnv>()
           .trim()
           .min(1)
           .max(40)
-          .regex(/^[a-zA-Z0-9 _-]+$/, "letters, numbers, spaces, - and _ only"),
+          // No underscores: tool names are "<connection>__<tool>", so they must stay unambiguous.
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9 -]*$/, "letters, numbers, spaces and - only"),
         url: z.string().url(),
         token: z.string().min(1).max(4000).optional(),
       }),
