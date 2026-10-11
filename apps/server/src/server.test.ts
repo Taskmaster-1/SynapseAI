@@ -204,3 +204,37 @@ test("settings keep provider keys write-only and encrypted", async () => {
   const [row] = await services.database.db.select().from(schema.userSettings);
   expect(JSON.stringify(row)).not.toContain("sk-ant-test");
 });
+
+test("automations: validation, creation in their own chat, run now", async () => {
+  const cookie = await signUp("ops@example.com");
+  const ops = api(cookie);
+  const bad = await ops("/api/automations", {
+    method: "POST",
+    json: { name: "x", prompt: "y", schedule: "* * * * *" },
+  });
+  expect(bad.status).toBe(422);
+  const created = await ops("/api/automations", {
+    method: "POST",
+    json: {
+      name: "Daily digest",
+      prompt: "Summarise my open issues",
+      schedule: "0 9 * * 1-5",
+      timezone: "Asia/Kolkata",
+    },
+  });
+  expect(created.status).toBe(201);
+  const auto = created.json!.automation;
+  expect(new Date(auto.nextRunAt).getTime()).toBeGreaterThan(Date.now());
+  const chats = (await ops("/api/chats")).json!.chats;
+  expect(chats.map((c: { id: string }) => c.id)).toContain(auto.chatId);
+
+  const ran = await ops(`/api/automations/${auto.id}/run`, { method: "POST" });
+  expect(ran.status).toBe(202);
+  expect(
+    (
+      await api(await signUp("other@example.com"))(`/api/automations/${auto.id}/run`, {
+        method: "POST",
+      })
+    ).status,
+  ).toBe(404);
+});

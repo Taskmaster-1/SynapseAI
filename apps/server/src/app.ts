@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import { type AppEnv, onError, requireUser } from "./http";
 import { documents, memories, policy, settings, usage } from "./routes/account";
+import { automations } from "./routes/automations";
 import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
 import { approvals, runs } from "./routes/runs";
@@ -62,6 +63,7 @@ export function createApp(services: Services) {
   api.route("/documents", documents);
   api.route("/settings", settings);
   api.route("/usage", usage);
+  api.route("/automations", automations);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);
 

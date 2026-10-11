@@ -5,7 +5,15 @@ import {
   parseModelRef,
   runAgent,
 } from "@synapse/core";
-import { claimRun, PgRunStore, releaseRun, renewLease, resetAttempts, schema } from "@synapse/db";
+import {
+  claimRun,
+  fireDueAutomations,
+  PgRunStore,
+  releaseRun,
+  renewLease,
+  resetAttempts,
+  schema,
+} from "@synapse/db";
 import { buildToolset, loadMemoryBlock } from "@synapse/tools";
 import type { LanguageModel } from "ai";
 import { and, eq, gte, sql } from "drizzle-orm";
@@ -27,6 +35,7 @@ export class Worker {
   private wakers: (() => void)[] = [];
   private loops: Promise<void>[] = [];
   private unlisten: (() => Promise<void>) | null = null;
+  private scheduler: Timer | null = null;
 
   constructor(
     private readonly s: Services,
@@ -37,14 +46,27 @@ export class Worker {
   async start(concurrency: number) {
     this.unlisten = await this.s.database.listen(RUNS_CHANNEL, () => this.wakeOne());
     for (let i = 0; i < concurrency; i++) this.loops.push(this.loop());
+    this.scheduler = setInterval(() => void this.fireAutomations(), 30_000);
+    void this.fireAutomations();
     log.info("worker started", { worker: this.id, concurrency });
   }
 
   async stop() {
     this.stopped = true;
+    if (this.scheduler) clearInterval(this.scheduler);
     for (const w of this.wakers.splice(0)) w();
     await this.unlisten?.();
     await Promise.allSettled(this.loops);
+  }
+
+  private async fireAutomations() {
+    try {
+      const fired = await fireDueAutomations(this.s.database.db);
+      for (const runId of fired) await this.s.wake(runId);
+      if (fired.length) log.info("automations fired", { count: fired.length });
+    } catch (error) {
+      log.error("automation scheduler failed", { error: String(error) });
+    }
   }
 
   private wakeOne() {

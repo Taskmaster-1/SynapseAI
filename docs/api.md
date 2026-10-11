@@ -109,3 +109,16 @@ Event types (`RunEvent` in `packages/core/src/types.ts`): `run.status`, `message
 | GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google", boolean> }` — keys are write-only |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
+
+## Automations
+
+Prompts that run on a schedule, each in its own chat. Anything that needs approval waits in
+the approvals inbox.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/automations` | | `{ automations: { id, name, prompt, schedule, timezone, enabled, chatId, nextRunAt, lastRunAt }[] }` |
+| POST | `/api/automations` | `{ name, prompt, schedule, timezone?, enabled? }` — `schedule` is 5-field cron, ≥ 15 min apart | `{ automation }` (`422 invalid_schedule` with a message) |
+| PATCH | `/api/automations/:id` | partial of the above | `{ automation }` |
+| DELETE | `/api/automations/:id` | | `204` |
+| POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now |

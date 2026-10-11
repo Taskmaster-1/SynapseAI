@@ -13,7 +13,7 @@ import {
   requestCancel,
   sendMessage,
 } from "./runs";
-import { chats, pendingInputs, runs, user } from "./schema";
+import { automations, chats, pendingInputs, runs, user } from "./schema";
 import { PgRunStore } from "./store";
 
 let database: Database;
@@ -176,4 +176,46 @@ test("SecretBox round-trips and rejects tampering", async () => {
   const sealed = await box.seal("token");
   expect(await box.open(sealed)).toBe("token");
   await expect(box.open(`${sealed.slice(0, -2)}AA`)).rejects.toThrow();
+});
+
+describe("automations", () => {
+  test("schedules are validated", async () => {
+    const { validateSchedule } = await import("./automations");
+    expect(validateSchedule("0 9 * * 1-5", "Europe/London")).toBeNull();
+    expect(validateSchedule("* * * * *", "UTC")).toContain("15 minutes");
+    expect(validateSchedule("not cron", "UTC")).not.toBeNull();
+    expect(validateSchedule("0 9 * * *", "Mars/Olympus")).not.toBeNull();
+  });
+
+  test("due automations fire once, advance, and queue behind an active run", async () => {
+    const { fireDueAutomations, nextRun } = await import("./automations");
+    const chatId = await newChat();
+    const past = new Date(Date.now() - 60_000);
+    const [auto] = await database.db
+      .insert(automations)
+      .values({
+        userId: "u1",
+        name: "Morning brief",
+        prompt: "Summarise my inbox",
+        schedule: "0 9 * * *",
+        chatId,
+        nextRunAt: past,
+      })
+      .returning();
+
+    // Drain unrelated due automations from other tests (none expected).
+    const fired = await fireDueAutomations(database.db);
+    expect(fired).toHaveLength(1);
+    const [after] = await database.db
+      .select()
+      .from(automations)
+      .where(eq(automations.id, auto!.id));
+    expect(after!.nextRunAt!.getTime()).toBe(
+      nextRun("0 9 * * *", "UTC", after!.lastRunAt!)!.getTime(),
+    );
+    expect(await fireDueAutomations(database.db)).toEqual([]);
+
+    const [run] = await database.db.select().from(runs).where(eq(runs.id, fired[0]!));
+    expect(run).toMatchObject({ trigger: "schedule", status: "queued", chatId });
+  });
 });

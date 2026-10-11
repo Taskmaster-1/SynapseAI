@@ -364,3 +364,33 @@ export const chunks = pgTable(
     index("chunks_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
   ],
 );
+
+// ── Automations ────────────────────────────────────────────────────────────
+
+/** A prompt that runs on a schedule in its own chat. Approvals land in the inbox. */
+export const automations = pgTable(
+  "automations",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prompt: text("prompt").notNull(),
+    /** Five-field cron expression, evaluated in `timezone`. */
+    schedule: text("schedule").notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    enabled: boolean("enabled").notNull().default(true),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("automations_user_idx").on(t.userId),
+    index("automations_due_idx").on(t.nextRunAt).where(sql`enabled`),
+  ],
+);
