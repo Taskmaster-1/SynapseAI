@@ -24,7 +24,10 @@ export class EventBus {
 
   subscribe(runId: string, fn: (seq: number) => void): () => void {
     let set = this.subs.get(runId);
-    if (!set) this.subs.set(runId, (set = new Set()));
+    if (!set) {
+      set = new Set();
+      this.subs.set(runId, set);
+    }
     set.add(fn);
     return () => {
       set.delete(fn);

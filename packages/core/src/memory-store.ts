@@ -122,7 +122,7 @@ export class MemoryStore implements RunStore {
   /** Test helper mirroring the decision endpoint: approve or deny one awaiting call. */
   decide(id: string, approved: boolean, reason?: string) {
     const call = this.toolCalls.get(id);
-    if (!call || call.status !== "awaiting_approval") return false;
+    if (call?.status !== "awaiting_approval") return false;
     call.status = approved ? "approved" : "denied";
     if (!approved)
       call.output = { type: "denied", reason: reason ?? "The user denied this action." };

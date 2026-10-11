@@ -56,6 +56,7 @@ function api(cookie: string) {
       ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     });
     const text = await res.text();
+    // biome-ignore lint/suspicious/noExplicitAny: test responses are loosely typed JSON
     return { status: res.status, json: text ? (JSON.parse(text) as Record<string, any>) : null };
   };
 }

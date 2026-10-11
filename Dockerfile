@@ -11,6 +11,9 @@ COPY packages/evals/package.json packages/evals/
 RUN bun install --frozen-lockfile
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next bakes the /api proxy target in at build time.
+ARG API_URL=http://server:8787
+ENV API_URL=${API_URL}
 RUN bun run --filter '@synapse/web' build
 
 FROM oven/bun:1.3.14-slim

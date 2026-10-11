@@ -283,7 +283,7 @@ async function resolve(
 async function writeToolResults(opts: RunAgentOptions, run: RunRecord): Promise<void> {
   const rows = await opts.store.listMessages(run.chatId);
   const last = rows.at(-1);
-  if (!last || last.message.role !== "assistant" || !Array.isArray(last.message.content)) return;
+  if (last?.message.role !== "assistant" || !Array.isArray(last.message.content)) return;
   const callParts = last.message.content.filter((p) => p.type === "tool-call");
   if (callParts.length === 0) return;
 

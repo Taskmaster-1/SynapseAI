@@ -29,8 +29,6 @@ services:
   web:
     build: .
     command: ["bun", "run", "--filter", "@synapse/web", "start"]
-    environment:
-      API_URL: http://server:8787
     ports:
       - "3000:3000"
     depends_on:
