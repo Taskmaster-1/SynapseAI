@@ -5,5 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@synapse/core": "workspace:*",
+    "ai": "7.0.116"
   }
 }
