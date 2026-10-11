@@ -26,15 +26,13 @@ async function startRun(tx: Db, chatId: string, userId: string, trigger: string)
     .where(eq(pendingInputs.chatId, chatId))
     .orderBy(asc(pendingInputs.id));
   if (orphans.length > 0) {
-    await tx
-      .insert(messages)
-      .values(
-        orphans.map((p) => ({
-          chatId,
-          runId: run!.id,
-          message: { role: "user" as const, content: p.content },
-        })),
-      );
+    await tx.insert(messages).values(
+      orphans.map((p) => ({
+        chatId,
+        runId: run!.id,
+        message: { role: "user" as const, content: p.content },
+      })),
+    );
     await tx.delete(pendingInputs).where(
       inArray(
         pendingInputs.id,
