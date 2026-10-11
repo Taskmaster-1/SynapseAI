@@ -38,6 +38,8 @@ export interface RunStore {
   }): Promise<StoredMessage>;
   /** Writes the assistant message and its proposed tool calls atomically (record before execute). */
   appendAssistantStep(args: {
+    /** Pre-assigned id, so streamed events and the stored row share it. */
+    id: string;
     chatId: string;
     runId: string;
     model: string;

@@ -455,6 +455,7 @@ async function streamOneStep(
   }
 
   const stored = await store.appendAssistantStep({
+    id: messageId,
     chatId: run.chatId,
     runId: run.id,
     model: candidate.spec.ref,

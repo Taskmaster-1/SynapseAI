@@ -187,6 +187,7 @@ describe("runAgent", () => {
       { text: "ok" },
     ]);
     await store.appendAssistantStep({
+      id: "m-crash",
       chatId: "chat1",
       runId: opts.runId,
       model: "x",

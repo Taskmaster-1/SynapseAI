@@ -62,9 +62,9 @@ export class MemoryStore implements RunStore {
     return this.push(msg);
   }
 
-  private push(msg: Parameters<RunStore["appendMessage"]>[0]): StoredMessage {
+  private push(msg: Parameters<RunStore["appendMessage"]>[0] & { id?: string }): StoredMessage {
     const row: StoredMessage = {
-      id: crypto.randomUUID(),
+      id: msg.id ?? crypto.randomUUID(),
       seq: ++this.seq,
       chatId: msg.chatId,
       runId: msg.runId,
@@ -79,6 +79,7 @@ export class MemoryStore implements RunStore {
 
   async appendAssistantStep(args: Parameters<RunStore["appendAssistantStep"]>[0]) {
     const row = this.push({
+      id: args.id,
       chatId: args.chatId,
       runId: args.runId,
       model: args.model,

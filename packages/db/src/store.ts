@@ -130,6 +130,7 @@ export class PgRunStore implements RunStore {
       const [row] = await tx
         .insert(messages)
         .values({
+          id: args.id,
           chatId: args.chatId,
           runId: args.runId,
           model: args.model,
