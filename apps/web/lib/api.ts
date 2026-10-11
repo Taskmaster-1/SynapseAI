@@ -102,18 +102,37 @@ export interface AppConfig {
   models: string[];
 }
 
+export type Trigger = "chat" | "schedule" | "manual";
+
 export interface ChatSummary {
   id: string;
   title: string;
   updatedAt: string;
   status: RunStatus | null;
   pendingApprovals: number;
+  costUsd: number;
+  tainted: boolean;
+  trigger: Trigger | null;
+  /** Latest assistant text (markdown, ≤ 200 chars). */
+  snippet: string | null;
 }
+
+/** Run fields that the event stream doesn't carry; refreshed from snapshots. */
+export interface RunMeta {
+  model: string | null;
+  tainted: boolean;
+  steps: number;
+  trigger: Trigger | null;
+  createdAt: string | null;
+  finishedAt: string | null;
+}
+
+export type TaskRun = UiRun & Partial<RunMeta>;
 
 export interface ChatDetail {
   chat: { id: string; title: string };
   messages: UiMessage[];
-  run: UiRun | null;
+  run: TaskRun | null;
 }
 
 export interface RunRow {
@@ -121,8 +140,9 @@ export interface RunRow {
   chatId: string;
   chatTitle: string;
   status: RunStatus;
-  trigger: string;
+  trigger: Trigger | string;
   model: string | null;
+  tainted?: boolean;
   steps: number;
   inputTokens: number;
   outputTokens: number;
@@ -141,6 +161,7 @@ export interface AuditToolCall {
   decisionReason: string | null;
   input: unknown;
   output: ToolOutput | null;
+  inputEdited?: boolean;
   decidedBy: string | null;
   decidedAt: string | null;
   createdAt: string;
@@ -154,7 +175,10 @@ export interface Approval {
   name: string;
   effect: Effect;
   input: unknown;
-  reason: string;
+  /** Human sentence: why this needs approval. */
+  reason: string | null;
+  /** One-line human summary from the tool. */
+  preview: string | null;
   createdAt: string;
 }
 
@@ -260,8 +284,16 @@ export interface AutomationInput {
 
 // ---------- Endpoints ----------
 
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+}
+
 export const api = {
   config: () => get<AppConfig>("/api/config"),
+  session: () => get<{ user: SessionUser } | null>("/api/auth/get-session"),
 
   chats: () => get<{ chats: ChatSummary[] }>("/api/chats"),
   chat: (id: string, signal?: AbortSignal) => get<ChatDetail>(`/api/chats/${enc(id)}`, { signal }),

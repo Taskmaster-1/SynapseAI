@@ -1,20 +1,17 @@
 "use client";
 
+import { ArrowRight, LoaderCircle, Pencil, Play, Plus, Repeat, Trash } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
-import { Empty, ErrorNote, Page, Section, Spinner } from "@/components/page";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
+import { EmptyState, ErrorNote, Field, Page, PageHeader, Skeleton, Switch } from "@/components/ui";
 import { ApiError, type Automation, type AutomationInput, api, errorMessage } from "@/lib/api";
-import { formatDateTime, formatRelative } from "@/lib/format";
+import { describeCron, nextRuns, SCHEDULE_PRESETS } from "@/lib/cron";
+import { cx, formatDateTime, formatRelative } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
-
-const PRESETS = [
-  { label: "Weekdays 9:00", cron: "0 9 * * 1-5" },
-  { label: "Every day 8:00", cron: "0 8 * * *" },
-  { label: "Every Monday 8:00", cron: "0 8 * * 1" },
-  { label: "Hourly", cron: "0 * * * *" },
-];
+import { useWorkspace } from "@/lib/workspace";
 
 function localTimezone(): string {
   try {
@@ -24,8 +21,9 @@ function localTimezone(): string {
   }
 }
 
-function describe(cron: string): string | null {
-  return PRESETS.find((p) => p.cron === cron.trim())?.label ?? null;
+function humanSchedule(cron: string, tz: string) {
+  const d = describeCron(cron);
+  return d ? `${d} (${tz})` : `Custom schedule (${tz})`;
 }
 
 export default function AutomationsPage() {
@@ -33,88 +31,103 @@ export default function AutomationsPage() {
   const [editing, setEditing] = useState<Automation | "new" | null>(null);
   const list = autos.data?.automations;
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("new")) setEditing("new");
+  }, []);
+
   const upsert = (a: Automation) =>
     autos.setData((d) => {
-      const rest = (d?.automations ?? []).filter((x) => x.id !== a.id);
-      const exists = d?.automations.some((x) => x.id === a.id);
+      const all = d?.automations ?? [];
       return {
-        automations: exists
-          ? (d?.automations ?? []).map((x) => (x.id === a.id ? a : x))
-          : [a, ...rest],
+        automations: all.some((x) => x.id === a.id)
+          ? all.map((x) => (x.id === a.id ? a : x))
+          : [a, ...all],
       };
     });
 
   return (
-    <Page
-      title="Automations"
-      description="Prompts that run on a schedule, each in its own chat. Anything that needs approval waits in your Approvals inbox."
-      actions={
-        editing === null ? (
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => setEditing("new")}
-          >
-            + New automation
+    <Page>
+      <PageHeader
+        title="Automations"
+        description="Prompts that run on a schedule, each in its own task. Anything that needs your OK waits in the Inbox."
+        actions={
+          <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
+            <Plus />
+            New automation
           </button>
-        ) : null
-      }
-    >
-      {editing !== null ? (
-        <AutomationForm
-          key={editing === "new" ? "new" : editing.id}
-          initial={editing === "new" ? null : editing}
-          onCancel={() => setEditing(null)}
-          onSaved={(a) => {
-            upsert(a);
-            setEditing(null);
-          }}
-        />
-      ) : null}
-      {autos.error ? <ErrorNote error={errorMessage(autos.error)} /> : null}
+        }
+      />
+      {autos.error ? <ErrorNote>{errorMessage(autos.error)}</ErrorNote> : null}
       {!list ? (
         autos.loading ? (
-          <Spinner />
+          <div className="space-y-3">
+            <Skeleton className="h-40 rounded-card" />
+          </div>
         ) : null
       ) : list.length === 0 ? (
-        editing === null ? (
-          <Empty>No automations yet.</Empty>
-        ) : null
+        <EmptyState
+          icon={<Repeat className="size-5" />}
+          title="Nothing scheduled yet"
+          action={
+            <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
+              Create an automation
+            </button>
+          }
+        >
+          A morning brief every weekday, a Friday summary of what shipped — set it once and it runs
+          on its own.
+        </EmptyState>
       ) : (
         <ul className="space-y-3">
           {list.map((a) => (
             <li key={a.id}>
-              <AutomationRow
-                automation={a}
-                onChange={upsert}
-                onEdit={() => setEditing(a)}
-                onDeleted={() =>
-                  autos.setData((d) =>
-                    d ? { automations: d.automations.filter((x) => x.id !== a.id) } : d,
-                  )
-                }
-              />
+              <AutomationCard automation={a} onChange={upsert} onEdit={() => setEditing(a)} />
             </li>
           ))}
         </ul>
       )}
+
+      <Sheet
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing === "new" ? "New automation" : "Edit automation"}
+        description="Runs as you, with your approval rules."
+        width={520}
+      >
+        {editing !== null ? (
+          <AutomationForm
+            key={editing === "new" ? "new" : editing.id}
+            initial={editing === "new" ? null : editing}
+            onCancel={() => setEditing(null)}
+            onSaved={(a) => {
+              upsert(a);
+              setEditing(null);
+            }}
+            onDeleted={(id) => {
+              autos.setData((d) =>
+                d ? { automations: d.automations.filter((x) => x.id !== id) } : d,
+              );
+              setEditing(null);
+            }}
+          />
+        ) : null}
+      </Sheet>
     </Page>
   );
 }
 
-function AutomationRow({
+function AutomationCard({
   automation: a,
   onChange,
   onEdit,
-  onDeleted,
 }: {
   automation: Automation;
   onChange: (a: Automation) => void;
   onEdit: () => void;
-  onDeleted: () => void;
 }) {
   const router = useRouter();
   const toast = useToast();
+  const { reload } = useWorkspace();
   const [busy, setBusy] = useState<string | null>(null);
 
   async function act(label: string, fn: () => Promise<void>) {
@@ -128,53 +141,69 @@ function AutomationRow({
     }
   }
 
-  const preset = describe(a.schedule);
   return (
-    <div className="card p-3">
-      <div className="flex flex-wrap items-start gap-3">
+    <article
+      className={cx(
+        "rounded-card border border-line bg-surface p-5",
+        !a.enabled && "bg-surface/60",
+      )}
+    >
+      <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{a.name}</span>
-            {!a.enabled ? (
-              <span className="inline-flex h-5 items-center rounded bg-read-bg px-1.5 text-xs text-read-fg">
-                Paused
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-0.5 text-xs text-fg-muted">
-            <span className="font-mono">{a.schedule}</span>
-            {preset ? ` (${preset})` : null} · {a.timezone}
-          </div>
-          <p className="mt-1.5 line-clamp-2 text-fg-muted">{a.prompt}</p>
-          <div className="mt-1.5 flex flex-wrap gap-x-4 text-xs text-fg-faint">
-            <span title={formatDateTime(a.nextRunAt)}>
-              Next: {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
-            </span>
-            <span title={formatDateTime(a.lastRunAt)}>Last: {formatRelative(a.lastRunAt)}</span>
-            {a.chatId ? (
-              <Link href={`/c/${a.chatId}`} className="text-accent hover:underline">
-                Open chat
-              </Link>
-            ) : null}
-          </div>
+          <h2 className={cx("text-16 font-medium", a.enabled ? "text-fg" : "text-fg-muted")}>
+            {a.name}
+          </h2>
+          <p className="mt-1 line-clamp-2 text-14 text-fg-muted">{a.prompt}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1.5 text-fg-muted">
-            <input
-              type="checkbox"
-              className="size-4 accent-[var(--accent)]"
-              checked={a.enabled}
-              disabled={busy !== null}
-              onChange={(e) => {
-                const enabled = e.target.checked;
-                void act("toggle", async () => {
-                  const res = await api.updateAutomation(a.id, { enabled });
-                  onChange(res.automation);
-                });
-              }}
-            />
-            Enabled
-          </label>
+        <Switch
+          checked={a.enabled}
+          label={a.enabled ? `Pause ${a.name}` : `Enable ${a.name}`}
+          disabled={busy !== null}
+          onChange={(enabled) =>
+            void act("toggle", async () => {
+              const res = await api.updateAutomation(a.id, { enabled });
+              onChange(res.automation);
+              toast(enabled ? "Automation on" : "Automation paused", "success");
+            })
+          }
+        />
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
+        <span className="inline-flex items-center gap-1.5 text-fg">
+          <Repeat className={a.enabled ? "text-accent" : "text-fg-faint"} />
+          {humanSchedule(a.schedule, a.timezone)}
+        </span>
+        <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
+          {a.schedule}
+        </code>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-3.5 text-13">
+        <span className="text-fg-muted" title={formatDateTime(a.nextRunAt)}>
+          Next{" "}
+          <span className="text-fg">
+            {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
+          </span>
+        </span>
+        <span className="text-fg-muted" title={formatDateTime(a.lastRunAt)}>
+          Last{" "}
+          {a.lastRunAt && a.chatId ? (
+            <Link href={`/t/${a.chatId}`} className="text-fg hover:underline">
+              {formatRelative(a.lastRunAt)}
+            </Link>
+          ) : (
+            <span className="text-fg">never</span>
+          )}
+        </span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={busy !== null}
+            onClick={onEdit}
+          >
+            <Pencil className="size-3.5" />
+            Edit
+          </button>
           <button
             type="button"
             className="btn btn-sm"
@@ -182,32 +211,21 @@ function AutomationRow({
             onClick={() =>
               void act("run", async () => {
                 const res = await api.runAutomation(a.id);
-                router.push(`/c/${res.chatId}`);
+                void reload();
+                router.push(`/t/${res.chatId}`);
               })
             }
           >
-            {busy === "run" ? "Starting…" : "Run now"}
+            {busy === "run" ? (
+              <LoaderCircle className="anim-spin size-3.5" />
+            ) : (
+              <Play className="size-3.5" />
+            )}
+            Run now
           </button>
-          <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={onEdit}>
-            Edit
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger btn-sm"
-            disabled={busy !== null}
-            onClick={() => {
-              if (!window.confirm(`Delete "${a.name}"?`)) return;
-              void act("delete", async () => {
-                await api.deleteAutomation(a.id);
-                onDeleted();
-              });
-            }}
-          >
-            Delete
-          </button>
-        </div>
+        </span>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -215,20 +233,28 @@ function AutomationForm({
   initial,
   onCancel,
   onSaved,
+  onDeleted,
 }: {
   initial: Automation | null;
   onCancel: () => void;
   onSaved: (a: Automation) => void;
+  onDeleted: (id: string) => void;
 }) {
   const toast = useToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
-  const [schedule, setSchedule] = useState(initial?.schedule ?? PRESETS[0]!.cron);
+  const [schedule, setSchedule] = useState(initial?.schedule ?? SCHEDULE_PRESETS[0]!.cron);
   const [timezone, setTimezone] = useState(initial?.timezone ?? localTimezone());
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const preview = useMemo(
+    () => nextRuns(schedule, timezone.trim() || "UTC", 3),
+    [schedule, timezone],
+  );
+  const described = describeCron(schedule);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -256,80 +282,100 @@ function AutomationForm({
     }
   }
 
+  async function remove() {
+    if (!initial || !window.confirm(`Delete “${initial.name}”? Its past task stays.`)) return;
+    setBusy(true);
+    try {
+      await api.deleteAutomation(initial.id);
+      toast("Automation deleted", "success");
+      onDeleted(initial.id);
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  const tz = timezone.trim() || "UTC";
+  const fmt = (d: Date) =>
+    d.toLocaleString(undefined, {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
   return (
-    <Section title={initial ? `Edit “${initial.name}”` : "New automation"}>
-      <form onSubmit={submit} className="space-y-4">
-        <div>
-          <label htmlFor="auto-name" className="label">
-            Name
-          </label>
-          <input
-            id="auto-name"
-            className="input"
-            required
-            placeholder="Morning inbox triage"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
+    <form onSubmit={submit} className="space-y-5">
+      <Field label="Name" htmlFor="auto-name">
+        <input
+          id="auto-name"
+          data-autofocus
+          className="input"
+          required
+          placeholder="Morning brief"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </Field>
+      <Field label="What should it do?" htmlFor="auto-prompt">
+        <textarea
+          id="auto-prompt"
+          className="input min-h-28 resize-y"
+          required
+          placeholder="Summarise unread email and today's Linear issues. Flag anything urgent."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+      </Field>
+
+      <fieldset>
+        <legend className="label">When</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {SCHEDULE_PRESETS.map((p) => {
+            const on = schedule.trim() === p.cron;
+            return (
+              <button
+                key={p.cron}
+                type="button"
+                aria-pressed={on}
+                onClick={() => {
+                  setSchedule(p.cron);
+                  setScheduleError(null);
+                }}
+                className={cx(
+                  "h-8 rounded-full border px-3 text-13 transition-colors duration-150",
+                  on
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+                )}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
-        <div>
-          <label htmlFor="auto-prompt" className="label">
-            Prompt
-          </label>
-          <textarea
-            id="auto-prompt"
-            className="input min-h-28"
-            required
-            placeholder="Summarize unread email from the last day and draft replies for anything urgent."
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
           <div>
-            <label htmlFor="auto-schedule" className="label">
-              Schedule (cron, at least 15 minutes apart)
+            <label htmlFor="auto-schedule" className="hint mb-1 block">
+              Cron (5 fields, ≥ 15 min apart)
             </label>
             <input
               id="auto-schedule"
-              className="input font-mono text-[13px]"
+              className="input font-mono text-13"
               required
               value={schedule}
               aria-invalid={scheduleError ? true : undefined}
-              aria-describedby={scheduleError ? "auto-schedule-error" : undefined}
+              aria-describedby="auto-schedule-desc"
               onChange={(e) => {
                 setSchedule(e.target.value);
                 setScheduleError(null);
               }}
             />
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.cron}
-                  type="button"
-                  aria-pressed={schedule.trim() === p.cron}
-                  className={
-                    schedule.trim() === p.cron
-                      ? "btn btn-sm border-accent text-accent"
-                      : "btn btn-sm text-fg-muted"
-                  }
-                  onClick={() => {
-                    setSchedule(p.cron);
-                    setScheduleError(null);
-                  }}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            {scheduleError ? (
-              <p id="auto-schedule-error" role="alert" className="mt-1.5 text-danger-fg">
-                {scheduleError}
-              </p>
-            ) : null}
           </div>
           <div>
-            <label htmlFor="auto-tz" className="label">
+            <label htmlFor="auto-tz" className="hint mb-1 block">
               Timezone
             </label>
             <input
@@ -341,29 +387,64 @@ function AutomationForm({
             />
           </div>
         </div>
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            className="size-4 accent-[var(--accent)]"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-          />
-          Enabled
-        </label>
-        {error ? (
-          <p role="alert" className="text-danger-fg">
-            {error}
-          </p>
-        ) : null}
-        <div className="flex gap-2">
-          <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? "Saving…" : initial ? "Save" : "Create"}
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
+        <div id="auto-schedule-desc" className="mt-3 rounded-[10px] bg-sunken px-3.5 py-3">
+          {scheduleError ? (
+            <p role="alert" className="text-13 text-danger">
+              {scheduleError}
+            </p>
+          ) : preview === null ? (
+            <p className="text-13 text-fg-muted">That doesn't look like a valid schedule yet.</p>
+          ) : (
+            <>
+              <p className="text-13 font-medium text-fg">
+                {described ? `${described} (${tz})` : `Custom schedule (${tz})`}
+              </p>
+              <p className="eyebrow mt-2.5 mb-1">Next 3 runs</p>
+              <ol className="space-y-0.5 text-13 text-fg-muted">
+                {preview.length === 0 ? <li>Not within the next month.</li> : null}
+                {preview.map((d) => (
+                  <li key={d.getTime()} className="tabular flex items-center gap-2">
+                    <ArrowRight className="size-3 text-fg-faint" />
+                    {fmt(d)}
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
         </div>
-      </form>
-    </Section>
+      </fieldset>
+
+      <div className="flex items-center justify-between rounded-[10px] border border-line px-3.5 py-3">
+        <div>
+          <p className="text-14 text-fg">Enabled</p>
+          <p className="text-12 text-fg-muted">Paused automations keep their settings.</p>
+        </div>
+        <Switch checked={enabled} onChange={setEnabled} label="Enabled" />
+      </div>
+
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+
+      <div className="flex items-center gap-2 pt-1">
+        {initial ? (
+          <button
+            type="button"
+            className="btn btn-ghost text-danger"
+            onClick={() => void remove()}
+            disabled={busy}
+          >
+            <Trash className="size-3.5" />
+            Delete
+          </button>
+        ) : null}
+        <span className="flex-1" />
+        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>
+          {busy ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+          {initial ? "Save" : "Create"}
+        </button>
+      </div>
+    </form>
   );
 }

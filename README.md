@@ -4,6 +4,8 @@
 
 SynapseAI connects to the services you already use (GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
 
+![A task waiting for approval: the agent drafted an email and shows it as an editable card, with the activity timeline on the right](docs/screenshots/task.png)
+
 > v2 is a ground-up rewrite. The v1 FastAPI app is in git history (`main` before the v2 merge).
 
 ## Why another agent?
@@ -45,7 +47,7 @@ cp .env.example .env          # add ANTHROPIC_API_KEY (or another provider)
 bun run dev                   # API on :8787, web on :3000
 ```
 
-Open http://localhost:3000 and create an account. With no `DATABASE_URL`, data lives in `.data/` using [PGlite](https://pglite.dev) (Postgres in WebAssembly) — fine for trying it out, single process only.
+Open http://localhost:3000 and create an account. To explore the UI without a model key, stop the server and run `bun run seed` first: it creates `demo@synapse.local` / `synapse-demo-password` with example tasks, a pending approval, an automation and more. With no `DATABASE_URL`, data lives in `.data/` using [PGlite](https://pglite.dev) (Postgres in WebAssembly) — fine for trying it out, single process only.
 
 ### Docker Compose (Postgres + pgvector)
 

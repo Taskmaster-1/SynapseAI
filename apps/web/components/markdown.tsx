@@ -3,7 +3,7 @@
 import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { hostOf } from "@/lib/format";
+import { cx, hostOf } from "@/lib/format";
 
 /**
  * Agent output can carry prompt-injected content, so:
@@ -19,7 +19,10 @@ const components: Components = {
     if (!url || !host) return <span className="text-fg-muted">[{label}]</span>;
     return (
       <a href={url} target="_blank" rel="noopener noreferrer nofollow" title={url}>
-        [{label}] <span className="text-fg-faint no-underline">({host})</span>
+        [{label}]{" "}
+        <span className="text-fg-faint" style={{ textDecoration: "none" }}>
+          ({host})
+        </span>
       </a>
     );
   },
@@ -29,7 +32,10 @@ const components: Components = {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer nofollow" title={href}>
         {children}
-        <span className="ml-1 text-[0.857em] text-fg-faint" style={{ textDecoration: "none" }}>
+        <span
+          className="ml-1 text-[0.86em] text-fg-faint"
+          style={{ textDecoration: "none", display: "inline-block" }}
+        >
           ({host})
         </span>
       </a>
@@ -37,9 +43,17 @@ const components: Components = {
   },
 };
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  streaming = false,
+  className,
+}: {
+  text: string;
+  streaming?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="prose-chat">
+    <div className={cx("prose-agent", streaming && "streaming-caret", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
         {text}
       </ReactMarkdown>
