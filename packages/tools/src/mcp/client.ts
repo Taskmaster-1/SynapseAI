@@ -201,7 +201,8 @@ export class McpSession {
     return client;
   }
 
-  private async listTools(conn: Connection): Promise<McpToolInfo[]> {
+  /** Tool list for a connection, served from a short-lived cache when fresh. */
+  async listTools(conn: Connection): Promise<McpToolInfo[]> {
     const cached = listCache.get(conn.id);
     if (cached && cached.key === cacheKey(conn) && Date.now() - cached.at < LIST_TTL_MS)
       return cached.tools;

@@ -396,9 +396,20 @@ async function streamOneStep(
     role: "assistant" as const,
     content: [],
   };
-  const content = Array.isArray(message.content)
+  const rawContent = Array.isArray(message.content)
     ? message.content
     : [{ type: "text" as const, text: message.content }];
+  // Some models (often local ones) reuse ids like "call_0" across steps. Ids must be
+  // unique within a run, so colliding ids are replaced before anything is stored.
+  const seen = new Set((await store.listToolCalls(run.id)).map((c) => c.id));
+  const content = rawContent.map((part) => {
+    if (part.type !== "tool-call") return part;
+    const id = seen.has(part.toolCallId)
+      ? `${part.toolCallId}_${crypto.randomUUID().slice(0, 8)}`
+      : part.toolCallId;
+    seen.add(id);
+    return id === part.toolCallId ? part : { ...part, toolCallId: id };
+  });
 
   const policy = await store.getPolicy(run.userId);
   const toolCalls: Omit<ToolCallRecord, "messageId" | "runId">[] = [];

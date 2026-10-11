@@ -286,3 +286,25 @@ describe("runAgent", () => {
     expect(executed).toEqual(["search"]);
   });
 });
+
+test("tool call ids reused across steps are made unique", async () => {
+  const store = new MemoryStore();
+  const run = store.createRun({ chatId: "c", userId: "u", text: "x" });
+  const m = scriptedModel([
+    { toolCalls: [{ name: "search", input: { q: "1" }, id: "call_0" }] },
+    { toolCalls: [{ name: "search", input: { q: "2" }, id: "call_0" }] },
+    { text: "done" },
+  ]);
+  const status = await runAgent({
+    runId: run.id,
+    store,
+    events: new MemoryEvents(),
+    tools: makeTools(),
+    models: [m],
+    system: "s",
+  });
+  expect(status).toBe("completed");
+  const ids = (await store.listToolCalls(run.id)).map((c) => c.id);
+  expect(new Set(ids).size).toBe(2);
+  expect(JSON.stringify(m.calls[2]!.prompt)).toContain(ids[1]!);
+});
