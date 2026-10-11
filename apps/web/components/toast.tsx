@@ -1,5 +1,6 @@
 "use client";
 
+import { Check, CircleAlert, Info, X } from "lucide-react";
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
 import { cx } from "@/lib/format";
 
@@ -12,6 +13,7 @@ interface Toast {
 
 const ToastContext = createContext<(message: string, tone?: Tone) => void>(() => {});
 
+/** Transient confirmations only. Errors that need action belong inline, next to the thing. */
 export function useToast() {
   return useContext(ToastContext);
 }
@@ -28,8 +30,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback(
     (message: string, tone: Tone = "info") => {
       const id = nextId++;
-      setToasts((t) => [...t.slice(-3), { id, message, tone }]);
-      setTimeout(() => dismiss(id), tone === "error" ? 7000 : 4000);
+      setToasts((t) => [...t.slice(-2), { id, message, tone }]);
+      setTimeout(() => dismiss(id), tone === "error" ? 6000 : 4000);
     },
     [dismiss],
   );
@@ -41,29 +43,40 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4"
+        className="pointer-events-none fixed inset-x-0 bottom-20 z-[70] flex flex-col items-center gap-2 px-4 md:inset-x-auto md:right-5 md:bottom-5 md:items-end"
       >
         {toasts.map((t) => (
           <div
             key={t.id}
             role={t.tone === "error" ? "alert" : "status"}
-            className={cx(
-              "pointer-events-auto flex max-w-md items-start gap-3 rounded-md border px-3 py-2 shadow-lg",
-              t.tone === "error"
-                ? "border-danger-fg/40 bg-danger-bg text-danger-fg"
-                : t.tone === "success"
-                  ? "border-ok-fg/40 bg-ok-bg text-ok-fg"
-                  : "border-border bg-subtle text-fg",
-            )}
+            className="anim-row-in pointer-events-auto flex w-full max-w-sm items-center gap-2.5 rounded-[10px] bg-surface py-2.5 pr-2 pl-3 text-13 text-fg shadow-pop"
           >
-            <span className="flex-1">{t.message}</span>
+            <span
+              className={cx(
+                "grid size-5 shrink-0 place-items-center rounded-full",
+                t.tone === "error"
+                  ? "bg-danger-soft text-danger"
+                  : t.tone === "success"
+                    ? "bg-ok-soft text-ok"
+                    : "bg-sunken text-fg-muted",
+              )}
+            >
+              {t.tone === "error" ? (
+                <CircleAlert className="size-3.5" />
+              ) : t.tone === "success" ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Info className="size-3.5" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">{t.message}</span>
             <button
               type="button"
-              className="opacity-70 hover:opacity-100"
+              className="btn btn-ghost btn-icon btn-sm"
               aria-label="Dismiss"
               onClick={() => dismiss(t.id)}
             >
-              ×
+              <X className="size-3.5" />
             </button>
           </div>
         ))}

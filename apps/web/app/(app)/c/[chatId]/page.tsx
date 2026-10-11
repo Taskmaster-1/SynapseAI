@@ -1,6 +1,7 @@
-import { ChatView } from "@/components/chat/chat-view";
+import { redirect } from "next/navigation";
 
-export default async function ChatPage({ params }: { params: Promise<{ chatId: string }> }) {
+/** Old chat URLs live on as tasks. */
+export default async function LegacyChatPage({ params }: { params: Promise<{ chatId: string }> }) {
   const { chatId } = await params;
-  return <ChatView key={chatId} chatId={chatId} />;
+  redirect(`/t/${encodeURIComponent(chatId)}`);
 }

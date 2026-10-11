@@ -1,22 +1,28 @@
 "use client";
 
 import type { ArgMatcher, Decision, Effect, PolicyDefaults, PolicyRule } from "@synapse/core";
-import { useCallback, useEffect, useState } from "react";
-import { EffectBadge } from "@/components/badges";
-import { ErrorNote, Section, Spinner } from "@/components/page";
+import { GripVertical, Plus, ShieldAlert, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
+import { EffectPill, ErrorNote, Segmented, Skeleton } from "@/components/ui";
 import { api, errorMessage, type Policy } from "@/lib/api";
+import { cx, humanToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
 const EFFECTS: Effect[] = ["read", "write", "send", "destructive"];
-const DECISIONS: Decision[] = ["allow", "ask", "block"];
-const OPS: ArgMatcher["op"][] = ["equals", "in", "allEndWith", "matches"];
-const OP_HINT: Record<ArgMatcher["op"], string> = {
-  equals: 'JSON value, e.g. "main" or 42',
-  in: 'JSON array, e.g. ["a","b"] (or comma-separated)',
-  allEndWith: "Comma-separated suffixes, e.g. @acme.com",
-  matches: "Regular expression",
-};
+const OPS: { op: ArgMatcher["op"]; label: string; hint: string }[] = [
+  { op: "allEndWith", label: "ends with", hint: "@acme.com, @acme.io" },
+  { op: "equals", label: "is", hint: "main" },
+  { op: "in", label: "is one of", hint: "a, b, c" },
+  { op: "matches", label: "matches", hint: "^release/" },
+];
+
+const DECISION_OPTIONS: { value: Decision; label: string; tone: "ok" | "attention" | "danger" }[] =
+  [
+    { value: "allow", label: "Allow", tone: "ok" },
+    { value: "ask", label: "Ask", tone: "attention" },
+    { value: "block", label: "Block", tone: "danger" },
+  ];
 
 interface DraftMatcher {
   key: string;
@@ -30,6 +36,7 @@ interface DraftRule {
   decision: Decision;
   when: DraftMatcher[];
   note: string;
+  fresh?: boolean;
 }
 
 const newKey = () =>
@@ -52,7 +59,11 @@ function toDraft(rule: PolicyRule): DraftRule {
           ? m.value
           : m.op === "allEndWith"
             ? m.value.join(", ")
-            : JSON.stringify(m.value),
+            : m.op === "in"
+              ? m.value.map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ")
+              : typeof m.value === "string"
+                ? m.value
+                : JSON.stringify(m.value),
     })),
   };
 }
@@ -64,12 +75,18 @@ const splitList = (raw: string) =>
     .filter(Boolean);
 
 function toMatcher(m: DraftMatcher, where: string): ArgMatcher {
-  if (!m.path.trim()) throw new Error(`${where}: argument path is required`);
   const path = m.path.trim();
+  if (!path) throw new Error(`${where}: say which field the condition checks`);
   switch (m.op) {
     case "equals": {
       try {
-        return { path, op: "equals", value: JSON.parse(m.raw) };
+        const v = JSON.parse(m.raw);
+        return {
+          path,
+          op: "equals",
+          value:
+            typeof v === "object" || typeof v === "number" || typeof v === "boolean" ? v : m.raw,
+        };
       } catch {
         return { path, op: "equals", value: m.raw };
       }
@@ -79,20 +96,20 @@ function toMatcher(m: DraftMatcher, where: string): ArgMatcher {
         const v = JSON.parse(m.raw);
         if (Array.isArray(v)) return { path, op: "in", value: v };
       } catch {
-        // fall through to comma-separated
+        // comma-separated
       }
       return { path, op: "in", value: splitList(m.raw) };
     }
     case "allEndWith": {
       const value = splitList(m.raw);
-      if (value.length === 0) throw new Error(`${where}: give at least one suffix`);
+      if (value.length === 0) throw new Error(`${where}: give at least one ending`);
       return { path, op: "allEndWith", value };
     }
     case "matches":
       try {
         new RegExp(m.raw);
       } catch {
-        throw new Error(`${where}: invalid regular expression`);
+        throw new Error(`${where}: that pattern isn't a valid regular expression`);
       }
       return { path, op: "matches", value: m.raw };
   }
@@ -101,7 +118,7 @@ function toMatcher(m: DraftMatcher, where: string): ArgMatcher {
 function fromDraft(rules: DraftRule[]): PolicyRule[] {
   return rules.map((r, i) => {
     const where = `Rule ${i + 1}`;
-    if (!r.tool.trim()) throw new Error(`${where}: tool pattern is required`);
+    if (!r.tool.trim()) throw new Error(`${where}: which tool does it apply to?`);
     const rule: PolicyRule = { id: r.id, tool: r.tool.trim(), decision: r.decision };
     if (r.when.length) rule.when = r.when.map((m) => toMatcher(m, where));
     if (r.note.trim()) rule.note = r.note.trim();
@@ -110,20 +127,56 @@ function fromDraft(rules: DraftRule[]): PolicyRule[] {
 }
 
 function move<T>(list: T[], from: number, to: number): T[] {
-  if (to < 0 || to >= list.length) return list;
+  if (to < 0 || to >= list.length || from === to) return list;
   const next = [...list];
   const [item] = next.splice(from, 1);
   next.splice(to, 0, item!);
   return next;
 }
 
-export function PolicyEditor() {
+/** Inline token input that grows with its content. */
+function Token({
+  value,
+  onChange,
+  placeholder,
+  label,
+  mono = false,
+  autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  label: string;
+  mono?: boolean;
+  autoFocus?: boolean;
+}) {
+  return (
+    <input
+      aria-label={label}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      size={Math.max(4, Math.min(36, (value || placeholder).length + 1))}
+      // biome-ignore lint/a11y/noAutofocus: new rule from "Always allow…"
+      autoFocus={autoFocus}
+      className={cx(
+        "h-7 max-w-full rounded-[6px] border border-line-strong bg-surface px-2 text-13 font-medium text-fg outline-none transition-[border-color,box-shadow] duration-150 placeholder:font-normal placeholder:text-fg-faint focus:border-accent focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_18%,transparent)]",
+        mono && "font-mono text-12",
+      )}
+    />
+  );
+}
+
+export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
   const toast = useToast();
   const policy = useApi(() => api.policy());
   const [defaults, setDefaults] = useState<PolicyDefaults | null>(null);
   const [rules, setRules] = useState<DraftRule[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const prefilled = useRef(false);
 
   const load = useCallback((p: Policy) => {
     setDefaults(p.defaults);
@@ -131,8 +184,33 @@ export function PolicyEditor() {
   }, []);
 
   useEffect(() => {
-    if (policy.data) load(policy.data);
-  }, [policy.data, load]);
+    if (!policy.data) return;
+    load(policy.data);
+    if (prefillTool && !prefilled.current) {
+      prefilled.current = true;
+      setRules((rs) => [
+        { id: newKey(), tool: prefillTool, decision: "allow", when: [], note: "", fresh: true },
+        ...rs,
+      ]);
+    }
+  }, [policy.data, load, prefillTool]);
+
+  const saved = policy.data
+    ? JSON.stringify({
+        d: policy.data.defaults,
+        r: policy.data.rules
+          .map(toDraft)
+          .map(({ when, ...r }) => ({ ...r, when: when.map(({ key: _k, ...m }) => m) })),
+      })
+    : "";
+  const current = JSON.stringify({
+    d: defaults,
+    r: rules.map(({ when, fresh: _f, ...r }) => ({
+      ...r,
+      when: when.map(({ key: _k, ...m }) => m),
+    })),
+  });
+  const dirty = policy.data !== undefined && saved !== current;
 
   async function save() {
     if (!defaults) return;
@@ -146,9 +224,10 @@ export function PolicyEditor() {
     }
     setSaving(true);
     try {
-      const saved = await api.savePolicy({ defaults, rules: parsed });
-      load(saved);
-      toast("Policy saved", "success");
+      const next = await api.savePolicy({ defaults, rules: parsed });
+      policy.setData(next);
+      load(next);
+      toast("Approval rules saved", "success");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -165,243 +244,261 @@ export function PolicyEditor() {
       ),
     );
 
+  if (policy.error) return <ErrorNote>{errorMessage(policy.error)}</ErrorNote>;
+  if (!defaults)
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-40 rounded-card" />
+        <Skeleton className="h-24 rounded-card" />
+      </div>
+    );
+
   return (
-    <Section
-      title="Approval policy"
-      description={
-        <>
-          Enforced in code on every tool call. Once a run reads untrusted content (an email, a web
-          page, a document), anything that writes, sends or deletes always asks — whatever these
-          rules say.
-        </>
-      }
-      footer={
-        <>
-          {error ? (
-            <span role="alert" className="mr-auto text-danger-fg">
-              {error}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="btn"
-            disabled={saving || !policy.data}
-            onClick={() => policy.data && load(policy.data)}
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={saving || !defaults}
-            onClick={save}
-          >
-            {saving ? "Saving…" : "Save policy"}
-          </button>
-        </>
-      }
-    >
-      {policy.error ? <ErrorNote error={errorMessage(policy.error)} /> : null}
-      {!defaults ? (
-        policy.loading ? (
-          <Spinner />
-        ) : null
-      ) : (
-        <div className="space-y-6">
+    <div className="space-y-10">
+      <section>
+        <h3 className="text-16 font-medium text-fg">By default</h3>
+        <p className="mt-1 mb-4 text-13 text-fg-muted">What happens when no rule below matches.</p>
+        <ul className="divide-y divide-line rounded-card border border-line bg-surface">
+          {EFFECTS.map((effect) => (
+            <li
+              key={effect}
+              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+            >
+              <span className="flex items-center gap-2.5 text-14 text-fg">
+                <EffectPill effect={effect} />
+                tools
+              </span>
+              <Segmented<Decision>
+                label={`Default for ${effect} tools`}
+                value={defaults[effect]}
+                onChange={(d) => setDefaults({ ...defaults, [effect]: d })}
+                options={DECISION_OPTIONS}
+              />
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 flex items-start gap-2 text-12 text-fg-muted">
+          <ShieldAlert className="mt-px size-3.5 shrink-0 text-attention" />
+          Once a task reads outside content — an email, a web page, a document — anything that
+          writes, sends or deletes asks you first, whatever these settings say.
+        </p>
+      </section>
+
+      <section>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="mb-2 font-medium">Defaults by effect</h3>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {EFFECTS.map((effect) => (
-                <div key={effect}>
-                  <label htmlFor={`def-${effect}`} className="mb-1 block">
-                    <EffectBadge effect={effect} />
-                  </label>
-                  <select
-                    id={`def-${effect}`}
-                    className="input"
-                    value={defaults[effect]}
-                    onChange={(e) =>
-                      setDefaults({ ...defaults, [effect]: e.target.value as Decision })
-                    }
-                  >
-                    {DECISIONS.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
+            <h3 className="text-16 font-medium text-fg">Rules</h3>
+            <p className="mt-1 text-13 text-fg-muted">
+              Checked top to bottom; the first match wins. A matching Block always wins. Drag to
+              reorder.
+            </p>
           </div>
-
-          <div>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div>
-                <h3 className="font-medium">Rules</h3>
-                <p className="text-xs text-fg-muted">
-                  First match wins, except any matching <b>block</b> rule always wins. Tool patterns
-                  are globs like <code>github__*</code>.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() =>
-                  setRules((rs) => [
-                    ...rs,
-                    { id: newKey(), tool: "", decision: "ask", when: [], note: "" },
-                  ])
-                }
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() =>
+              setRules((rs) => [
+                ...rs,
+                { id: newKey(), tool: "", decision: "ask", when: [], note: "", fresh: true },
+              ])
+            }
+          >
+            <Plus className="size-3.5" />
+            Add rule
+          </button>
+        </div>
+        {rules.length === 0 ? (
+          <p className="rounded-card border border-dashed border-line-strong px-4 py-6 text-center text-13 text-fg-muted">
+            No rules — the defaults above apply to everything.
+          </p>
+        ) : (
+          <ol className="space-y-2">
+            {rules.map((r, i) => (
+              <li
+                key={r.id}
+                onDragOver={(e) => {
+                  if (dragging === null) return;
+                  e.preventDefault();
+                  setOver(i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragging !== null) setRules((rs) => move(rs, dragging, i));
+                  setDragging(null);
+                  setOver(null);
+                }}
+                className={cx(
+                  "rounded-card border bg-surface transition-[border-color,opacity] duration-150",
+                  over === i && dragging !== null && dragging !== i
+                    ? "border-accent"
+                    : "border-line",
+                  dragging === i && "opacity-50",
+                  r.fresh && "border-accent/50",
+                )}
               >
-                + Add rule
-              </button>
-            </div>
-            {rules.length === 0 ? (
-              <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-fg-muted">
-                No rules — defaults apply.
-              </p>
-            ) : (
-              <ol className="space-y-3">
-                {rules.map((r, i) => (
-                  <li key={r.id} className="rounded-md border border-border bg-subtle p-3">
-                    <div className="flex flex-wrap items-end gap-2">
-                      <span className="w-5 pb-1.5 text-xs text-fg-faint tabular-nums">{i + 1}</span>
-                      <div className="min-w-40 flex-1">
-                        <label htmlFor={`r-${r.id}-tool`} className="label">
-                          Tool
-                        </label>
-                        <input
-                          id={`r-${r.id}-tool`}
-                          className="input font-mono text-[13px]"
-                          placeholder="gmail__send_*"
-                          value={r.tool}
-                          onChange={(e) => update(i, { tool: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`r-${r.id}-dec`} className="label">
-                          Decision
-                        </label>
-                        <select
-                          id={`r-${r.id}-dec`}
-                          className="input w-auto"
-                          value={r.decision}
-                          onChange={(e) => update(i, { decision: e.target.value as Decision })}
+                <div className="flex items-start gap-2 py-3 pr-3 pl-1.5">
+                  <button
+                    type="button"
+                    draggable
+                    onDragStart={(e) => {
+                      setDragging(i);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      setDragging(null);
+                      setOver(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setRules((rs) => move(rs, i, i + (e.key === "ArrowUp" ? -1 : 1)));
+                      }
+                    }}
+                    aria-label={`Rule ${i + 1}. Drag, or use arrow keys, to reorder`}
+                    className="mt-0.5 grid h-7 w-6 shrink-0 cursor-grab place-items-center rounded-[6px] text-fg-faint hover:bg-hover hover:text-fg-muted active:cursor-grabbing"
+                  >
+                    <GripVertical className="size-3.5" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-14 text-fg-muted">
+                      <span>When</span>
+                      <Token
+                        label="Tool"
+                        mono
+                        value={r.tool}
+                        placeholder="gmail__send_email"
+                        onChange={(v) => update(i, { tool: v })}
+                        autoFocus={r.fresh && r.tool === ""}
+                      />
+                      {r.when.map((m, k) => (
+                        <span
+                          key={m.key}
+                          className="inline-flex flex-wrap items-center gap-x-2 gap-y-2"
                         >
-                          {DECISIONS.map((d) => (
-                            <option key={d} value={d}>
-                              {d}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          aria-label={`Move rule ${i + 1} up`}
-                          disabled={i === 0}
-                          onClick={() => setRules((rs) => move(rs, i, i - 1))}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          aria-label={`Move rule ${i + 1} down`}
-                          disabled={i === rules.length - 1}
-                          onClick={() => setRules((rs) => move(rs, i, i + 1))}
-                        >
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          aria-label={`Remove rule ${i + 1}`}
-                          onClick={() => setRules((rs) => rs.filter((_, j) => j !== i))}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                          <span>and</span>
+                          <Token
+                            label="Field"
+                            mono
+                            value={m.path}
+                            placeholder="to"
+                            onChange={(v) => updateMatcher(i, k, { path: v })}
+                          />
+                          <select
+                            aria-label="Condition"
+                            value={m.op}
+                            onChange={(e) =>
+                              updateMatcher(i, k, { op: e.target.value as ArgMatcher["op"] })
+                            }
+                            className="h-7 rounded-[6px] border border-transparent bg-transparent px-1 text-14 text-fg-muted outline-none hover:border-line focus:border-accent"
+                          >
+                            {OPS.map((o) => (
+                              <option key={o.op} value={o.op}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                          <Token
+                            label="Value"
+                            value={m.raw}
+                            placeholder={OPS.find((o) => o.op === m.op)?.hint ?? ""}
+                            onChange={(v) => updateMatcher(i, k, { raw: v })}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon btn-sm size-6"
+                            aria-label="Remove condition"
+                            onClick={() => update(i, { when: r.when.filter((_, n) => n !== k) })}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </span>
+                      ))}
+                      <span aria-hidden="true">→</span>
+                      <Segmented<Decision>
+                        label={`Decision for rule ${i + 1}`}
+                        size="sm"
+                        value={r.decision}
+                        onChange={(d) => update(i, { decision: d })}
+                        options={DECISION_OPTIONS}
+                      />
                     </div>
-
-                    {r.when.length > 0 ? (
-                      <ul className="mt-3 space-y-2 pl-7">
-                        {r.when.map((m, k) => (
-                          <li key={m.key} className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-fg-faint">
-                              {k === 0 ? "when" : "and"}
-                            </span>
-                            <input
-                              aria-label="Argument path"
-                              className="input w-36 font-mono text-[13px]"
-                              placeholder="to.0"
-                              value={m.path}
-                              onChange={(e) => updateMatcher(i, k, { path: e.target.value })}
-                            />
-                            <select
-                              aria-label="Operator"
-                              className="input w-auto"
-                              value={m.op}
-                              onChange={(e) =>
-                                updateMatcher(i, k, { op: e.target.value as ArgMatcher["op"] })
-                              }
-                            >
-                              {OPS.map((op) => (
-                                <option key={op} value={op}>
-                                  {op}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              aria-label="Value"
-                              className="input min-w-40 flex-1 font-mono text-[13px]"
-                              placeholder={OP_HINT[m.op]}
-                              title={OP_HINT[m.op]}
-                              value={m.raw}
-                              onChange={(e) => updateMatcher(i, k, { raw: e.target.value })}
-                            />
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              aria-label="Remove condition"
-                              onClick={() => update(i, { when: r.when.filter((_, n) => n !== k) })}
-                            >
-                              ×
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-
-                    <div className="mt-3 flex flex-wrap items-center gap-2 pl-7">
+                    <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {r.tool && !/[*?]/.test(r.tool) ? (
+                        <span className="text-12 text-fg-faint">{humanToolName(r.tool)}</span>
+                      ) : r.tool ? (
+                        <span className="text-12 text-fg-faint">Pattern · * matches anything</span>
+                      ) : null}
                       <button
                         type="button"
-                        className="btn btn-ghost btn-sm"
+                        className="text-12 font-medium text-accent hover:underline"
                         onClick={() =>
                           update(i, {
-                            when: [...r.when, { key: newKey(), path: "", op: "equals", raw: "" }],
+                            when: [
+                              ...r.when,
+                              { key: newKey(), path: "", op: "allEndWith", raw: "" },
+                            ],
                           })
                         }
                       >
                         + Condition
                       </button>
                       <input
-                        aria-label="Note"
-                        className="input min-w-40 flex-1"
-                        placeholder="Note (shown as the reason)"
+                        aria-label="Note shown as the reason"
+                        className="h-7 min-w-40 flex-1 rounded-[6px] border border-transparent bg-transparent px-1.5 text-12 text-fg-muted outline-none placeholder:text-fg-faint hover:border-line focus:border-accent"
+                        placeholder="Add a note (shown as the reason)"
                         value={r.note}
                         onChange={(e) => update(i, { note: e.target.value })}
                       />
                     </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-        </div>
-      )}
-    </Section>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm shrink-0"
+                    aria-label={`Remove rule ${i + 1}`}
+                    onClick={() => setRules((rs) => rs.filter((_, j) => j !== i))}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      <div
+        className={cx(
+          "sticky bottom-4 z-10 flex items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop transition-opacity duration-150",
+          dirty || error ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        aria-hidden={!(dirty || error)}
+      >
+        {error ? (
+          <span role="alert" className="min-w-0 flex-1 text-13 text-danger">
+            {error}
+          </span>
+        ) : (
+          <span className="flex-1 text-13 text-fg-muted">Unsaved changes</span>
+        )}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={saving}
+          onClick={() => policy.data && load(policy.data)}
+          tabIndex={dirty ? 0 : -1}
+        >
+          Discard
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving}
+          onClick={() => void save()}
+          tabIndex={dirty ? 0 : -1}
+        >
+          {saving ? "Saving…" : "Save rules"}
+        </button>
+      </div>
+    </div>
   );
 }
