@@ -22,7 +22,7 @@ import {
 import { costUsd, isRetryable, type ModelSpec } from "./models";
 import { evaluatePolicy } from "./policy";
 import type { EventSink, RunStore } from "./store";
-import type { ToolRegistry } from "./tools";
+import type { ToolDefinition, ToolRegistry } from "./tools";
 import type { RunRecord, RunStatus, ToolCallRecord, ToolCallStatus, ToolOutput } from "./types";
 
 export interface RuntimeLimits {
@@ -279,7 +279,7 @@ async function settleToolCalls(
           input: c.input,
           effect: c.effect,
           reason,
-          preview: opts.tools.get(c.name)?.preview?.(c.input) ?? null,
+          preview: c.preview,
         });
       }
     }
@@ -517,6 +517,7 @@ async function streamOneStep(
       input,
       inputEdited: false,
       decidedBy: null,
+      preview: safePreview(def, input),
     };
     if (!def) {
       toolCalls.push({
@@ -594,7 +595,7 @@ async function streamOneStep(
         input: call.input,
         effect: call.effect,
         reason: call.decisionReason ?? "",
-        preview: def?.preview?.(call.input) ?? null,
+        preview: call.preview,
       });
     }
     if (call.output)
@@ -616,6 +617,14 @@ async function streamOneStep(
     costUsd: cost,
   });
   return { ok: true };
+}
+
+function safePreview(def: ToolDefinition | undefined, input: JSONValue): string | null {
+  try {
+    return def?.preview?.(input)?.slice(0, 300) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Tools as declared to the model. No `execute`: the runtime owns execution and approvals. */

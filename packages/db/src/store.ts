@@ -48,6 +48,7 @@ function toRecord(r: ToolCallRow): ToolCallRecord {
     decisionReason: r.decisionReason,
     output: r.output,
     decidedBy: r.decidedBy,
+    preview: r.preview,
   };
 }
 

@@ -207,6 +207,7 @@ describe("runAgent", () => {
           decisionReason: null,
           output: null,
           decidedBy: null,
+          preview: null,
         },
       ],
     });
@@ -333,6 +334,7 @@ describe("review fixes", () => {
           decisionReason: null,
           output: null,
           decidedBy: null,
+          preview: null,
         },
       ],
     });

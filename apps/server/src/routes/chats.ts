@@ -20,6 +20,15 @@ export const chats = new Hono<AppEnv>()
           string | null
         >`(select status from runs r where r.chat_id = "chats"."id" order by r.created_at desc limit 1)`,
         pendingApprovals: sql<number>`(select count(*)::int from tool_calls t join runs r on r.id = t.run_id where r.chat_id = "chats"."id" and t.status = 'awaiting_approval')`,
+        costUsd: sql<number>`(select coalesce(sum(cost_usd), 0)::float from runs r where r.chat_id = "chats"."id")`,
+        tainted: sql<boolean>`exists (select 1 from runs r where r.chat_id = "chats"."id" and r.tainted)`,
+        trigger: sql<
+          string | null
+        >`(select trigger from runs r where r.chat_id = "chats"."id" order by r.created_at desc limit 1)`,
+        // Latest assistant text, for task previews.
+        snippet: sql<
+          string | null
+        >`(select left(p->>'text', 200) from messages m, jsonb_array_elements(case when jsonb_typeof(m.message->'content') = 'array' then m.message->'content' else '[]'::jsonb end) p where m.chat_id = "chats"."id" and m.message->>'role' = 'assistant' and p->>'type' = 'text' order by m.seq desc limit 1)`,
       })
       .from(schema.chats)
       .where(eq(schema.chats.userId, c.var.user.id))
@@ -63,6 +72,7 @@ export const chats = new Hono<AppEnv>()
           decisionReason: r.decisionReason,
           output: r.output,
           decidedBy: r.decidedBy,
+          preview: r.preview,
         }))
       : [];
     const [run] = await db
@@ -80,6 +90,12 @@ export const chats = new Hono<AppEnv>()
             id: run.id,
             status: run.status,
             error: run.error,
+            model: run.model,
+            tainted: run.tainted,
+            steps: run.steps,
+            trigger: run.trigger,
+            createdAt: run.createdAt,
+            finishedAt: run.finishedAt,
             inputTokens: run.inputTokens,
             outputTokens: run.outputTokens,
             costUsd: run.costUsd,

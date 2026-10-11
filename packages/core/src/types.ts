@@ -36,6 +36,8 @@ export interface ToolCallRecord {
   status: ToolCallStatus;
   decision: Decision;
   decisionReason: string | null;
+  /** Human-readable one-line summary of this call (from the tool), e.g. "Email bob@acme.com". */
+  preview: string | null;
   /** Output as given back to the model (already size-capped). */
   output: ToolOutput | null;
   decidedBy: string | null;

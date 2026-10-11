@@ -227,6 +227,7 @@ export const toolCalls = pgTable(
     status: text("status").$type<ToolCallStatus>().notNull(),
     decision: text("decision").$type<Decision>().notNull(),
     decisionReason: text("decision_reason"),
+    preview: text("preview"),
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     output: jsonb("output").$type<ToolOutput>(),

@@ -98,7 +98,7 @@ export function toUiMessages(rows: StoredMessage[], calls: ToolCallRecord[]): Ui
             decision: rec?.decision ?? null,
             reason: rec?.decisionReason ?? null,
             output: rec?.output ?? null,
-            preview: null,
+            preview: rec?.preview ?? null,
           });
         }
       }

@@ -56,6 +56,35 @@ export interface PolicyResult {
   ruleId: string | null;
 }
 
+const DEFAULT_REASONS: Record<Decision, string> = {
+  allow: "Allowed by default for this tool.",
+  ask: "This tool asks for approval by default.",
+  block: "This tool is blocked by default.",
+};
+
+const EFFECT_REASONS: Record<Effect, Record<Decision, string>> = {
+  read: {
+    allow: "Reading is allowed by default.",
+    ask: "Reading asks for approval under your defaults.",
+    block: "Reading is blocked under your defaults.",
+  },
+  write: {
+    allow: "Changes are allowed under your defaults.",
+    ask: "Changes in your tools ask for approval by default.",
+    block: "Changes are blocked under your defaults.",
+  },
+  send: {
+    allow: "Sending is allowed under your defaults.",
+    ask: "Sending anything on your behalf asks for approval by default.",
+    block: "Sending is blocked under your defaults.",
+  },
+  destructive: {
+    allow: "Irreversible actions are allowed under your defaults.",
+    ask: "Deleting or irreversible actions ask for approval by default.",
+    block: "Irreversible actions are blocked under your defaults.",
+  },
+};
+
 export function evaluatePolicy(
   call: PolicyInput,
   rules: PolicyRule[],
@@ -69,19 +98,27 @@ export function evaluatePolicy(
   if (blocked) {
     return {
       decision: "block",
-      reason: blocked.note ?? `blocked by rule ${blocked.id}`,
+      reason: blocked.note ?? `Blocked by your rule for “${blocked.tool}”.`,
       ruleId: blocked.id,
     };
   }
 
   const rule = matching[0];
   const result: PolicyResult = rule
-    ? { decision: rule.decision, reason: rule.note ?? `rule ${rule.id}`, ruleId: rule.id }
+    ? {
+        decision: rule.decision,
+        reason: rule.note ?? `Matches your rule for “${rule.tool}”.`,
+        ruleId: rule.id,
+      }
     : call.defaultDecision
-      ? { decision: call.defaultDecision, reason: `default for ${call.tool}`, ruleId: null }
+      ? {
+          decision: call.defaultDecision,
+          reason: DEFAULT_REASONS[call.defaultDecision],
+          ruleId: null,
+        }
       : {
           decision: defaults[call.effect],
-          reason: `default for ${call.effect} tools`,
+          reason: EFFECT_REASONS[call.effect][defaults[call.effect]],
           ruleId: null,
         };
 
@@ -89,7 +126,7 @@ export function evaluatePolicy(
     return {
       decision: "ask",
       reason:
-        "This run has read untrusted content (e.g. an email or web page), so actions that change or send data need your approval.",
+        "This task has read outside content (an email, web page or document), so anything that changes or sends data needs your approval.",
       ruleId: result.ruleId,
     };
   }

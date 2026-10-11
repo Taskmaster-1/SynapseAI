@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/main.ts",
-    "start": "bun src/main.ts"
+    "start": "bun src/main.ts",
+    "seed": "bun src/seed.ts"
   },
   "dependencies": {
     "better-auth": "1.7.6",

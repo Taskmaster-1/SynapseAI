@@ -22,9 +22,9 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/chats` | | `{ chats: { id, title, updatedAt, status: RunStatus \| null, pendingApprovals: number }[] }` |
+| GET | `/api/chats` | | `{ chats: { id, title, updatedAt, status: RunStatus \| null, pendingApprovals: number, costUsd: number, tainted: boolean, trigger: "chat" \| "schedule" \| "manual" \| null, snippet: string \| null }[] }` — `snippet` is the latest assistant text (markdown, ≤ 200 chars) |
 | POST | `/api/chats` | `{ content?: string }` | `{ chat: { id, title }, runId?: string }` (creates a chat; if `content` is given, also sends it) |
-| GET | `/api/chats/:id` | | `{ chat: { id, title }, messages: UiMessage[], run: UiRun \| null }` — `run` is the latest run; `run.lastSeq` is where to resume the event stream |
+| GET | `/api/chats/:id` | | `{ chat: { id, title }, messages: UiMessage[], run: UiRun \| null }` — `run` is the latest run (`{ id, status, error, model, tainted, steps, trigger, inputTokens, outputTokens, costUsd, createdAt, finishedAt, lastSeq }`); resume the event stream after `run.lastSeq` |
 | PATCH | `/api/chats/:id` | `{ title }` | `{ chat }` |
 | DELETE | `/api/chats/:id` | | `204` |
 | POST | `/api/chats/:id/messages` | `{ content: string }` | `{ runId, queued: "new_run" \| "pending_input" }` |
@@ -42,7 +42,7 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
 | GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, createdAt }[] }` (audit view) |
-| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, createdAt }[] }` — everything awaiting the user |
+| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user |
 
 ### Event stream
 

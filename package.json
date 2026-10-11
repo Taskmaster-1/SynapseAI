@@ -14,7 +14,8 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "db:generate": "bun run --filter '@synapse/db' generate",
-    "evals": "bun run packages/evals/src/cli.ts"
+    "evals": "bun run packages/evals/src/cli.ts",
+    "seed": "bun run --filter '@synapse/server' seed"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

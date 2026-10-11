@@ -175,6 +175,7 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
       effect: schema.toolCalls.effect,
       input: schema.toolCalls.input,
       reason: schema.toolCalls.decisionReason,
+      preview: schema.toolCalls.preview,
       createdAt: schema.toolCalls.createdAt,
     })
     .from(schema.toolCalls)

@@ -346,3 +346,20 @@ test("user budgets can only tighten the operator cap", async () => {
   expect(capBudget(5, 0)).toBe(5);
   expect(capBudget(0, 0)).toBe(0);
 });
+
+test("task list carries snippet, cost and taint; approvals carry previews", async () => {
+  const cookie = await signUp("meta@example.com");
+  const me = api(cookie);
+  script([{ text: "Hello **there**." }]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "hi" } });
+  await worker.processNow(json!.runId);
+  const [chat] = (await me("/api/chats")).json!.chats;
+  expect(chat).toMatchObject({ snippet: "Hello **there**.", tainted: false, trigger: "chat" });
+  expect(chat.costUsd).toBeGreaterThan(0);
+  const detail = await me(`/api/chats/${json!.chat.id}`);
+  expect(detail.json!.run).toMatchObject({
+    model: "anthropic:claude-sonnet-5-5",
+    tainted: false,
+    steps: 1,
+  });
+});
