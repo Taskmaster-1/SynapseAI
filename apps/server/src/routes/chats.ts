@@ -18,8 +18,8 @@ export const chats = new Hono<AppEnv>()
         updatedAt: schema.chats.updatedAt,
         status: sql<
           string | null
-        >`(select status from runs r where r.chat_id = ${schema.chats.id} order by r.created_at desc limit 1)`,
-        pendingApprovals: sql<number>`(select count(*)::int from tool_calls t join runs r on r.id = t.run_id where r.chat_id = ${schema.chats.id} and t.status = 'awaiting_approval')`,
+        >`(select status from runs r where r.chat_id = "chats"."id" order by r.created_at desc limit 1)`,
+        pendingApprovals: sql<number>`(select count(*)::int from tool_calls t join runs r on r.id = t.run_id where r.chat_id = "chats"."id" and t.status = 'awaiting_approval')`,
       })
       .from(schema.chats)
       .where(eq(schema.chats.userId, c.var.user.id))

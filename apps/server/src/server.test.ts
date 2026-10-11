@@ -238,3 +238,29 @@ test("automations: validation, creation in their own chat, run now", async () =>
     ).status,
   ).toBe(404);
 });
+
+test("chat list shows latest run status and pending approvals per chat", async () => {
+  const cookie = await signUp("list@example.com");
+  const me = api(cookie);
+  await me("/api/policy", {
+    method: "PUT",
+    json: {
+      defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+      rules: [{ tool: "memory_save", decision: "ask" }],
+    },
+  });
+  script([{ toolCalls: [{ name: "memory_save", input: { note: "x" }, id: "p1" }] }]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "remember x" } });
+  await worker.process(json!.runId);
+  await me("/api/chats", { method: "POST", json: {} });
+  const list = (await me("/api/chats")).json!.chats;
+  expect(list).toHaveLength(2);
+  expect(list.find((c: { id: string }) => c.id === json!.chat.id)).toMatchObject({
+    status: "waiting",
+    pendingApprovals: 1,
+  });
+  expect(list.find((c: { id: string }) => c.id !== json!.chat.id)).toMatchObject({
+    status: null,
+    pendingApprovals: 0,
+  });
+});
