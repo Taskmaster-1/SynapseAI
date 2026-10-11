@@ -40,7 +40,11 @@ export function createAuth(db: Db, config: Config) {
         : {}),
     },
     rateLimit: { enabled: config.NODE_ENV !== "test", window: 60, max: 30 },
-    advanced: { useSecureCookies: config.PUBLIC_URL.startsWith("https://") },
+    advanced: {
+      useSecureCookies: config.PUBLIC_URL.startsWith("https://"),
+      // The web app (or your reverse proxy) forwards the client address; used for rate limits.
+      ipAddress: { ipAddressHeaders: ["x-forwarded-for", "x-real-ip"] },
+    },
   });
 }
 

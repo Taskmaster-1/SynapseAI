@@ -1,0 +1,41 @@
+# docker compose up -d   → http://localhost:3000
+# Set SYNAPSE_SECRET and at least one model key in .env first (see .env.example).
+services:
+  db:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: synapse
+      POSTGRES_DB: synapse
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse"]
+      interval: 5s
+      retries: 10
+
+  server:
+    build: .
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://synapse:synapse@db:5432/synapse
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: ["bun", "run", "--filter", "@synapse/web", "start"]
+    environment:
+      API_URL: http://server:8787
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  db:
