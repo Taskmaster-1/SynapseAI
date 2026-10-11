@@ -59,3 +59,18 @@ test("globMatch escapes regex metacharacters", () => {
   expect(globMatch("a.b", "aXb")).toBe(false);
   expect(globMatch("gmail_*", "gmail_send")).toBe(true);
 });
+
+test("tool default decision applies when no rule matches, taint still wins", () => {
+  const call = {
+    tool: "memory_save",
+    effect: "write" as const,
+    input: {},
+    defaultDecision: "allow" as const,
+  };
+  expect(evaluatePolicy({ ...call, tainted: false }, []).decision).toBe("allow");
+  expect(evaluatePolicy({ ...call, tainted: true }, []).decision).toBe("ask");
+  expect(
+    evaluatePolicy({ ...call, tainted: false }, [{ id: "x", tool: "memory_*", decision: "block" }])
+      .decision,
+  ).toBe("block");
+});

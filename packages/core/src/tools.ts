@@ -1,5 +1,5 @@
 import type { JSONSchema7, JSONValue } from "ai";
-import type { Effect, ToolOutput } from "./types";
+import type { Decision, Effect, ToolOutput } from "./types";
 
 export interface ToolContext {
   userId: string;
@@ -18,6 +18,11 @@ export interface ToolDefinition {
   effect: Effect;
   /** True when output can contain third-party content (email bodies, web pages, files). */
   untrustedOutput: boolean;
+  /**
+   * Decision when no user rule matches, overriding the effect default. Taint still applies:
+   * a tainted run never auto-allows a non-read call.
+   */
+  defaultDecision?: Decision;
   /** Where the tool comes from, e.g. "builtin" or "mcp:github". Shown in approvals and audit. */
   source: string;
   /** Short human-readable description of a specific call, shown on approval cards. */

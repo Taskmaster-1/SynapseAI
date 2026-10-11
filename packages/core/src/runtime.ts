@@ -425,7 +425,13 @@ async function streamOneStep(
       continue;
     }
     const verdict = evaluatePolicy(
-      { tool: def.name, effect: def.effect, input, tainted: run.tainted },
+      {
+        tool: def.name,
+        effect: def.effect,
+        input,
+        tainted: run.tainted,
+        ...(def.defaultDecision ? { defaultDecision: def.defaultDecision } : {}),
+      },
       policy.rules,
       policy.defaults,
     );

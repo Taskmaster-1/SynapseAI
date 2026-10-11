@@ -183,16 +183,14 @@ export class PgRunStore implements RunStore {
         .orderBy(asc(pendingInputs.id))
         .for("update");
       if (pending.length === 0) return 0;
-      await tx
-        .insert(messages)
-        .values(
-          pending.map((p) => ({
-            chatId,
-            runId,
-            model: null,
-            message: { role: "user" as const, content: p.content },
-          })),
-        );
+      await tx.insert(messages).values(
+        pending.map((p) => ({
+          chatId,
+          runId,
+          model: null,
+          message: { role: "user" as const, content: p.content },
+        })),
+      );
       await tx.delete(pendingInputs).where(
         inArray(
           pendingInputs.id,

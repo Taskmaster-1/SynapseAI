@@ -46,6 +46,8 @@ export interface PolicyInput {
   effect: Effect;
   input: JSONValue;
   tainted: boolean;
+  /** Tool-specific default used when no rule matches, e.g. "allow" for memory notes. */
+  defaultDecision?: Decision;
 }
 
 export interface PolicyResult {
@@ -75,7 +77,13 @@ export function evaluatePolicy(
   const rule = matching[0];
   const result: PolicyResult = rule
     ? { decision: rule.decision, reason: rule.note ?? `rule ${rule.id}`, ruleId: rule.id }
-    : { decision: defaults[call.effect], reason: `default for ${call.effect} tools`, ruleId: null };
+    : call.defaultDecision
+      ? { decision: call.defaultDecision, reason: `default for ${call.tool}`, ruleId: null }
+      : {
+          decision: defaults[call.effect],
+          reason: `default for ${call.effect} tools`,
+          ruleId: null,
+        };
 
   if (result.decision === "allow" && call.tainted && call.effect !== "read") {
     return {
