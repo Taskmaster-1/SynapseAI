@@ -1,0 +1,18 @@
+{
+  "name": "@synapse/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.65",
+    "@ai-sdk/google": "4.0.82",
+    "@ai-sdk/openai": "4.0.78",
+    "@ai-sdk/provider": "4.0.18",
+    "ai": "7.0.116",
+    "jsonrepair": "3.15.0",
+    "zod": "4.6.5"
+  }
+}

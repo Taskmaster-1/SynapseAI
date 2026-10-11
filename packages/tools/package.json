@@ -1,0 +1,14 @@
+{
+  "name": "@synapse/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "2.0.60",
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "zod": "4.6.5"
+  }
+}
