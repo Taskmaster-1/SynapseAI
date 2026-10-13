@@ -70,11 +70,13 @@ const SUGGESTED_MODELS = [
   "anthropic:claude-opus-5-5",
   "anthropic:claude-sonnet-5-5",
   "anthropic:claude-haiku-5-5",
+  "gateway:anthropic/claude-sonnet-5.5",
 ];
 const PROVIDERS: { id: ProviderName; label: string }[] = [
   { id: "anthropic", label: "Anthropic" },
   { id: "openai", label: "OpenAI" },
   { id: "google", label: "Google" },
+  { id: "gateway", label: "Vercel AI Gateway" },
 ];
 
 type SaveFn = (update: SettingsUpdate, message?: string) => Promise<boolean>;

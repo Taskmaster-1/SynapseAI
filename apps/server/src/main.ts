@@ -1,3 +1,4 @@
+import { hasKnownPrice } from "@synapse/core";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { log } from "./log";
@@ -11,6 +12,12 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const config = loadConfig();
+for (const ref of [...config.SYNAPSE_MODELS, config.SYNAPSE_SUMMARY_MODEL]) {
+  if (!hasKnownPrice(ref))
+    log.warn("no price known for model; dollar budgets will not limit it, token limits still do", {
+      model: ref,
+    });
+}
 const services = await createServices(config);
 
 let server: ReturnType<typeof Bun.serve> | null = null;

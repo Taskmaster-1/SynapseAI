@@ -92,6 +92,14 @@ describe("runAgent", () => {
     ).toEqual(["Hi there"]);
   });
 
+  test("a cost reported by the provider wins over the price table", async () => {
+    const { store, run, opts } = setup([
+      { text: "Hi", providerMetadata: { gateway: { cost: "0.0123" } } },
+    ]);
+    expect(await runAgent(opts)).toBe("completed");
+    expect((await store.getRun(run.id)).costUsd).toBeCloseTo(0.0123);
+  });
+
   test("read tools run without approval and results go back to the model", async () => {
     const { store, m, opts } = setup([
       { toolCalls: [{ name: "search", input: { q: "x" } }] },

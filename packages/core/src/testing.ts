@@ -1,10 +1,18 @@
-import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import type {
+  LanguageModelV4CallOptions,
+  LanguageModelV4StreamPart,
+  SharedV4ProviderMetadata,
+} from "@ai-sdk/provider";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { ModelSpec } from "./models";
 
 /** One scripted model turn: optional text, then optional tool calls. */
 export type ScriptedStep =
-  | { text?: string; toolCalls?: { name: string; input: unknown; id?: string }[] }
+  | {
+      text?: string;
+      toolCalls?: { name: string; input: unknown; id?: string }[];
+      providerMetadata?: SharedV4ProviderMetadata;
+    }
   | { error: { statusCode: number; message: string } };
 
 const usage = {
@@ -53,6 +61,7 @@ export function scriptedModel(steps: ScriptedStep[], ref = "anthropic:claude-son
         type: "finish",
         usage,
         finishReason: { unified: step.toolCalls?.length ? "tool-calls" : "stop", raw: undefined },
+        ...(step.providerMetadata ? { providerMetadata: step.providerMetadata } : {}),
       });
       return { stream: simulateReadableStream({ chunks }) };
     },

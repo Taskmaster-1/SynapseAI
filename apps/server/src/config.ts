@@ -27,9 +27,12 @@ const Env = z.object({
     .default("true")
     .transform((v) => v === "true"),
 
-  SYNAPSE_MODELS: csv.default(["anthropic:claude-opus-5-5", "anthropic:claude-sonnet-5-5"]),
-  SYNAPSE_SUMMARY_MODEL: z.string().default("anthropic:claude-haiku-5-5"),
+  /** Fallback chain. Defaults to Claude, direct or through the gateway (see `defaultModels`). */
+  SYNAPSE_MODELS: csv.optional(),
+  SYNAPSE_SUMMARY_MODEL: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  /** Vercel AI Gateway: one key for many providers, models as "gateway:anthropic/claude-sonnet-5.5". */
+  AI_GATEWAY_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
   OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
@@ -54,7 +57,10 @@ export type Config = ReturnType<typeof loadConfig>;
 
 export function loadConfig(env: Record<string, string | undefined> = process.env) {
   const parsed = Env.parse(env);
-  for (const ref of [...parsed.SYNAPSE_MODELS, parsed.SYNAPSE_SUMMARY_MODEL]) parseModelRef(ref);
+  const defaults = defaultModels(parsed);
+  const models = parsed.SYNAPSE_MODELS?.length ? parsed.SYNAPSE_MODELS : defaults.chain;
+  const summaryModel = parsed.SYNAPSE_SUMMARY_MODEL ?? defaults.summary;
+  for (const ref of [...models, summaryModel]) parseModelRef(ref);
 
   const secret = parsed.SYNAPSE_SECRET ?? devSecret(parsed);
 
@@ -73,6 +79,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   return {
     ...parsed,
+    SYNAPSE_MODELS: models,
+    SYNAPSE_SUMMARY_MODEL: summaryModel,
     secret,
     webSearch,
     embedding:
@@ -85,6 +93,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       ...(parsed.GOOGLE_GENERATIVE_AI_API_KEY
         ? { google: parsed.GOOGLE_GENERATIVE_AI_API_KEY }
         : {}),
+      ...(parsed.AI_GATEWAY_API_KEY ? { gateway: parsed.AI_GATEWAY_API_KEY } : {}),
       ...(parsed.OPENAI_COMPATIBLE_BASE_URL
         ? {
             openaiCompatible: {
@@ -96,6 +105,20 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
           }
         : {}),
     },
+  };
+}
+
+/** Claude models, through the gateway when that is the only key configured. */
+function defaultModels(parsed: z.infer<typeof Env>) {
+  if (parsed.AI_GATEWAY_API_KEY && !parsed.ANTHROPIC_API_KEY) {
+    return {
+      chain: ["gateway:anthropic/claude-opus-5.5", "gateway:anthropic/claude-sonnet-5.5"],
+      summary: "gateway:anthropic/claude-haiku-5.5",
+    };
+  }
+  return {
+    chain: ["anthropic:claude-opus-5-5", "anthropic:claude-sonnet-5-5"],
+    summary: "anthropic:claude-haiku-5-5",
   };
 }
 

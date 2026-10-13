@@ -200,7 +200,12 @@ test("settings keep provider keys write-only and encrypted", async () => {
       budgets: { perRunUsd: 1, perDayUsd: 5 },
     },
   });
-  expect(res.json!.providerKeys).toEqual({ anthropic: true, openai: false, google: false });
+  expect(res.json!.providerKeys).toEqual({
+    anthropic: true,
+    openai: false,
+    google: false,
+    gateway: false,
+  });
   expect(JSON.stringify(res.json)).not.toContain("sk-ant");
   const [row] = await services.database.db.select().from(schema.userSettings);
   expect(JSON.stringify(row)).not.toContain("sk-ant-test");

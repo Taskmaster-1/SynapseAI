@@ -233,7 +233,7 @@ export interface SearchResult {
   score: number;
 }
 
-export type ProviderName = "anthropic" | "openai" | "google";
+export type ProviderName = "anthropic" | "openai" | "google" | "gateway";
 
 export interface Settings {
   instructions: string | null;

@@ -484,6 +484,7 @@ async function streamOneStep(
 
   const response = await result.response;
   const usage = await result.totalUsage;
+  const metadata = await result.providerMetadata;
   const message = response.messages.find(
     (m): m is AssistantModelMessage => m.role === "assistant",
   ) ?? {
@@ -571,7 +572,6 @@ async function streamOneStep(
   if (started) await events.emit(run.id, { type: "message.end", messageId });
 
   for (const call of toolCalls) {
-    const def = opts.tools.get(call.name);
     await events.emit(run.id, {
       type: "tool.call",
       toolCallId: call.id,
@@ -602,7 +602,7 @@ async function streamOneStep(
       await events.emit(run.id, { type: "tool.result", toolCallId: call.id, output: call.output });
   }
 
-  const cost = costUsd(candidate.spec.ref, usage);
+  const cost = costUsd(candidate.spec.ref, usage, undefined, metadata);
   await store.addUsage(run.id, {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
@@ -666,7 +666,7 @@ async function compactIfNeeded(
   if (before.length === 0) return cleared;
 
   const summarizer = opts.summaryModel ?? candidate;
-  const { text, usage } = await generateText({
+  const { text, usage, providerMetadata } = await generateText({
     model: summarizer.model,
     system: HANDOVER_PROMPT,
     messages: [
@@ -678,7 +678,7 @@ async function compactIfNeeded(
   await opts.store.addUsage(run.id, {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
-    costUsd: costUsd(summarizer.spec.ref, usage),
+    costUsd: costUsd(summarizer.spec.ref, usage, undefined, providerMetadata),
   });
   const handover = await opts.store.appendMessage({
     chatId: run.chatId,

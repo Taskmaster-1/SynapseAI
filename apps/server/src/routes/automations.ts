@@ -34,7 +34,7 @@ export const automations = new Hono<AppEnv>()
     const automation = await db.transaction(async (tx) => {
       const [chat] = await tx
         .insert(schema.chats)
-        .values({ userId: c.var.user.id, title: `⏱ ${input.name}` })
+        .values({ userId: c.var.user.id, title: input.name })
         .returning({ id: schema.chats.id });
       const [row] = await tx
         .insert(schema.automations)
