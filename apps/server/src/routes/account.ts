@@ -214,7 +214,7 @@ export const documents = new Hono<AppEnv>()
 
 // ── Settings & usage ───────────────────────────────────────────────────────
 
-const PROVIDERS = ["anthropic", "openai", "google"] as const;
+const PROVIDERS = ["anthropic", "openai", "google", "gateway"] as const;
 
 export const settings = new Hono<AppEnv>()
   .get("/", async (c) => c.json(await loadSettings(c)))

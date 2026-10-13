@@ -2,6 +2,7 @@ export * from "./context";
 export * from "./memory-store";
 export * from "./models";
 export * from "./policy";
+export * from "./prices";
 export * from "./runtime";
 export type * from "./store";
 export * from "./tools";

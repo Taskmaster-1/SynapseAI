@@ -1,6 +1,7 @@
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { log } from "./log";
+import { startPriceSync } from "./prices";
 import { createServices } from "./services";
 import { Worker } from "./worker";
 
@@ -11,6 +12,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const config = loadConfig();
+const stopPriceSync = await startPriceSync(config);
 const services = await createServices(config);
 
 let server: ReturnType<typeof Bun.serve> | null = null;
@@ -29,6 +31,7 @@ async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
   log.info("shutting down", { signal });
+  stopPriceSync();
   server?.stop();
   await worker?.stop();
   await services.close();

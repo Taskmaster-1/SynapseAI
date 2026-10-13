@@ -279,7 +279,12 @@ export class Worker {
     const keys: ProviderKeys = { ...this.s.config.serverKeys };
     for (const [provider, sealed] of Object.entries(settings?.providerKeys ?? {})) {
       const key = await this.s.box.open(sealed);
-      if (provider === "anthropic" || provider === "openai" || provider === "google")
+      if (
+        provider === "anthropic" ||
+        provider === "openai" ||
+        provider === "google" ||
+        provider === "gateway"
+      )
         keys[provider] = key;
     }
     const out: { spec: ModelSpec; model: LanguageModel }[] = [];

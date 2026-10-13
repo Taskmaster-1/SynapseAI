@@ -233,7 +233,7 @@ export interface SearchResult {
   score: number;
 }
 
-export type ProviderName = "anthropic" | "openai" | "google";
+export type ProviderName = "anthropic" | "openai" | "google" | "gateway";
 
 export interface Settings {
   instructions: string | null;
@@ -247,6 +247,22 @@ export interface SettingsUpdate {
   models?: { chain: string[] };
   budgets?: { perRunUsd: number | null; perDayUsd: number | null };
   providerKeys?: Partial<Record<ProviderName, string | null>>;
+}
+
+export interface ModelInfo {
+  /** "provider:model-id", what goes in the fallback chain. */
+  ref: string;
+  name: string;
+  provider: "anthropic" | "openai" | "google" | "gateway" | "openai-compatible";
+  /** Who made the model, e.g. "anthropic", "openai", "xai". */
+  creator: string;
+  contextWindow: number | null;
+  /** USD per million tokens. */
+  price: { input: number; output: number; cacheRead?: number } | null;
+  /** A key exists for this model's provider. */
+  available: boolean;
+  tags: string[];
+  released: string | null;
 }
 
 export interface Policy {
@@ -364,6 +380,7 @@ export const api = {
     ),
 
   settings: () => get<Settings>("/api/settings"),
+  models: () => get<{ models: ModelInfo[]; updatedAt: string | null }>("/api/models"),
   saveSettings: (body: SettingsUpdate) => put<Settings>("/api/settings", body),
   usage: (days = 30) => get<{ days: UsageDay[] }>(`/api/usage?days=${days}`),
 };

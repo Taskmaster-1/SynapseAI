@@ -291,7 +291,7 @@ await task("Reply to Bob that 3pm tomorrow works for me", [
 // ── Automation, memory, knowledge, connections ─────────────────────────────
 const [autoChat] = await db
   .insert(schema.chats)
-  .values({ userId, title: "⏱ Morning brief" })
+  .values({ userId, title: "Morning brief" })
   .returning();
 await db.insert(schema.automations).values({
   userId,

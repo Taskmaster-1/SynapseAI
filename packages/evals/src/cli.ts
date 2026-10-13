@@ -3,6 +3,7 @@
  * Live evals against a real model. Costs money: every attempt calls the provider.
  *
  *   ANTHROPIC_API_KEY=… bun run evals --model anthropic:claude-sonnet-5-5 --k 3 [--only inbox-injection]
+ *   AI_GATEWAY_API_KEY=… bun run evals --model gateway:anthropic/claude-sonnet-5.5
  */
 import { parseArgs } from "node:util";
 import { createModel, parseModelRef } from "@synapse/core";
@@ -22,6 +23,7 @@ const spec = parseModelRef(values.model!);
 const model = createModel(spec, {
   ...(process.env.ANTHROPIC_API_KEY ? { anthropic: process.env.ANTHROPIC_API_KEY } : {}),
   ...(process.env.OPENAI_API_KEY ? { openai: process.env.OPENAI_API_KEY } : {}),
+  ...(process.env.AI_GATEWAY_API_KEY ? { gateway: process.env.AI_GATEWAY_API_KEY } : {}),
   ...(process.env.GOOGLE_GENERATIVE_AI_API_KEY
     ? { google: process.env.GOOGLE_GENERATIVE_AI_API_KEY }
     : {}),

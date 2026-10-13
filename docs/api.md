@@ -106,9 +106,18 @@ Event types (`RunEvent` in `packages/core/src/types.ts`): `run.status`, `message
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google", boolean> }` — keys are write-only |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean> }` — keys are write-only |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
+| GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |
+
+`ModelEntry` is `{ ref, name, provider, creator, contextWindow: number | null, price: { input, output, cacheRead? } | null, tags: string[], released: string | null, available: boolean }`.
+Prices are USD per million tokens. The list holds every language model in the Vercel AI Gateway
+catalog as a `gateway:<creator>/<model>` ref, the same model as a direct ref when its creator is
+Anthropic, OpenAI or Google (e.g. `openai:gpt-5.5`, `anthropic:claude-sonnet-5-5`), the built-in
+price table and the server's configured chain. `available` means the server or the user has a key
+for that provider. Available models come first, then newest. `updatedAt` is the last catalog sync
+(`null` if it never synced; built-in prices are used then).
 
 ## Automations
 

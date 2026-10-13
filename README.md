@@ -19,8 +19,8 @@ Agent products that act in your tools share three problems: approvals that live 
 | **Approvals you can edit** | Approval cards show the full payload. Edit the email before it goes, deny with a reason the agent sees, or approve from the inbox later — paused runs live in Postgres, not in a process. |
 | **Durable runs** | Runs are leased to workers and checkpointed at every step. Restart a server mid-run and another worker picks it up; side-effecting calls interrupted mid-flight are reported as *unknown*, never silently retried. |
 | **Steer while it works** | Send a message while the agent is busy and it reads it at the next step. Send one while it's waiting for approval and the pending action is dropped in favour of your new instruction. |
-| **Predictable cost** | Per-run and per-day budgets enforced before every model call, a fallback chain across providers, prompt-cache-friendly history, and cost on every run. |
-| **Yours** | MIT, self-hosted, one Postgres. Any model: Anthropic, OpenAI, Google, or anything OpenAI-compatible (Ollama, vLLM). Users can bring their own keys. |
+| **Predictable cost** | Per-run and per-day budgets enforced before every model call, a fallback chain across providers, prompt-cache-friendly history, and cost on every run, priced from a daily-synced catalog of 300+ models. |
+| **Yours** | MIT, self-hosted, one Postgres. Any model: Anthropic, OpenAI, Google, Vercel AI Gateway, or anything OpenAI-compatible (Ollama, vLLM). Users can bring their own keys. |
 
 ## Features
 
@@ -43,7 +43,7 @@ Requires [Bun](https://bun.sh) 1.3+.
 ```sh
 git clone https://github.com/Taskmaster-1/SynapseAI && cd SynapseAI
 bun install
-cp .env.example .env          # add ANTHROPIC_API_KEY (or another provider)
+cp .env.example .env          # add ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY (or another provider)
 bun run dev                   # API on :8787, web on :3000
 ```
 
@@ -106,6 +106,7 @@ Taint overrides `allow` for anything but reads. MCP tools inherit effects from t
 ```sh
 bun test                                                        # includes scripted eval smoke tests
 ANTHROPIC_API_KEY=… bun run evals --model anthropic:claude-sonnet-5-5 --k 3   # live; costs money
+AI_GATEWAY_API_KEY=… bun run evals --model gateway:anthropic/claude-sonnet-5.5 --k 3
 ```
 
 Each scenario runs `k` times; **pass^k** counts scenarios that passed every attempt — the bar that matters for an agent acting on your behalf.

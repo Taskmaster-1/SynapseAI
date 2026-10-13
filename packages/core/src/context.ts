@@ -112,10 +112,20 @@ function pairToolCalls(input: ModelMessage[]): ModelMessage[] {
 /**
  * Replaces tool outputs older than the last `keepRecent` tool messages with a stub.
  * Cheaper than summarising; applied first when the context grows past the soft limit.
+ *
+ * With `chunk` > 1 the number cleared is rounded down to a multiple of `chunk`. Clearing
+ * rewrites a message in the middle of the history, which invalidates the prompt cache from
+ * that point on; moving the boundary one message per step would miss the cache every step.
+ * Moving it in chunks keeps up to `chunk - 1` extra old outputs but hits the cache in between.
  */
-export function clearOldToolOutputs(messages: ModelMessage[], keepRecent = 4): ModelMessage[] {
+export function clearOldToolOutputs(
+  messages: ModelMessage[],
+  keepRecent = 4,
+  chunk = 1,
+): ModelMessage[] {
   const toolIdx = messages.flatMap((m, i) => (m.role === "tool" ? [i] : []));
-  const clear = new Set(toolIdx.slice(0, Math.max(0, toolIdx.length - keepRecent)));
+  const excess = Math.max(0, toolIdx.length - keepRecent);
+  const clear = new Set(toolIdx.slice(0, excess - (excess % Math.max(1, chunk))));
   return messages.map((m, i) =>
     m.role === "tool" && clear.has(i)
       ? {
