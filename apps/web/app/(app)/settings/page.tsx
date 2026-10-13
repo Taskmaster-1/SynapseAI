@@ -7,6 +7,7 @@ import {
   Monitor,
   Moon,
   Palette,
+  Plus,
   ShieldCheck,
   Sun,
   User,
@@ -14,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
 import { ErrorNote, Field, Page, PageHeader, Pill, Skeleton } from "@/components/ui";
 import {
@@ -29,6 +30,7 @@ import { cx, formatCost } from "@/lib/format";
 import { type ThemePref, useTheme } from "@/lib/theme";
 import { useApi } from "@/lib/use-api";
 import { useWorkspace } from "@/lib/workspace";
+import { MAX_CHAIN, ModelPicker, modelFromRef, priceLabel } from "./model-picker";
 import { PolicyEditor } from "./policy-editor";
 
 type Section = "general" | "models" | "budgets" | "rules" | "appearance";
@@ -285,25 +287,34 @@ function General({ settings, save }: { settings: Settings; save: SaveFn }) {
 
 function Models({ settings, save, known }: { settings: Settings; save: SaveFn; known: string[] }) {
   const [chain, setChain] = useState(settings.models.chain);
-  const [adding, setAdding] = useState("");
+  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const catalog = useApi(() => api.models());
   useEffect(() => setChain(settings.models.chain), [settings.models.chain]);
-  const options = Array.from(
-    new Set([...(settings.models.defaultChain ?? []), ...SUGGESTED_MODELS, ...known]),
-  ).filter((m) => !chain.includes(m));
+  // If the catalog can't load, fall back to a short list so the chain stays editable.
+  const models = useMemo(
+    () =>
+      catalog.data?.models ??
+      Array.from(
+        new Set([...(settings.models.defaultChain ?? []), ...SUGGESTED_MODELS, ...known]),
+      ).map(modelFromRef),
+    [catalog.data, settings.models.defaultChain, known],
+  );
+  const byRef = useMemo(() => new Map(models.map((m) => [m.ref, m])), [models]);
   const dirty = JSON.stringify(chain) !== JSON.stringify(settings.models.chain);
+  const full = chain.length >= MAX_CHAIN;
   const mv = (i: number, j: number) => {
     if (j < 0 || j >= chain.length) return;
     const next = [...chain];
     [next[i], next[j]] = [next[j]!, next[i]!];
     setChain(next);
   };
-  function add(m: string) {
-    const v = m.trim();
-    if (!v || chain.includes(v)) return;
-    setChain([...chain, v]);
-    setAdding("");
-  }
+  // Saving a key changes which models are usable.
+  const saveKeys: SaveFn = async (update, message) => {
+    const ok = await save(update, message);
+    if (ok) void catalog.reload();
+    return ok;
+  };
 
   return (
     <div className="space-y-10">
@@ -318,9 +329,14 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
             {settings.models.defaultChain?.length ? (
               <ol className="mt-2 space-y-1">
                 {settings.models.defaultChain.map((m, i) => (
-                  <li key={m} className="flex items-center gap-2 font-mono text-12 text-fg">
-                    <span className="tabular w-4 text-fg-faint">{i + 1}</span>
-                    {m}
+                  <li key={m} className="flex min-w-0 items-center gap-2 text-fg">
+                    <span className="tabular w-4 text-12 text-fg-faint">{i + 1}</span>
+                    <span className="truncate text-13">{byRef.get(m)?.name ?? m}</span>
+                    {byRef.get(m) ? (
+                      <span className="hidden truncate font-mono text-12 text-fg-faint sm:inline">
+                        {m}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ol>
@@ -330,82 +346,92 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
           </div>
         ) : (
           <ol className="divide-y divide-line rounded-card border border-line bg-surface">
-            {chain.map((m, i) => (
-              <li key={m} className="flex items-center gap-2 px-3 py-2">
-                <span className="tabular w-5 text-center text-12 text-fg-faint">{i + 1}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-12 text-fg">{m}</span>
-                {i === 0 ? <Pill tone="accent">Primary</Pill> : null}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon btn-sm"
-                  aria-label={`Move ${m} up`}
-                  disabled={i === 0}
-                  onClick={() => mv(i, i - 1)}
-                >
-                  <ArrowUp className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon btn-sm"
-                  aria-label={`Move ${m} down`}
-                  disabled={i === chain.length - 1}
-                  onClick={() => mv(i, i + 1)}
-                >
-                  <ArrowDown className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon btn-sm"
-                  aria-label={`Remove ${m}`}
-                  onClick={() => setChain(chain.filter((x) => x !== m))}
-                >
-                  <X className="size-3.5" />
-                </button>
-              </li>
-            ))}
+            {chain.map((ref, i) => {
+              const m = byRef.get(ref);
+              const price = m ? priceLabel(m) : null;
+              return (
+                <li key={ref} className="flex items-center gap-2 px-3 py-2">
+                  <span className="tabular w-5 text-center text-12 text-fg-faint">{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-14 text-fg">{m?.name ?? ref}</span>
+                      {i === 0 ? <Pill tone="accent">Primary</Pill> : null}
+                      {m && !m.available ? (
+                        <Pill tone="attention" title="Add a key for this provider below">
+                          No key
+                        </Pill>
+                      ) : null}
+                    </div>
+                    {m ? (
+                      <div className="flex min-w-0 gap-2 text-12 text-fg-faint">
+                        <span className="truncate font-mono">{ref}</span>
+                        {price ? (
+                          <span className="tabular hidden shrink-0 sm:inline">{price} per 1M</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm"
+                    aria-label={`Move ${ref} up`}
+                    disabled={i === 0}
+                    onClick={() => mv(i, i - 1)}
+                  >
+                    <ArrowUp className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm"
+                    aria-label={`Move ${ref} down`}
+                    disabled={i === chain.length - 1}
+                    onClick={() => mv(i, i + 1)}
+                  >
+                    <ArrowDown className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm"
+                    aria-label={`Remove ${ref}`}
+                    onClick={() => setChain(chain.filter((x) => x !== ref))}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </li>
+              );
+            })}
           </ol>
         )}
-        <form
-          className="mt-3 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            add(adding);
-          }}
-        >
-          <label htmlFor="model-add" className="sr-only">
-            Add a model
-          </label>
-          <input
-            id="model-add"
-            className="input font-mono text-13"
-            list="model-options"
-            placeholder="provider:model"
-            value={adding}
-            onChange={(e) => setAdding(e.target.value)}
-          />
-          <datalist id="model-options">
-            {options.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
-          <button type="submit" className="btn" disabled={!adding.trim()}>
-            Add
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <button
+            type="button"
+            className="btn"
+            disabled={full}
+            aria-haspopup="dialog"
+            onClick={() => setPicking(true)}
+          >
+            <Plus className="size-4" /> Add model
           </button>
-        </form>
-        {options.length > 0 ? (
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {options.slice(0, 5).map((m) => (
-              <button
-                key={m}
-                type="button"
-                className="h-7 rounded-full border border-line px-2.5 font-mono text-12 text-fg-muted hover:border-line-strong hover:text-fg"
-                onClick={() => add(m)}
-              >
-                + {m}
-              </button>
-            ))}
-          </div>
-        ) : null}
+          <span className="text-12 text-fg-faint">
+            {full
+              ? `Up to ${MAX_CHAIN} models. Remove one to add another.`
+              : catalog.error
+                ? "Couldn't load the model list; showing a few suggestions."
+                : catalog.data
+                  ? `${catalog.data.models.length} models from every provider you can use.`
+                  : null}
+          </span>
+        </div>
+        <ModelPicker
+          open={picking}
+          onClose={() => setPicking(false)}
+          models={models}
+          chain={chain}
+          onPick={(ref) => {
+            if (!chain.includes(ref) && chain.length < MAX_CHAIN) setChain([...chain, ref]);
+            setPicking(false);
+          }}
+        />
         <SaveBar
           dirty={dirty}
           busy={busy}
@@ -431,7 +457,7 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
                 provider={p.id}
                 label={p.label}
                 isSet={settings.providerKeys[p.id]}
-                save={save}
+                save={saveKeys}
               />
             </li>
           ))}

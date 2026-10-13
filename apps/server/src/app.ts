@@ -5,6 +5,7 @@ import { documents, memories, policy, settings, usage } from "./routes/account";
 import { automations } from "./routes/automations";
 import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
+import { models } from "./routes/models";
 import { approvals, runs } from "./routes/runs";
 import type { Services } from "./services";
 
@@ -63,6 +64,7 @@ export function createApp(services: Services) {
   api.route("/documents", documents);
   api.route("/settings", settings);
   api.route("/usage", usage);
+  api.route("/models", models);
   api.route("/automations", automations);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);

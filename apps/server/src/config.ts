@@ -37,6 +37,11 @@ const Env = z.object({
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
   OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
   OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
+  /** Sync model list prices daily from the gateway's public catalog (no key is sent). */
+  SYNAPSE_PRICE_SYNC: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
 
   WEB_SEARCH_PROVIDER: z.enum(["tavily", "brave", "exa"]).optional(),
   WEB_SEARCH_API_KEY: z.string().optional(),

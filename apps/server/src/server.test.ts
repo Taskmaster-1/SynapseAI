@@ -368,3 +368,72 @@ test("task list carries snippet, cost and taint; approvals carry previews", asyn
     steps: 1,
   });
 });
+
+test("model list covers the catalog, direct refs and the chain, with availability per key", async () => {
+  const { clearCatalog, parseCatalog, setCatalog } = await import("@synapse/core");
+  setCatalog(
+    parseCatalog({
+      data: [
+        {
+          id: "openai/gpt-9",
+          owned_by: "openai",
+          name: "GPT-9",
+          type: "language",
+          released: 1790000000,
+          context_window: 400_000,
+          tags: ["tool-use"],
+          pricing: { input: "0.000005", output: "0.00003" },
+        },
+        { id: "xai/grok-5", owned_by: "xai", name: "Grok 5", type: "language" },
+        { id: "openai/gpt-9-batch", owned_by: "openai", name: "GPT-9 Batch", type: "language" },
+      ],
+    }),
+  );
+  try {
+    const call = api(await signUp("models@example.com"));
+    const before = await call("/api/models");
+    expect(before.status).toBe(200);
+    const byRef = (res: typeof before) =>
+      new Map(
+        (res.json!.models as { ref: string }[]).map((m) => [m.ref, m as Record<string, unknown>]),
+      );
+    const refs = byRef(before);
+    expect(refs.get("gateway:openai/gpt-9")).toEqual({
+      ref: "gateway:openai/gpt-9",
+      name: "GPT-9",
+      provider: "gateway",
+      creator: "openai",
+      contextWindow: 400_000,
+      price: { input: 5, output: 30 },
+      available: false,
+      tags: ["tool-use"],
+      released: new Date(1790000000 * 1000).toISOString(),
+    });
+    expect(refs.get("openai:gpt-9")?.provider).toBe("openai");
+    expect(refs.get("gateway:xai/grok-5")?.price).toBeNull();
+    expect(refs.has("xai:grok-5")).toBe(false);
+    expect([...refs.keys()].some((r) => r.includes("batch"))).toBe(false);
+    // The configured chain is always listed.
+    expect(refs.get("anthropic:claude-opus-5-5")?.price).toEqual({
+      input: 4,
+      output: 20,
+      cacheRead: 0.2,
+      cacheWrite: 5,
+    });
+    expect(typeof before.json!.updatedAt).toBe("string");
+
+    await call("/api/settings", {
+      method: "PUT",
+      json: { providerKeys: { openai: "sk-test-1234" } },
+    });
+    const after = await call("/api/models");
+    const list = after.json!.models as { ref: string; available: boolean }[];
+    expect(byRef(after).get("openai:gpt-9")?.available).toBe(true);
+    expect(byRef(after).get("gateway:openai/gpt-9")?.available).toBe(false);
+    // Available models sort first.
+    const firstUnavailable = list.findIndex((m) => !m.available);
+    expect(list.slice(firstUnavailable).every((m) => !m.available)).toBe(true);
+  } finally {
+    clearCatalog();
+  }
+});

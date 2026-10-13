@@ -3,6 +3,7 @@ import { createGateway } from "@ai-sdk/gateway";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel, LanguageModelUsage, ProviderMetadata } from "ai";
+import { type Price, priceFor } from "./prices";
 
 /**
  * Models are referenced as "provider:model-id", e.g. "anthropic:claude-opus-5-5".
@@ -75,31 +76,9 @@ function requireKey(key: string | undefined, spec: ModelSpec): string {
   return key;
 }
 
-/**
- * USD per million tokens. Used when the provider does not report a cost itself.
- * Unknown models cost 0 and budgets fall back to token limits (see `hasKnownPrice`).
- */
-export interface Price {
-  input: number;
-  output: number;
-  cacheRead?: number;
-}
-
-export const DEFAULT_PRICES: Record<string, Price> = {
-  "anthropic:claude-fable-5-1": { input: 10, output: 50 },
-  "anthropic:claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
-  "anthropic:claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
-  "anthropic:claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  // Vercel AI Gateway list prices. A cost the gateway reports for a call wins over these.
-  "gateway:anthropic/claude-fable-5.1": { input: 10, output: 50 },
-  "gateway:anthropic/claude-opus-5.5": { input: 4, output: 20 },
-  "gateway:anthropic/claude-sonnet-5.5": { input: 2, output: 10, cacheRead: 0.1 },
-  "gateway:anthropic/claude-haiku-5.5": { input: 0.1, output: 0.5, cacheRead: 0.01 },
-};
-
 /** Whether spend for this model can be measured, so dollar budgets apply to it. */
-export function hasKnownPrice(ref: string, prices = DEFAULT_PRICES): boolean {
-  return ref in prices;
+export function hasKnownPrice(ref: string, prices?: Record<string, Price>): boolean {
+  return prices ? ref in prices : priceFor(ref) !== undefined;
 }
 
 /** The cost a provider reported for the call, if any (Vercel AI Gateway does). */
@@ -112,18 +91,20 @@ export function reportedCost(metadata: ProviderMetadata | undefined): number | u
 export function costUsd(
   ref: string,
   usage: LanguageModelUsage,
-  prices = DEFAULT_PRICES,
+  prices?: Record<string, Price>,
   metadata?: ProviderMetadata,
 ): number {
   const reported = reportedCost(metadata);
   if (reported !== undefined) return reported;
-  const price = prices[ref];
+  const price = prices ? prices[ref] : priceFor(ref);
   if (!price) return 0;
   const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? 0;
-  const freshInput = (usage.inputTokens ?? 0) - cacheRead;
+  const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens ?? 0;
+  const freshInput = (usage.inputTokens ?? 0) - cacheRead - cacheWrite;
   return (
     (freshInput * price.input +
       cacheRead * (price.cacheRead ?? price.input) +
+      cacheWrite * (price.cacheWrite ?? price.input) +
       (usage.outputTokens ?? 0) * price.output) /
     1_000_000
   );

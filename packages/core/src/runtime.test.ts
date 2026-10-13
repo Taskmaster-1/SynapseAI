@@ -100,6 +100,27 @@ describe("runAgent", () => {
     expect((await store.getRun(run.id)).costUsd).toBeCloseTo(0.0123);
   });
 
+  test("Claude calls carry cache breakpoints on system, last tool and last message", async () => {
+    const { m, opts } = setup([{ text: "Hi" }]);
+    expect(await runAgent(opts)).toBe("completed");
+    const { prompt, tools } = m.calls[0]!;
+    const breakpoint = { anthropic: { cacheControl: { type: "ephemeral" } } };
+    expect(prompt[0]).toMatchObject({ role: "system", providerOptions: breakpoint });
+    expect(prompt.at(-1)!.providerOptions).toEqual(breakpoint);
+    expect(prompt.slice(1, -1).every((p) => !p.providerOptions)).toBe(true);
+    expect((tools!.at(-1) as { providerOptions?: unknown }).providerOptions).toEqual(breakpoint);
+    expect(tools!.slice(0, -1).every((t) => !("providerOptions" in t))).toBe(true);
+  });
+
+  test("other providers get no cache breakpoints", async () => {
+    const { opts } = setup([]);
+    const m = scriptedModel([{ text: "Hi" }], "openai:gpt-6.1-sol");
+    opts.models = [m];
+    expect(await runAgent(opts)).toBe("completed");
+    const { prompt, tools } = m.calls[0]!;
+    expect(JSON.stringify({ prompt, tools })).not.toContain("cacheControl");
+  });
+
   test("read tools run without approval and results go back to the model", async () => {
     const { store, m, opts } = setup([
       { toolCalls: [{ name: "search", input: { q: "x" } }] },

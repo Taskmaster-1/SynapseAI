@@ -11,6 +11,7 @@ import {
   tool,
 } from "ai";
 import { jsonrepair } from "jsonrepair";
+import { cachedInstructions, cachedMessages, cachedTools } from "./cache";
 import {
   buildHistory,
   capToolOutput,
@@ -23,7 +24,14 @@ import { costUsd, isRetryable, type ModelSpec } from "./models";
 import { evaluatePolicy } from "./policy";
 import type { EventSink, RunStore } from "./store";
 import type { ToolDefinition, ToolRegistry } from "./tools";
-import type { RunRecord, RunStatus, ToolCallRecord, ToolCallStatus, ToolOutput } from "./types";
+import type {
+  RunRecord,
+  RunStatus,
+  StoredMessage,
+  ToolCallRecord,
+  ToolCallStatus,
+  ToolOutput,
+} from "./types";
 
 export interface RuntimeLimits {
   /** Model calls per run before the agent must stop and report. */
@@ -153,7 +161,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
       }
 
       // 4. One model step.
-      await modelStep(opts, run, limits, signal);
+      await modelStep(opts, run, rows, limits, signal);
       await store.updateRun(runId, { steps: run.steps + 1 });
     }
   } catch (error) {
@@ -403,21 +411,25 @@ async function writeToolResults(opts: RunAgentOptions, run: RunRecord): Promise<
 
 // ── Model step ──────────────────────────────────────────────────────────────
 
+/** `rows` is the chat history the caller just read, reused to save a query per step. */
 async function modelStep(
   opts: RunAgentOptions,
   run: RunRecord,
+  rows: StoredMessage[],
   limits: RuntimeLimits,
   signal: AbortSignal,
 ): Promise<void> {
   let lastError: unknown;
   for (const candidate of opts.models) {
-    let messages = buildHistory(await opts.store.listMessages(run.chatId), candidate.spec.ref);
+    let messages = buildHistory(rows, candidate.spec.ref);
     messages = await compactIfNeeded(opts, run, candidate, messages, limits);
 
     const attempt = await streamOneStep(opts, run, candidate, messages, limits, signal);
     if (attempt.ok) return;
     lastError = attempt.error;
     if (attempt.started || !isRetryable(attempt.error)) throw attempt.error;
+    // Compaction may have stored a handover for this attempt; the next model should see it.
+    rows = await opts.store.listMessages(run.chatId);
   }
   throw lastError ?? new Error("no model configured");
 }
@@ -439,9 +451,9 @@ async function streamOneStep(
 
   const result = streamText({
     model: candidate.model,
-    system: opts.system,
-    messages,
-    tools: toSdkTools(opts.tools),
+    instructions: cachedInstructions(candidate.spec, opts.system),
+    messages: cachedMessages(candidate.spec, messages),
+    tools: cachedTools(candidate.spec, toSdkTools(opts.tools)),
     stopWhen: stepCountIs(1),
     maxOutputTokens: limits.maxOutputTokens,
     maxRetries: 2,
@@ -641,6 +653,9 @@ function toSdkTools(registry: ToolRegistry): Record<string, Tool> {
 
 // ── Compaction ──────────────────────────────────────────────────────────────
 
+/** Tool outputs are cleared in batches of this many messages (see `clearOldToolOutputs`). */
+const CLEAR_CHUNK = 8;
+
 async function compactIfNeeded(
   opts: RunAgentOptions,
   run: RunRecord,
@@ -650,6 +665,10 @@ async function compactIfNeeded(
 ): Promise<ModelMessage[]> {
   if (estimateTokens(messages) <= limits.contextTokens * 0.6) return messages;
 
+  // Chunked clearing keeps the cached prefix stable for several steps; clear everything old
+  // only if that is not enough.
+  const chunked = clearOldToolOutputs(messages, 4, CLEAR_CHUNK);
+  if (estimateTokens(chunked) <= limits.contextTokens * 0.8) return chunked;
   const cleared = clearOldToolOutputs(messages);
   if (estimateTokens(cleared) <= limits.contextTokens * 0.8) return cleared;
 
@@ -668,7 +687,7 @@ async function compactIfNeeded(
   const summarizer = opts.summaryModel ?? candidate;
   const { text, usage, providerMetadata } = await generateText({
     model: summarizer.model,
-    system: HANDOVER_PROMPT,
+    instructions: HANDOVER_PROMPT,
     messages: [
       ...clearOldToolOutputs(before, 2),
       { role: "user", content: "Write the handover note now." },
