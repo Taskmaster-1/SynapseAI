@@ -117,19 +117,3 @@ export function CountUp({
     </span>
   );
 }
-
-/** A card whose soft highlight follows the pointer. */
-export function Spotlight({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <div
-      className={cx("landing-spot", className)}
-      onPointerMove={(e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        e.currentTarget.style.setProperty("--x", `${e.clientX - r.left}px`);
-        e.currentTarget.style.setProperty("--y", `${e.clientY - r.top}px`);
-      }}
-    >
-      {children}
-    </div>
-  );
-}

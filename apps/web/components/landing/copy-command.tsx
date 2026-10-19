@@ -2,9 +2,10 @@
 
 import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { cx } from "@/lib/format";
 
 /** A terminal that types its commands out once visible, with a copy button. */
-export function CopyCommand({ lines }: { lines: string[] }) {
+export function CopyCommand({ lines, dark = false }: { lines: string[]; dark?: boolean }) {
   const [copied, setCopied] = useState(false);
   const total = lines.reduce((n, l) => n + l.length, 0);
   const [typed, setTyped] = useState(total);
@@ -37,8 +38,20 @@ export function CopyCommand({ lines }: { lines: string[] }) {
 
   let left = typed;
   return (
-    <div className="relative overflow-hidden rounded-card border border-line bg-sunken">
-      <div className="flex items-center justify-between border-b border-line px-4 py-2">
+    <div
+      className={cx(
+        "relative overflow-hidden rounded-card border",
+        dark
+          ? "border-white/10 bg-[#201f1a] text-[#f4f1ea] shadow-[0_30px_60px_-24px_rgb(0_0_0/0.7)] [--fg:#f4f1ea] [--fg-faint:#8f897b] [--fg-muted:#b9b2a3]"
+          : "border-line bg-sunken",
+      )}
+    >
+      <div
+        className={cx(
+          "flex items-center justify-between border-b px-4 py-2",
+          dark ? "border-white/10" : "border-line",
+        )}
+      >
         <span className="flex items-center gap-2 text-12 text-fg-muted">
           <span className="flex gap-1.5">
             <span className="size-2 rounded-full bg-line-strong" />
@@ -63,7 +76,10 @@ export function CopyCommand({ lines }: { lines: string[] }) {
       </div>
       <pre
         ref={ref}
-        className="min-h-[124px] overflow-x-auto px-4 py-3.5 font-mono text-13 leading-relaxed text-fg"
+        className={cx(
+          "min-h-[124px] overflow-x-auto px-4 py-3.5 font-mono leading-relaxed text-fg",
+          dark ? "text-[15px] sm:px-6 sm:py-5" : "text-13",
+        )}
       >
         {lines.map((line) => {
           const shown = line.slice(0, Math.max(0, left));
