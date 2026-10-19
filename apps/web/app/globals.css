@@ -552,3 +552,326 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- Brand ---------- */
+
+@keyframes brand-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes brand-node {
+  from {
+    transform: scale(0);
+  }
+  70% {
+    transform: scale(1.25);
+  }
+}
+@keyframes brand-ring {
+  from {
+    r: 2.6;
+    opacity: 0.6;
+  }
+  to {
+    r: 7;
+    opacity: 0;
+  }
+}
+.brand-animated .brand-stroke {
+  stroke-dasharray: 1;
+  animation: brand-draw 700ms cubic-bezier(0.65, 0, 0.35, 1) 180ms both;
+}
+.brand-animated .brand-start {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.brand-animated .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 420ms cubic-bezier(0.34, 1.56, 0.64, 1) 820ms both;
+}
+.brand .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---------- Landing motion ---------- */
+/* Elements animate when their <Reveal> ancestor scrolls into view (data-reveal="shown").
+   Before hydration nothing is hidden, so the page reads fine without JavaScript. */
+
+:root {
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes m-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes m-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes m-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.8) rotate(-6deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.92) rotate(0);
+  }
+}
+@keyframes m-out {
+  to {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes m-draw-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes m-draw-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes m-fill {
+  from {
+    width: 0;
+  }
+}
+@keyframes m-scan {
+  0% {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(400%);
+  }
+}
+@keyframes m-mark {
+  to {
+    background-color: var(--danger-soft);
+    box-shadow: 0 0 0 2px var(--danger-soft);
+  }
+}
+@keyframes m-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+@keyframes m-ring {
+  from {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+[data-reveal="shown"] .m-rise {
+  animation: m-rise 650ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-pop {
+  animation: m-pop 420ms var(--ease-spring) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-stamp {
+  animation: m-stamp 520ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-out {
+  animation: m-out 220ms ease-in var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-draw-x {
+  transform-origin: left;
+  animation: m-draw-x 1100ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-draw-y {
+  transform-origin: top;
+  animation: m-draw-y 1400ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-fill {
+  animation: m-fill 1400ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-scan {
+  animation: m-scan 1300ms ease-in-out var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-mark {
+  animation: m-mark 400ms ease-out var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-deny {
+  animation:
+    m-rise 650ms var(--ease-out) var(--d, 0ms) both,
+    m-shake 420ms ease-in-out calc(var(--d, 0ms) + 500ms) both;
+}
+[data-reveal="shown"] .m-brand .brand-stroke {
+  stroke-dasharray: 1;
+  animation: brand-draw 900ms cubic-bezier(0.65, 0, 0.35, 1) 250ms both;
+}
+[data-reveal="shown"] .m-brand .brand-start {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 360ms var(--ease-spring) both;
+}
+[data-reveal="shown"] .m-brand .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 460ms var(--ease-spring) 1050ms both;
+}
+.m-ring {
+  animation: m-ring 2.4s ease-out infinite;
+}
+
+/* Hero: load-time choreography */
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+.landing-rise {
+  animation: landing-rise 800ms var(--ease-out) var(--d, 0ms) both;
+}
+@keyframes landing-word {
+  from {
+    transform: translateY(110%);
+  }
+}
+.landing-word {
+  display: inline-block;
+  animation: landing-word 900ms cubic-bezier(0.16, 1, 0.3, 1) calc(120ms + var(--i) * 45ms) both;
+}
+@keyframes landing-sweep {
+  from {
+    background-size: 0% 0.28em;
+  }
+}
+.landing-sweep {
+  background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
+  background-repeat: no-repeat;
+  background-position: 0 88%;
+  background-size: 100% 0.28em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: landing-sweep 900ms var(--ease-out) 1100ms both;
+}
+.landing-grid {
+  background-image:
+    linear-gradient(to right, var(--line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 30%, transparent 75%);
+}
+@keyframes landing-node {
+  50% {
+    opacity: 1;
+    r: 4;
+  }
+}
+.landing-node {
+  opacity: 0.55;
+  animation: landing-node 3.2s ease-in-out var(--d, 0s) infinite;
+}
+@keyframes landing-marquee {
+  to {
+    transform: translateX(calc(-50% - 6px));
+  }
+}
+.landing-marquee {
+  animation: landing-marquee var(--speed, 48s) linear infinite;
+}
+.landing-marquee[data-reverse] {
+  animation-direction: reverse;
+}
+.landing-marquee-mask:hover .landing-marquee {
+  animation-play-state: paused;
+}
+.landing-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+@keyframes landing-cursor-click {
+  from {
+    transform: scale(0.4);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+.landing-click {
+  animation: landing-click 500ms ease-out both;
+  animation-name: landing-cursor-click;
+}
+@keyframes landing-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.landing-caret {
+  animation: landing-caret 1s steps(2, start) infinite;
+}
+
+/* Feature cards: a soft light follows the pointer. */
+.landing-spot {
+  position: relative;
+  isolation: isolate;
+}
+.landing-spot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+  background: radial-gradient(
+    320px circle at var(--x, 50%) var(--y, 50%),
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    transparent 70%
+  );
+}
+.landing-spot:hover::before {
+  opacity: 1;
+}
+
+/* After the m-brand rules so hover wins on specificity order. */
+a:hover > .brand .brand-spark {
+  transform: scale(1.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-signal {
+    display: none;
+  }
+}

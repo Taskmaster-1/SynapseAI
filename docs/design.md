@@ -49,8 +49,13 @@ decide on anything that acts in the world. Two ideas drive every screen:
   `prefers-reduced-motion`.
 - **Icons:** lucide-react, 16 px, 1.75 stroke. Connections get a monogram tile (first
   letter on a tinted square) — no third-party logos in the repo.
-- **Brand mark:** a small "synapse" glyph — two dots joined by a curve — next to the
-  wordmark "Synapse" (set in Geist, medium).
+- **Brand mark:** "Approved": a connection that resolves into a check. An ink node starts
+  the stroke and an accent node ends it, the agent's work signed off by you. Next to the
+  wordmark "Synapse" (Geist, medium). The favicon is the same mark on an ink tile. On the
+  landing page the stroke draws in and the nodes light up once.
+- **Landing (`/` when signed out):** motion carries the story: the hero demo plays the
+  approve loop, sections choreograph in as they scroll into view (`Reveal` + `m-*`
+  classes in globals.css). Everything settles to its final state under reduced motion.
 
 ## Layout
 
