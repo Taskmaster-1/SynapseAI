@@ -103,6 +103,14 @@
   --color-ok-soft: var(--ok-soft);
   --color-hover: var(--hover);
   --color-scrim: var(--scrim);
+  /* Landing fields (defined on .landing). */
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-field-blue: var(--field-blue);
+  --color-field-amber: var(--field-amber);
+  --color-sage: var(--sage);
+  --color-blush: var(--blush);
+  --color-lilac: var(--lilac);
 
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -550,5 +558,475 @@
     animation-iteration-count: 1 !important;
     /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override every transition */
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Brand ---------- */
+
+@keyframes brand-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes brand-node {
+  from {
+    transform: scale(0);
+  }
+  70% {
+    transform: scale(1.25);
+  }
+}
+@keyframes brand-ring {
+  from {
+    r: 2.6;
+    opacity: 0.6;
+  }
+  to {
+    r: 7;
+    opacity: 0;
+  }
+}
+.brand-animated .brand-stroke {
+  stroke-dasharray: 1;
+  animation: brand-draw 700ms cubic-bezier(0.65, 0, 0.35, 1) 180ms both;
+}
+.brand-animated .brand-start {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.brand-animated .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 420ms cubic-bezier(0.34, 1.56, 0.64, 1) 820ms both;
+}
+.brand .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---------- Landing motion ---------- */
+/* Elements animate when their <Reveal> ancestor scrolls into view (data-reveal="shown").
+   Before hydration nothing is hidden, so the page reads fine without JavaScript. */
+
+:root {
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes m-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes m-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes m-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.8) rotate(-6deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.92) rotate(0);
+  }
+}
+@keyframes m-out {
+  to {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+@keyframes m-draw-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes m-draw-y {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes m-fill {
+  from {
+    width: 0;
+  }
+}
+@keyframes m-scan {
+  0% {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(400%);
+  }
+}
+@keyframes m-mark {
+  to {
+    background-color: var(--danger-soft);
+    box-shadow: 0 0 0 2px var(--danger-soft);
+  }
+}
+@keyframes m-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+@keyframes m-ring {
+  from {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+[data-reveal="shown"] .m-rise {
+  animation: m-rise 650ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-pop {
+  animation: m-pop 420ms var(--ease-spring) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-stamp {
+  animation: m-stamp 520ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-out {
+  animation: m-out 220ms ease-in var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-draw-x {
+  transform-origin: left;
+  animation: m-draw-x 1100ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-draw-y {
+  transform-origin: top;
+  animation: m-draw-y 1400ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-fill {
+  animation: m-fill 1400ms var(--ease-out) var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-scan {
+  animation: m-scan 1300ms ease-in-out var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-mark {
+  animation: m-mark 400ms ease-out var(--d, 0ms) both;
+}
+[data-reveal="shown"] .m-deny {
+  animation:
+    m-rise 650ms var(--ease-out) var(--d, 0ms) both,
+    m-shake 420ms ease-in-out calc(var(--d, 0ms) + 500ms) both;
+}
+[data-reveal="shown"] .m-brand .brand-stroke {
+  stroke-dasharray: 1;
+  animation: brand-draw 900ms cubic-bezier(0.65, 0, 0.35, 1) 250ms both;
+}
+[data-reveal="shown"] .m-brand .brand-start {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 360ms var(--ease-spring) both;
+}
+[data-reveal="shown"] .m-brand .brand-spark {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-node 460ms var(--ease-spring) 1050ms both;
+}
+.m-ring {
+  animation: m-ring 2.4s ease-out infinite;
+}
+
+/* Hero: load-time choreography */
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+.landing-rise {
+  animation: landing-rise 800ms var(--ease-out) var(--d, 0ms) both;
+}
+@keyframes landing-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.landing-caret {
+  animation: landing-caret 1s steps(2, start) infinite;
+}
+
+/* After the m-brand rules so hover wins on specificity order. */
+a:hover > .brand .brand-spark {
+  transform: scale(1.25);
+}
+
+/* ---------- Landing: "The Signature" ---------- */
+/* The landing is always paper-and-ink, whatever the app theme: it sets the light tokens
+   on its own root so shared components (pills, monograms) render consistently. */
+
+.landing {
+  color-scheme: light;
+  --canvas: #f4f1ea;
+  --surface: #fffdf8;
+  --sunken: #ebe6db;
+  --line: #e2dccf;
+  --line-strong: #cfc7b6;
+  --fg: #15140f;
+  --fg-muted: #5f5a4f;
+  --fg-faint: #948d7e;
+  --accent: #3b48cc;
+  --accent-hover: #2f3bb3;
+  --on-accent: #ffffff;
+  --accent-soft: #e6e7f8;
+  --attention: #b45309;
+  --attention-soft: #fbefdc;
+  --danger: #b42318;
+  --danger-soft: #f9e3df;
+  --ok: #18794e;
+  --ok-soft: #e3f1e8;
+  --hover: rgb(21 20 15 / 0.05);
+  --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.18), 0 0 0 1px var(--line);
+  --mono-mix: 22%;
+
+  --ink: #15140f;
+  --paper: #f4f1ea;
+  --field-blue: #2b36b8;
+  --field-amber: #f2a83b;
+  --sage: #b9c9a8;
+  --blush: #f1c6b4;
+  --lilac: #d9d2f5;
+  --slip-shadow:
+    0 1px 0 rgb(21 20 15 / 0.04), 0 18px 40px -18px rgb(21 20 15 / 0.35),
+    0 2px 6px -2px rgb(21 20 15 / 0.12);
+
+  background: var(--paper);
+  color: var(--fg);
+}
+
+/* Paper grain over everything; static, tiny, inline. */
+.landing-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.07;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Full-bleed fields that slide up over the previous section. */
+.landing-sheet {
+  position: relative;
+  border-radius: 32px 32px 0 0;
+  margin-top: -32px;
+}
+@media (max-width: 767px) {
+  .landing-sheet {
+    border-radius: 22px 22px 0 0;
+    margin-top: -22px;
+  }
+}
+
+/* Paper slips: tactile artefacts the agent reads and you sign. */
+.landing-slip {
+  background: var(--surface);
+  border-radius: 6px;
+  box-shadow: var(--slip-shadow);
+}
+
+/* Signature line: draws on load, then the check lands. */
+@keyframes sig-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.sig-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sig-draw 2400ms cubic-bezier(0.65, 0, 0.35, 1) 500ms forwards;
+}
+@keyframes sig-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4) rotate(var(--r, 0deg));
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12) rotate(var(--r, 0deg));
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(var(--r, 0deg));
+  }
+}
+.sig-chip {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(var(--r, 0deg));
+  animation: sig-pop 520ms var(--ease-spring) var(--d, 0ms) both;
+}
+@keyframes stamp-land {
+  0% {
+    opacity: 0;
+    transform: scale(2.4) rotate(-14deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.94) rotate(-7deg);
+  }
+  72% {
+    transform: scale(1.04) rotate(-9deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-8deg);
+  }
+}
+.landing-stamp {
+  display: inline-block;
+  border: 3px solid currentColor;
+  border-radius: 8px;
+  padding: 0.1em 0.45em 0.05em;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transform: rotate(-8deg);
+  /* Ink that didn't take everywhere. */
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 -2.2 2.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.landing-stamp-in {
+  animation: stamp-land 560ms cubic-bezier(0.2, 0.7, 0.2, 1) var(--d, 0ms) both;
+}
+
+/* Hero: lines rise in. */
+@keyframes line-rise {
+  from {
+    transform: translateY(105%);
+  }
+}
+.landing-line {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.06em;
+  margin-bottom: -0.06em;
+}
+.landing-line > span {
+  display: inline-block;
+  animation: line-rise 1000ms cubic-bezier(0.16, 1, 0.3, 1) var(--d, 0ms) both;
+}
+
+/* Highlighter that sweeps across injected text. */
+@keyframes highlighter {
+  from {
+    background-size: 0% 100%;
+  }
+}
+.landing-highlighter {
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--field-amber) 0%, transparent),
+    color-mix(in srgb, var(--field-amber) 55%, transparent) 4%,
+    color-mix(in srgb, var(--field-amber) 50%, transparent) 96%,
+    color-mix(in srgb, var(--field-amber) 0%, transparent)
+  );
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+[data-reveal="shown"] .landing-highlighter {
+  animation: highlighter 900ms cubic-bezier(0.65, 0, 0.35, 1) var(--d, 0ms) both;
+}
+
+/* Receipt paper: perforated edges. */
+.landing-receipt {
+  --perf: radial-gradient(circle at 8px 0, transparent 6px, #000 6.5px);
+  mask:
+    var(--perf) top / 16px 51% repeat-x,
+    radial-gradient(circle at 8px 100%, transparent 6px, #000 6.5px) bottom / 16px 51% repeat-x;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(var(--r, 0deg));
+  }
+  50% {
+    transform: translate(var(--dx, 6px), var(--dy, -10px)) rotate(calc(var(--r, 0deg) + 2deg));
+  }
+}
+.landing-drift {
+  animation: drift var(--t, 7s) ease-in-out var(--d, 0s) infinite;
+}
+
+@keyframes ticker {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.landing-ticker {
+  animation: ticker 60s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sig-path {
+    stroke-dashoffset: 0;
+  }
+  .landing-ticker,
+  .landing-drift {
+    animation: none;
+  }
+}
+
+@keyframes m-unroll {
+  from {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-24px);
+  }
+}
+[data-reveal="shown"] .m-unroll {
+  animation: m-unroll 1600ms cubic-bezier(0.65, 0, 0.35, 1) var(--d, 200ms) both;
+}
+.m-sig {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+[data-reveal="shown"] .m-sig {
+  animation: sig-draw 1600ms cubic-bezier(0.65, 0, 0.35, 1) 500ms forwards;
+}
+[data-reveal="static"] .m-sig {
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-sig {
+    stroke-dashoffset: 0;
   }
 }

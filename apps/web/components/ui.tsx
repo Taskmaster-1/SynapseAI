@@ -7,28 +7,43 @@ import { cx } from "@/lib/format";
 
 // ---------- Brand ----------
 
-/** Two dots joined by a curve. */
-export function BrandGlyph({ className }: { className?: string }) {
+/**
+ * A connection that resolves into a check: the agent's work, signed off by you.
+ * `animated` draws the stroke and lights the nodes once, on mount.
+ */
+export function BrandGlyph({
+  className,
+  animated = false,
+}: {
+  className?: string;
+  animated?: boolean;
+}) {
   return (
-    <svg viewBox="0 0 20 20" className={cx("size-5", className)} aria-hidden="true">
+    <svg
+      viewBox="0 0 20 20"
+      className={cx("size-5 overflow-visible", animated && "brand-animated", className)}
+      aria-hidden="true"
+    >
       <path
-        d="M5 14.5C6.5 8 13.5 12 15 5.5"
+        className="brand-stroke"
+        d="M4.4 11.6 8.3 15.3 15.6 6.7"
+        pathLength={1}
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="2.3"
         strokeLinecap="round"
-        opacity="0.55"
+        strokeLinejoin="round"
       />
-      <circle cx="5" cy="14.5" r="2.4" fill="currentColor" />
-      <circle cx="15" cy="5.5" r="2.4" fill="var(--accent)" />
+      <circle className="brand-start" cx="4.4" cy="11.6" r="2.3" fill="currentColor" />
+      <circle className="brand-spark" cx="15.6" cy="6.7" r="2.6" fill="var(--accent)" />
     </svg>
   );
 }
 
-export function Brand() {
+export function Brand({ animated = false }: { animated?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-2 text-[15px] font-medium tracking-[-0.01em] text-fg">
-      <BrandGlyph />
+    <span className="brand inline-flex items-center gap-2 text-[15px] font-medium tracking-[-0.01em] text-fg">
+      <BrandGlyph animated={animated} />
       Synapse
     </span>
   );
