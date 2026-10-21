@@ -5,6 +5,7 @@ import { BrandGlyph, EffectPill, Monogram } from "@/components/ui";
 import { ApprovalSequence } from "./approval-sequence";
 import { CopyCommand } from "./copy-command";
 import { Magnetic, Tilt } from "./motion";
+import { ProductTour } from "./product-tour";
 import { CountUp, Reveal } from "./reveal";
 import { SignatureHero } from "./signature-hero";
 
@@ -484,6 +485,33 @@ function Proof() {
   );
 }
 
+// ── The real app ─────────────────────────────────────────────────────────────
+
+function RealApp() {
+  return (
+    <section id="tour" className="landing-sheet z-[55] bg-sage text-ink">
+      <div className="mx-auto grid max-w-[1280px] gap-12 px-5 py-24 sm:px-8 lg:grid-cols-[0.62fr_1.38fr] lg:gap-16 lg:py-32">
+        <Reveal>
+          <Eyebrow>Not a mockup</Eyebrow>
+          <h2 className="mt-4 font-serif text-[clamp(44px,5.6vw,84px)] leading-[0.95] tracking-[-0.025em]">
+            This is <span className="italic">the app.</span>
+          </h2>
+          <p className="mt-6 max-w-[360px] text-[17px] leading-relaxed opacity-75">
+            Captured from a local install with the demo data. Run{" "}
+            <code className="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-[14px]">
+              bun run seed
+            </code>{" "}
+            and you get the same.
+          </p>
+        </Reveal>
+        <Reveal delay={150} className="min-w-0">
+          <ProductTour />
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
 // ── Self-host ────────────────────────────────────────────────────────────────
 
 function SelfHost() {
@@ -622,6 +650,7 @@ export function Landing() {
         <Night />
         <WorksWith />
         <Proof />
+        <RealApp />
         <SelfHost />
         <Close />
       </main>

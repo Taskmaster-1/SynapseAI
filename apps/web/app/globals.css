@@ -1077,3 +1077,16 @@ a:hover > .brand .brand-spark {
     stroke-dashoffset: 0;
   }
 }
+
+/* Product tour: the active tab's bar fills over the dwell time. */
+@keyframes tour-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.tour-progress {
+  animation: tour-progress var(--dwell, 4800ms) linear both;
+}
