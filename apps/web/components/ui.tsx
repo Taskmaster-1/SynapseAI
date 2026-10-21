@@ -480,20 +480,28 @@ export function PageHeader({
   title,
   description,
   actions,
+  eyebrow,
 }: {
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Small mono line above the title, like a dateline. */
+  eyebrow?: ReactNode;
 }) {
   return (
-    <header className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
-      <div className="min-w-0 flex-1 basis-72">
-        <h1 className="font-serif text-[34px] leading-[1.1] tracking-[-0.01em] text-fg md:text-40">
-          {title}
-        </h1>
-        {description ? <p className="mt-2 max-w-lg text-14 text-fg-muted">{description}</p> : null}
+    <header className="mb-10 border-b border-line pb-7">
+      {eyebrow ? <p className="eyebrow mb-3">{eyebrow}</p> : null}
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+        <div className="min-w-0 flex-1 basis-72">
+          <h1 className="font-serif text-[42px] leading-[0.98] tracking-[-0.02em] text-fg md:text-[56px]">
+            {title}
+          </h1>
+          {description ? (
+            <p className="mt-3 max-w-[34rem] text-14 text-fg-muted">{description}</p>
+          ) : null}
+        </div>
+        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </header>
   );
 }
@@ -504,7 +512,7 @@ export function Page({ children, wide = false }: { children: ReactNode; wide?: b
     <div className="scroll-thin h-full overflow-y-auto">
       <div
         className={cx(
-          "mx-auto w-full px-4 pt-8 pb-16 md:px-8 md:pt-14",
+          "mx-auto w-full px-4 pt-8 pb-20 md:px-8 md:pt-14",
           wide ? "max-w-[1040px]" : "max-w-[760px]",
         )}
       >
@@ -516,36 +524,95 @@ export function Page({ children, wide = false }: { children: ReactNode; wide?: b
 
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <h2 className="text-13 font-medium text-fg-muted">{children}</h2>
+    <div className="mb-4 flex items-end justify-between gap-3 border-b border-line pb-2.5">
+      <h2 className="font-serif text-[24px] leading-none tracking-[-0.01em] text-fg">{children}</h2>
       {action}
     </div>
   );
 }
 
+/**
+ * What a page says before there's anything on it. Pass an `illustration` (a faded,
+ * decorative preview of what the page will hold) to set it beside the words; it's hidden
+ * from assistive tech and can't be focused or clicked.
+ */
 export function EmptyState({
   title,
   children,
   action,
   icon,
+  illustration,
   compact = false,
 }: {
   title: ReactNode;
   children?: ReactNode;
   action?: ReactNode;
   icon?: ReactNode;
+  illustration?: ReactNode;
   compact?: boolean;
 }) {
+  if (illustration) {
+    return (
+      <div
+        className={cx(
+          "grid overflow-hidden rounded-[18px] border border-line bg-surface",
+          compact
+            ? "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+            : "md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]",
+        )}
+      >
+        <div
+          className={cx(
+            "order-2 flex flex-col justify-center",
+            compact ? "p-6 sm:order-1" : "p-7 md:order-1 md:p-10",
+          )}
+        >
+          <p
+            className={cx(
+              "font-serif leading-[1.05] tracking-[-0.01em] text-fg",
+              compact ? "text-[26px]" : "text-[34px]",
+            )}
+          >
+            {title}
+          </p>
+          {children ? (
+            <p className={cx("max-w-sm text-14 text-fg-muted", compact ? "mt-2" : "mt-3")}>
+              {children}
+            </p>
+          ) : null}
+          {action ? <div className={compact ? "mt-5" : "mt-7"}>{action}</div> : null}
+        </div>
+        <div
+          aria-hidden="true"
+          inert
+          className={cx(
+            "relative order-1 overflow-hidden bg-sunken select-none",
+            compact ? "min-h-[180px] sm:order-2" : "min-h-[230px] md:order-2 md:min-h-[300px]",
+          )}
+          style={{
+            backgroundImage:
+              "radial-gradient(color-mix(in srgb, var(--fg) 13%, transparent) 1px, transparent 1.2px)",
+            backgroundSize: "14px 14px",
+          }}
+        >
+          <div className="absolute inset-0 grid place-items-center p-6 opacity-[0.88]">
+            {illustration}
+          </div>
+          <span className="eyebrow absolute top-3 left-4 text-[10px]">Example</span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className={cx(
-        "flex flex-col items-center rounded-card border border-dashed border-line-strong text-center",
+        "flex flex-col items-center rounded-[18px] bg-sunken/70 text-center",
         compact ? "px-5 py-8" : "px-6 py-14",
       )}
     >
       {icon ? <div className="mb-3 text-fg-faint">{icon}</div> : null}
-      <p className={cx("font-serif text-fg", compact ? "text-20" : "text-28")}>{title}</p>
-      {children ? <p className="mt-1.5 max-w-sm text-13 text-fg-muted">{children}</p> : null}
+      <p className={cx("font-serif text-fg", compact ? "text-[26px]" : "text-[34px]")}>{title}</p>
+      {children ? <p className="mt-1.5 max-w-sm text-14 text-fg-muted">{children}</p> : null}
       {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
@@ -556,7 +623,7 @@ export function ErrorNote({ children, className }: { children: ReactNode; classN
     <div
       role="alert"
       className={cx(
-        "rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-13 text-danger",
+        "rounded-[12px] border border-danger/25 bg-danger-soft px-3.5 py-2.5 text-13 text-danger",
         className,
       )}
     >

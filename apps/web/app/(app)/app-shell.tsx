@@ -12,7 +12,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <LucideProvider size={16} strokeWidth={1.75}>
       <WorkspaceProvider>
         <PaletteProvider>
-          <div className="flex h-dvh overflow-hidden bg-canvas">
+          <div className="grain flex h-dvh overflow-hidden bg-canvas">
             <aside
               aria-label="Sidebar"
               className="hidden w-[248px] shrink-0 border-r border-line md:flex md:flex-col"

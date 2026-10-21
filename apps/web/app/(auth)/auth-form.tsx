@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useEffect, useState } from "react";
-import { Brand, EffectPill, Field, Monogram } from "@/components/ui";
+import { type CSSProperties, type FormEvent, useEffect, useState } from "react";
+import { Slip } from "@/components/landing/signature-hero";
+import { Brand, Field } from "@/components/ui";
 import { type AppConfig, api } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
@@ -12,52 +13,6 @@ function nextPath(): string {
   const next = new URLSearchParams(window.location.search).get("next");
   // Only same-origin relative paths.
   return next?.startsWith("/") && !next.startsWith("//") ? next : "/";
-}
-
-/** Static illustration of the product's core moment. Not interactive. */
-function MockApproval() {
-  return (
-    <div aria-hidden="true" className="w-full max-w-[420px] select-none">
-      <div className="mb-3 ml-auto w-fit max-w-[80%] rounded-[14px] rounded-br-[4px] bg-sunken px-3.5 py-2 text-13 text-fg">
-        Tell Bob 3pm tomorrow works for me
-      </div>
-      <div className="overflow-hidden rounded-card border border-attention/35 bg-surface shadow-pop">
-        <div className="bg-attention-soft px-4 py-3">
-          <div className="flex items-center gap-2 text-12 font-medium text-attention">
-            <span className="size-1.5 rounded-full bg-attention" />
-            Needs your approval
-          </div>
-          <p className="mt-1 text-14 font-medium text-fg">
-            Email bob@acme.com: “Re: Sync tomorrow?”
-          </p>
-          <div className="mt-1.5 flex items-center gap-2 text-12 text-fg-muted">
-            <Monogram name="gmail" size={16} />
-            gmail
-            <EffectPill effect="send" className="bg-surface/80" />
-          </div>
-        </div>
-        <div className="space-y-1 border-t border-attention/20 px-4 py-3 text-13">
-          <p>
-            <span className="inline-block w-12 text-fg-muted">To</span>bob@acme.com
-          </p>
-          <p className="pt-1.5 leading-relaxed text-fg">
-            Hi Bob,
-            <br />
-            3pm tomorrow works for me — talk then.
-            <br />
-            Ada
-          </p>
-        </div>
-        <div className="flex items-center gap-2 border-t border-line px-4 py-2.5">
-          <span className="btn btn-primary btn-sm pointer-events-none">
-            <Check className="size-3.5" />
-            Approve
-          </span>
-          <span className="btn btn-sm pointer-events-none">Deny…</span>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
@@ -109,35 +64,53 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const socials = (["github", "google"] as const).filter((p) => config?.auth[p]);
 
   return (
-    <div className="grid min-h-dvh bg-canvas lg:grid-cols-[1.1fr_1fr]">
-      <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-line bg-surface px-12 py-10 lg:flex">
-        <Brand />
-        <div className="mx-auto w-full max-w-[460px]">
-          <h2 className="font-serif text-[52px] leading-[1.02] tracking-[-0.015em] text-fg">
-            An agent that asks
-            <br />
-            before it acts.
+    <div className="landing grain grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-field-amber px-12 py-10 text-ink lg:flex">
+        <Link href="/welcome" className="w-fit rounded-md" aria-label="Synapse home">
+          <Brand animated />
+        </Link>
+        <div className="mx-auto w-full max-w-[520px]">
+          <h2 className="font-serif text-[clamp(48px,4.6vw,72px)] leading-[0.95] tracking-[-0.02em]">
+            <span className="landing-line">
+              <span style={{ "--d": "80ms" } as CSSProperties}>Nothing leaves</span>
+            </span>
+            <span className="landing-line">
+              <span className="italic" style={{ "--d": "180ms" } as CSSProperties}>
+                without you.
+              </span>
+            </span>
           </h2>
-          <p className="mt-4 max-w-sm text-14 text-fg-muted">
-            Hand off the busywork. Synapse works inside your tools and waits for your yes before it
-            sends, changes or deletes anything.
-          </p>
-          <div className="mt-10">
-            <MockApproval />
-          </div>
+          <Slip
+            className="landing-rise mt-12 max-w-[440px]"
+            style={{ "--d": "350ms" } as CSSProperties}
+            stampDelay={1100}
+          />
         </div>
-        <p className="text-12 text-fg-faint">Open source · runs on your own server</p>
+        <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-70">
+          Open source · MIT · runs on your server
+        </p>
       </aside>
 
       <main className="flex flex-col px-4 py-8 sm:px-8">
         <div className="lg:hidden">
-          <Brand />
+          <Link href="/welcome" className="w-fit rounded-md" aria-label="Synapse home">
+            <Brand />
+          </Link>
         </div>
         <div className="mx-auto flex w-full max-w-[360px] flex-1 flex-col justify-center py-10">
-          <h1 className="font-serif text-40 leading-tight text-fg">
-            {mode === "sign-in" ? "Welcome back." : "Create your account."}
+          <p className="eyebrow">{mode === "sign-in" ? "Sign in" : "Get started"}</p>
+          <h1 className="mt-3 font-serif text-[52px] leading-[0.98] tracking-[-0.02em] text-fg">
+            {mode === "sign-in" ? (
+              <>
+                Welcome <span className="italic">back.</span>
+              </>
+            ) : (
+              <>
+                Hand it <span className="italic">off.</span>
+              </>
+            )}
           </h1>
-          <p className="mt-2 mb-8 text-14 text-fg-muted">
+          <p className="mt-3 mb-9 text-14 text-fg-muted">
             {mode === "sign-in"
               ? "Sign in to pick up where you left off."
               : "It takes a minute. Bring a task."}
@@ -149,7 +122,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
                 <button
                   key={p}
                   type="button"
-                  className="btn h-10 w-full"
+                  className="btn h-11 w-full"
                   onClick={() => void social(p)}
                 >
                   Continue with {p === "github" ? "GitHub" : "Google"}
@@ -176,7 +149,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
                 <Field label="Name" htmlFor="name">
                   <input
                     id="name"
-                    className="input h-10"
+                    className="input h-11"
                     autoComplete="name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
@@ -188,7 +161,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
                   id="email"
                   type="email"
                   required
-                  className="input h-10"
+                  className="input h-11"
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -204,7 +177,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
                   type="password"
                   required
                   minLength={mode === "sign-up" ? 8 : undefined}
-                  className="input h-10"
+                  className="input h-11"
                   autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -215,7 +188,11 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
                   {error}
                 </p>
               ) : null}
-              <button type="submit" className="btn btn-primary h-10 w-full" disabled={busy}>
+              <button
+                type="submit"
+                className="btn btn-primary h-12 w-full text-[15px]"
+                disabled={busy}
+              >
                 {busy ? <LoaderCircle className="anim-spin size-4" /> : null}
                 {mode === "sign-in" ? "Sign in" : "Create account"}
               </button>

@@ -61,6 +61,7 @@ export function Composer({
   }, [autoFocus]);
 
   const canSend = value.trim().length > 0 && !sending;
+  const note = queue ? "The agent will read this at its next step" : footer;
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -76,43 +77,68 @@ export function Composer({
         if (canSend) onSend();
       }}
       className={cx(
-        "rounded-[14px] border border-line-strong bg-surface transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_16%,transparent)]",
-        size === "lg" ? "p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)]" : "p-2",
+        "relative rounded-[16px] bg-surface shadow-[var(--slip-shadow)] ring-1 ring-line transition-[box-shadow] duration-150 focus-within:ring-fg/30",
+        size === "lg" ? "px-4 pt-4 pb-3" : "py-2 pr-2 pl-3 sm:pt-2.5 sm:pr-3",
       )}
     >
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <textarea
-        id={id}
-        ref={ref}
-        rows={size === "lg" ? 2 : 1}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder={placeholder}
-        className={cx(
-          "block w-full resize-none bg-transparent text-fg outline-none placeholder:text-fg-faint",
-          size === "lg" ? "min-h-14 px-1.5 pt-1 text-16" : "min-h-9 px-2 py-1.5 text-14",
-        )}
-      />
-      <div className="mt-1 flex items-center gap-2 pl-1.5">
-        <div className="min-w-0 flex-1 text-12 text-fg-faint">
-          {queue ? "The agent will read this at its next step" : footer}
+      {/* Phones: textarea and send share a row. Wider: a dashed rule, then hints and send. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3">
+        <textarea
+          id={id}
+          ref={ref}
+          rows={size === "lg" ? 2 : 1}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          aria-describedby={note ? `${id}-hint` : undefined}
+          className={cx(
+            "col-start-1 row-start-1 block w-full resize-none bg-transparent text-fg outline-none placeholder:text-fg-faint sm:col-span-2 sm:border-b sm:border-dashed sm:border-line",
+            size === "lg"
+              ? "min-h-14 px-1 text-16 leading-[1.6] sm:pb-3"
+              : "min-h-10 px-1.5 py-1.5 text-14 leading-[1.6] sm:pb-2.5",
+          )}
+        />
+        <div
+          className={cx(
+            "col-span-2 row-start-2 min-w-0 items-center gap-3 pt-1.5 pl-1.5 sm:col-span-1 sm:flex",
+            size === "lg" ? "sm:pt-3" : "sm:pt-2.5",
+            note ? "flex" : "hidden",
+          )}
+        >
+          <div id={`${id}-hint`} className="min-w-0 flex-1 text-12 text-fg-faint sm:truncate">
+            {note}
+          </div>
+          <span className="hidden shrink-0 items-center gap-1.5 text-12 text-fg-faint sm:inline-flex">
+            <kbd className="kbd">
+              <CornerDownLeft className="size-3" />
+            </kbd>
+            {queue ? "queue" : "send"}
+            <span className="text-line-strong">·</span>
+            <kbd className="kbd">⇧</kbd>
+            <kbd className="kbd -ml-1">
+              <CornerDownLeft className="size-3" />
+            </kbd>
+            new line
+          </span>
         </div>
-        <span className="hidden items-center gap-1 text-12 text-fg-faint sm:inline-flex">
-          <CornerDownLeft className="size-3" /> to {queue ? "queue" : "send"}
-        </span>
         <button
           type="submit"
           disabled={!canSend}
-          className={cx("btn btn-primary btn-sm", !queue && "btn-icon")}
+          className={cx(
+            "btn btn-primary col-start-2 row-start-1 h-9 self-end shadow-[0_6px_14px_-6px_rgb(0_0_0/0.45)] disabled:shadow-none sm:row-start-2",
+            size === "lg" ? "sm:mt-3" : "sm:mt-2.5",
+            queue ? "px-4" : "btn-icon",
+          )}
           aria-label={queue ? "Queue message" : "Send"}
         >
           {sending ? (
-            <LoaderCircle className="anim-spin size-3.5" />
+            <LoaderCircle className="anim-spin size-4" />
           ) : queue ? null : (
-            <ArrowUp className="size-4" />
+            <ArrowUp className="size-[18px]" strokeWidth={2.25} />
           )}
           {queue ? "Queue" : null}
         </button>

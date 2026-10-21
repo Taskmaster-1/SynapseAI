@@ -3,6 +3,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Cpu,
   Monitor,
   Moon,
@@ -131,7 +132,7 @@ export default function SettingsPage() {
 
   return (
     <Page wide>
-      <PageHeader title="Settings" />
+      <PageHeader eyebrow="Your workspace" title="Settings" />
       <div className="flex flex-col gap-8 md:flex-row md:gap-12">
         <nav aria-label="Settings sections" className="md:w-52 md:shrink-0">
           <ul className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-col md:gap-px md:overflow-visible md:px-0">
@@ -143,13 +144,15 @@ export default function SettingsPage() {
                   data-section={x.id}
                   onClick={() => go(x.id)}
                   className={cx(
-                    "flex h-8 w-full items-center gap-2.5 rounded-[7px] px-2.5 text-13 whitespace-nowrap transition-colors duration-150",
+                    "flex h-9 w-full items-center gap-2.5 rounded-full px-3.5 text-13 whitespace-nowrap transition-colors duration-150",
                     section === x.id
-                      ? "bg-surface font-medium text-fg shadow-[0_0_0_1px_var(--line)]"
+                      ? "bg-fg font-medium text-canvas"
                       : "text-fg-muted hover:bg-hover hover:text-fg",
                   )}
                 >
-                  <span className={section === x.id ? "text-fg" : "text-fg-faint"}>{x.icon}</span>
+                  <span className={section === x.id ? "text-canvas" : "text-fg-faint"}>
+                    {x.icon}
+                  </span>
                   {x.label}
                 </button>
               </li>
@@ -157,9 +160,15 @@ export default function SettingsPage() {
           </ul>
         </nav>
         <div className="min-w-0 flex-1 md:max-w-[680px]">
-          <header className="mb-6">
-            <h2 className="font-serif text-28 text-fg">{meta.label}</h2>
-            <p className="mt-1 text-13 text-fg-muted">{meta.blurb}</p>
+          <header className="mb-8">
+            <p className="eyebrow">
+              {String(SECTIONS.findIndex((x) => x.id === section) + 1).padStart(2, "0")} /{" "}
+              {String(SECTIONS.length).padStart(2, "0")}
+            </p>
+            <h2 className="mt-2 font-serif text-[36px] leading-none tracking-[-0.01em] text-fg">
+              {meta.label}
+            </h2>
+            <p className="mt-2 text-14 text-fg-muted">{meta.blurb}</p>
           </header>
           {settings.error && section !== "rules" && section !== "appearance" ? (
             <ErrorNote>{errorMessage(settings.error)}</ErrorNote>
@@ -319,12 +328,12 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
   return (
     <div className="space-y-10">
       <section>
-        <h3 className="text-16 font-medium text-fg">Model order</h3>
+        <h3 className="font-serif text-[24px] leading-tight text-fg">Model order</h3>
         <p className="mt-1 mb-4 text-13 text-fg-muted">
           Tried top to bottom. If one is down or out of credit, the next takes over.
         </p>
         {chain.length === 0 ? (
-          <div className="rounded-card border border-line bg-surface px-4 py-3.5 text-13 text-fg-muted">
+          <div className="rounded-[16px] border border-line bg-surface px-4 py-3.5 text-13 text-fg-muted">
             Using the server default
             {settings.models.defaultChain?.length ? (
               <ol className="mt-2 space-y-1">
@@ -345,13 +354,20 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
             )}
           </div>
         ) : (
-          <ol className="divide-y divide-line rounded-card border border-line bg-surface">
+          <ol className="divide-y divide-line rounded-[16px] border border-line bg-surface">
             {chain.map((ref, i) => {
               const m = byRef.get(ref);
               const price = m ? priceLabel(m) : null;
               return (
-                <li key={ref} className="flex items-center gap-2 px-3 py-2">
-                  <span className="tabular w-5 text-center text-12 text-fg-faint">{i + 1}</span>
+                <li key={ref} className="flex items-center gap-2 py-2.5 pr-3 pl-2">
+                  <span
+                    className={cx(
+                      "tabular w-7 shrink-0 text-center font-serif text-[22px] leading-none",
+                      i === 0 ? "text-fg" : "text-fg-faint",
+                    )}
+                  >
+                    {i + 1}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-14 text-fg">{m?.name ?? ref}</span>
@@ -445,12 +461,12 @@ function Models({ settings, save, known }: { settings: Settings; save: SaveFn; k
       </section>
 
       <section>
-        <h3 className="text-16 font-medium text-fg">Provider keys</h3>
+        <h3 className="font-serif text-[24px] leading-tight text-fg">Provider keys</h3>
         <p className="mt-1 mb-4 text-13 text-fg-muted">
           Stored encrypted and never shown again. Leave unset to use the server's keys, if it has
           any.
         </p>
-        <ul className="divide-y divide-line rounded-card border border-line bg-surface">
+        <ul className="divide-y divide-line rounded-[16px] border border-line bg-surface">
           {PROVIDERS.map((p) => (
             <li key={p.id}>
               <KeyRow
@@ -493,7 +509,7 @@ function KeyRow({
         setBusy(false);
       }}
     >
-      <label htmlFor={id} className="w-24 text-14 text-fg">
+      <label htmlFor={id} className="w-24 text-14 text-fg sm:w-36">
         {label}
       </label>
       {isSet ? <Pill tone="ok">Set</Pill> : <Pill>Not set</Pill>}
@@ -547,17 +563,22 @@ function Budgets({ settings, save }: { settings: Settings; save: SaveFn }) {
   return (
     <div className="space-y-6">
       {dayLimit && todaySpend != null ? (
-        <div className="rounded-card border border-line bg-surface px-4 py-3.5">
-          <div className="flex items-baseline justify-between text-13">
-            <span className="text-fg-muted">Spent today</span>
-            <span className="tabular text-fg">
-              {formatCost(todaySpend)}{" "}
-              <span className="text-fg-faint">of {formatCost(dayLimit)}</span>
+        <div className="rounded-[16px] border border-line bg-surface px-5 py-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="eyebrow">Spent today</span>
+            <span className="tabular text-13 text-fg-muted">
+              <span className="font-serif text-[26px] leading-none text-fg">
+                {formatCost(todaySpend)}
+              </span>{" "}
+              of {formatCost(dayLimit)}
             </span>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sunken">
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-sunken">
             <div
-              className="h-full rounded-full bg-accent"
+              className={cx(
+                "h-full rounded-full",
+                todaySpend / dayLimit >= 0.8 ? "bg-attention" : "bg-fg",
+              )}
               style={{
                 width: `${Math.min(100, Math.max(todaySpend > 0 ? 1.5 : 0, (todaySpend / dayLimit) * 100))}%`,
               }}
@@ -627,13 +648,13 @@ function Budgets({ settings, save }: { settings: Settings; save: SaveFn }) {
 
 function Appearance() {
   const [theme, setTheme] = useTheme();
-  const options: { value: ThemePref; label: string; icon: ReactNode }[] = [
-    { value: "system", label: "System", icon: <Monitor /> },
-    { value: "light", label: "Light", icon: <Sun /> },
-    { value: "dark", label: "Dark", icon: <Moon /> },
+  const options: { value: ThemePref; label: string; icon: ReactNode; note: string }[] = [
+    { value: "light", label: "Light", icon: <Sun />, note: "Paper and ink. The default." },
+    { value: "dark", label: "Dark", icon: <Moon />, note: "Warm, for late nights." },
+    { value: "system", label: "System", icon: <Monitor />, note: "Follows your device." },
   ];
   return (
-    <fieldset aria-label="Theme" className="grid min-w-0 grid-cols-3 gap-3">
+    <fieldset aria-label="Theme" className="grid min-w-0 gap-3 sm:grid-cols-3">
       {options.map((o) => {
         const on = theme === o.value;
         return (
@@ -643,17 +664,23 @@ function Appearance() {
             aria-pressed={on}
             onClick={() => setTheme(o.value)}
             className={cx(
-              "flex flex-col items-start gap-3 rounded-card border bg-surface p-3 text-left transition-colors duration-150",
+              "relative flex flex-col items-start gap-3 rounded-[16px] border bg-surface p-3 text-left transition-[border-color,box-shadow] duration-150",
               on
-                ? "border-accent shadow-[0_0_0_1px_var(--accent)]"
+                ? "border-fg shadow-[0_0_0_1px_var(--fg)]"
                 : "border-line hover:border-line-strong",
             )}
           >
             <ThemeSwatch kind={o.value} />
-            <span className="flex items-center gap-2 text-13 font-medium text-fg">
+            <span className="flex w-full items-center gap-2 px-0.5 text-14 font-medium text-fg">
               <span className="text-fg-muted">{o.icon}</span>
               {o.label}
+              {on ? (
+                <span className="ml-auto grid size-5 place-items-center rounded-full bg-fg text-canvas">
+                  <Check className="size-3" strokeWidth={2.75} />
+                </span>
+              ) : null}
             </span>
+            <span className="-mt-2 px-0.5 text-12 text-fg-muted">{o.note}</span>
           </button>
         );
       })}
@@ -663,18 +690,18 @@ function Appearance() {
 
 function ThemeSwatch({ kind }: { kind: ThemePref }) {
   const light = {
-    canvas: "#F6F5F1",
-    surface: "#FFFFFF",
-    line: "#E5E2DA",
-    fg: "#1B1A17",
-    accent: "#3B48CC",
+    canvas: "#f4f1ea",
+    surface: "#fffdf8",
+    line: "#e2dccf",
+    fg: "#15140f",
+    accent: "#3b48cc",
   };
   const dark = {
-    canvas: "#0F0F0E",
-    surface: "#181816",
-    line: "#272623",
-    fg: "#ECEAE4",
-    accent: "#8B95FF",
+    canvas: "#13120f",
+    surface: "#1c1b17",
+    line: "#2b2924",
+    fg: "#efeae0",
+    accent: "#8b95ff",
   };
   const pane = (c: typeof light) => (
     <div className="flex h-full flex-1 gap-1 p-1.5" style={{ background: c.canvas }}>
@@ -686,13 +713,19 @@ function ThemeSwatch({ kind }: { kind: ThemePref }) {
         className="flex-1 rounded-[3px] p-1"
         style={{ background: c.surface, boxShadow: `0 0 0 1px ${c.line}` }}
       >
-        <div className="h-1 w-2/3 rounded-full" style={{ background: c.fg, opacity: 0.7 }} />
-        <div className="mt-1 h-1.5 w-6 rounded-full" style={{ background: c.accent }} />
+        <div
+          className="font-serif text-[15px] leading-none italic"
+          style={{ color: c.fg, fontFamily: "var(--font-serif)" }}
+        >
+          Aa
+        </div>
+        <div className="mt-1 h-1 w-2/3 rounded-full" style={{ background: c.line }} />
+        <div className="mt-1.5 h-1.5 w-6 rounded-full" style={{ background: c.fg }} />
       </div>
     </div>
   );
   return (
-    <div className="flex aspect-[16/10] w-full overflow-hidden rounded-[8px] border border-line">
+    <div className="flex aspect-[16/9] w-full overflow-hidden rounded-[10px] border border-line">
       {kind === "dark" ? (
         pane(dark)
       ) : kind === "light" ? (

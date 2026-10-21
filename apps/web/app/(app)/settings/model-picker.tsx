@@ -171,7 +171,7 @@ function PickerBody({
           aria-controls="model-picker-list"
           aria-activedescendant={rows[active] ? rowId(rows[active]) : undefined}
           placeholder="Search models, or type provider:model"
-          className="h-13 min-w-0 flex-1 bg-transparent text-16 text-fg outline-none placeholder:text-fg-faint"
+          className="h-14 min-w-0 flex-1 bg-transparent font-serif text-[22px] text-fg outline-none placeholder:text-fg-faint"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -191,7 +191,7 @@ function PickerBody({
           <Kbd>esc</Kbd>
         </span>
       </div>
-      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2">
+      <div className="flex items-center justify-between gap-3 border-b border-line bg-sunken/50 px-4 py-2">
         <Segmented
           label="Which models to show"
           size="sm"
@@ -202,7 +202,9 @@ function PickerBody({
             { value: "all", label: "All" },
           ]}
         />
-        <span className="text-12 text-fg-faint">Price per 1M tokens, in / out</span>
+        <span className="hidden font-mono text-[10.5px] tracking-[0.08em] text-fg-faint uppercase sm:inline">
+          $ per 1M tokens · in / out
+        </span>
       </div>
       <div
         ref={listRef}
@@ -222,7 +224,7 @@ function PickerBody({
         ) : null}
         {groups.map((g) => (
           <div key={g.creator} className="pb-1">
-            <div className="eyebrow flex items-center gap-2 px-2.5 pt-2 pb-1">
+            <div className="eyebrow flex items-center gap-2 px-2.5 pt-3 pb-1.5">
               <Monogram name={creatorLabel(g.creator)} size={14} />
               {creatorLabel(g.creator)}
             </div>
@@ -246,7 +248,7 @@ function PickerBody({
                   onClick={() => pick(row)}
                   onKeyDown={() => {}}
                   className={cx(
-                    "flex min-h-11 items-center gap-3 rounded-[8px] px-2.5 py-1.5",
+                    "flex min-h-12 items-center gap-3 rounded-[10px] px-2.5 py-1.5",
                     selectable(row) ? "cursor-pointer" : "cursor-default",
                     on && "bg-accent-soft",
                     !m.available && "opacity-55",
@@ -304,7 +306,7 @@ function PickerBody({
                     onClick={() => pick(custom)}
                     onKeyDown={() => {}}
                     className={cx(
-                      "flex min-h-11 cursor-pointer items-center gap-3 rounded-[8px] px-2.5",
+                      "flex min-h-12 cursor-pointer items-center gap-3 rounded-[10px] px-2.5",
                       on && "bg-accent-soft",
                     )}
                   >

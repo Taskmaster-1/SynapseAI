@@ -6,7 +6,6 @@ import {
   ExternalLink,
   KeyRound,
   LoaderCircle,
-  Plug,
   Plus,
   RefreshCw,
   Trash,
@@ -16,6 +15,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import {
+  BrandGlyph,
   EFFECT_EXPLAINER,
   EffectPill,
   EmptyState,
@@ -99,6 +99,7 @@ export default function ConnectionsPage() {
   return (
     <Page wide>
       <PageHeader
+        eyebrow="Tools · MCP servers"
         title="Connections"
         description="MCP servers the agent can work in. Every tool has an effect — read, write, send or destructive — and your approval rules key off it."
         actions={
@@ -117,7 +118,7 @@ export default function ConnectionsPage() {
         </div>
       ) : list.length === 0 ? (
         <EmptyState
-          icon={<Plug className="size-5" />}
+          illustration={<SampleConnections />}
           title="No connections yet"
           action={
             <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
@@ -134,12 +135,12 @@ export default function ConnectionsPage() {
               <button
                 type="button"
                 onClick={() => setOpenId(c.id)}
-                className="group flex h-full w-full flex-col rounded-card border border-line bg-surface p-4 text-left transition-colors duration-150 hover:border-line-strong"
+                className="group flex h-full w-full flex-col rounded-[16px] border border-line bg-surface p-5 text-left transition-[border-color,box-shadow,translate] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[var(--slip-shadow)]"
               >
-                <div className="flex items-start gap-3">
-                  <Monogram name={c.name} size={36} />
+                <div className="flex items-start gap-3.5">
+                  <Monogram name={c.name} size={40} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-16 font-medium text-fg">
+                    <div className="truncate font-serif text-[24px] leading-[1.1] text-fg">
                       {humanizeName(c.name)}
                     </div>
                     <div className="truncate text-12 text-fg-faint" title={c.url}>
@@ -148,9 +149,9 @@ export default function ConnectionsPage() {
                   </div>
                   <ChevronRight className="mt-1 text-fg-faint transition-transform duration-150 group-hover:translate-x-0.5" />
                 </div>
-                <div className="mt-5 flex items-center justify-between gap-2">
+                <div className="mt-6 flex items-center justify-between gap-2 border-t border-dashed border-line pt-3.5">
                   <StatusPill status={c.status} />
-                  <span className="tabular text-12 text-fg-muted">
+                  <span className="tabular font-mono text-[11px] tracking-[0.06em] text-fg-muted uppercase">
                     {c.tools ? `${c.tools.length} tools` : "Tools not loaded"}
                   </span>
                 </div>
@@ -319,7 +320,7 @@ function ConnectionDetail({
           </button>
         </div>
         {!c.tools || c.tools.length === 0 ? (
-          <p className="rounded-[10px] border border-dashed border-line-strong px-4 py-5 text-center text-13 text-fg-muted">
+          <p className="rounded-[12px] bg-sunken/70 px-4 py-5 text-center text-13 text-fg-muted">
             {c.tools
               ? "This server doesn't offer any tools."
               : "Tools appear after a successful check."}
@@ -540,6 +541,57 @@ function AddConnection({
           </button>
         </form>
       </section>
+    </div>
+  );
+}
+
+/** Empty-state art: three tools wired into the agent with dotted lines. */
+function SampleConnections() {
+  const tools = [
+    { name: "GitHub", y: 34, note: "read" },
+    { name: "Linear", y: 100, note: "write" },
+    { name: "Notion", y: 166, note: "read" },
+  ];
+  return (
+    <div className="relative h-[200px] w-[290px]">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 290 200"
+        className="absolute inset-0 h-full w-full"
+        fill="none"
+      >
+        {tools.map((t) => (
+          <path
+            key={t.name}
+            d={`M 112 ${t.y} C 170 ${t.y}, 180 100, 228 100`}
+            stroke="var(--fg-faint)"
+            strokeWidth="1.5"
+            strokeDasharray="1 5"
+            strokeLinecap="round"
+          />
+        ))}
+        <circle cx="228" cy="100" r="3" fill="var(--accent)" />
+      </svg>
+      {tools.map((t, i) => (
+        <div
+          key={t.name}
+          className="slip absolute left-0 flex h-11 w-[112px] items-center gap-2 rounded-full py-1 pr-3 pl-1.5"
+          style={{ top: t.y - 22, rotate: `${[-2, 1.5, -1][i]}deg` }}
+        >
+          <Monogram name={t.name} size={30} round />
+          <span className="min-w-0">
+            <span className="block truncate text-[12px] leading-tight font-medium text-fg">
+              {t.name}
+            </span>
+            <span className="block font-mono text-[9px] tracking-[0.08em] text-fg-faint uppercase">
+              {t.note}
+            </span>
+          </span>
+        </div>
+      ))}
+      <div className="absolute top-[72px] right-0 grid size-14 place-items-center rounded-[16px] bg-fg text-canvas shadow-[var(--slip-shadow)]">
+        <BrandGlyph className="size-7" />
+      </div>
     </div>
   );
 }

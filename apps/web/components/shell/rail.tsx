@@ -82,7 +82,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
                   onClick={onNavigate}
                   aria-current={active ? "page" : undefined}
                   className={cx(
-                    "flex h-8 items-center gap-2.5 rounded-[7px] px-2.5 text-13 transition-colors duration-150",
+                    "flex h-9 items-center gap-2.5 rounded-full px-3 text-13 transition-colors duration-150",
                     active
                       ? "bg-surface font-medium text-fg shadow-[0_0_0_1px_var(--line)]"
                       : "text-fg-muted hover:bg-hover hover:text-fg",
@@ -146,7 +146,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
                     className={cx(
-                      "group flex h-8 items-center gap-2.5 rounded-[7px] px-2.5 text-13 transition-colors duration-150",
+                      "group flex h-9 items-center gap-2.5 rounded-full px-3 text-13 transition-colors duration-150",
                       active
                         ? "bg-surface text-fg shadow-[0_0_0_1px_var(--line)]"
                         : "text-fg-muted hover:bg-hover hover:text-fg",
@@ -180,7 +180,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
                   onClick={onNavigate}
                   aria-current={active ? "page" : undefined}
                   className={cx(
-                    "flex h-8 items-center gap-2.5 rounded-[7px] px-2.5 text-13 transition-colors duration-150",
+                    "flex h-9 items-center gap-2.5 rounded-full px-3 text-13 transition-colors duration-150",
                     active
                       ? "bg-surface font-medium text-fg shadow-[0_0_0_1px_var(--line)]"
                       : "text-fg-muted hover:bg-hover hover:text-fg",
@@ -209,15 +209,6 @@ export function ThemeControl() {
       onChange={setTheme}
       options={[
         {
-          value: "system",
-          label: (
-            <>
-              <Monitor className="size-3.5" />
-              <span className="sr-only">System</span>
-            </>
-          ),
-        },
-        {
           value: "light",
           label: (
             <>
@@ -232,6 +223,15 @@ export function ThemeControl() {
             <>
               <Moon className="size-3.5" />
               <span className="sr-only">Dark</span>
+            </>
+          ),
+        },
+        {
+          value: "system",
+          label: (
+            <>
+              <Monitor className="size-3.5" />
+              <span className="sr-only">System</span>
             </>
           ),
         },
