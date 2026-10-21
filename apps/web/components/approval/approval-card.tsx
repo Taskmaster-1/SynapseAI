@@ -3,11 +3,19 @@
 import type { Effect } from "@synapse/core";
 import { Check, CircleSlash, Code, LoaderCircle, Pencil, ShieldAlert, Undo2 } from "lucide-react";
 import Link from "next/link";
-import { type Ref, useId, useImperativeHandle, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { useToast } from "@/components/toast";
 import { EffectPill, Monogram, Pill, TAINT_SENTENCE } from "@/components/ui";
 import { ApiError, api, errorMessage } from "@/lib/api";
-import { cx, humanToolName, prettyJson, splitToolName } from "@/lib/format";
+import { cx, humanize, humanToolName, prettyJson, splitToolName } from "@/lib/format";
 import {
   type Drafts,
   fromDrafts,
@@ -43,6 +51,9 @@ export interface ApprovalCardProps {
   className?: string;
 }
 
+/** How long the stamp sits on the slip before the card resolves into a receipt. */
+const STAMP_MS = 950;
+
 export function approvalTitle(preview: string | null | undefined, name: string) {
   return preview?.trim() || humanToolName(name);
 }
@@ -74,6 +85,9 @@ export function ApprovalCard(props: ApprovalCardProps) {
   const [denyReason, setDenyReason] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Set once the server accepted the decision: the stamp lands, then the card resolves. */
+  const [stamped, setStamped] = useState<"approved" | "denied" | null>(null);
+  const settle = useRef<(() => void) | null>(null);
   const root = useRef<HTMLElement>(null);
   const denyInput = useRef<HTMLInputElement>(null);
 
@@ -128,8 +142,18 @@ export function ApprovalCard(props: ApprovalCardProps) {
     setRaw((r) => !r);
   }
 
+  // If the card goes away mid-stamp (selection moved on), still report the decision.
+  useEffect(
+    () => () => {
+      const pending = settle.current;
+      settle.current = null;
+      pending?.();
+    },
+    [],
+  );
+
   async function decide(approved: boolean) {
-    if (busy) return;
+    if (busy || stamped) return;
     setError(null);
     const body: { approved: boolean; reason?: string; input?: unknown } = { approved };
     const invalid = "error" in current ? String(current.error) : null;
@@ -139,7 +163,15 @@ export function ApprovalCard(props: ApprovalCardProps) {
     setBusy(approved ? "approve" : "deny");
     try {
       await api.decide(runId, toolCallId, body);
-      props.onDecided(approved, { reason: body.reason, edited: approved && isEdited });
+      const info = { reason: body.reason, edited: approved && isEdited };
+      const onDecided = props.onDecided;
+      settle.current = () => onDecided(approved, info);
+      setStamped(approved ? "approved" : "denied");
+      setTimeout(() => {
+        const pending = settle.current;
+        settle.current = null;
+        pending?.();
+      }, STAMP_MS);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         toast("Already decided, or the task moved on. Refreshing.", "info");
@@ -153,6 +185,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   }
 
   function openDeny() {
+    if (stamped) return;
     setDenying(true);
     setTimeout(() => denyInput.current?.focus(), 0);
   }
@@ -160,11 +193,12 @@ export function ApprovalCard(props: ApprovalCardProps) {
   useImperativeHandle(props.handle, () => ({
     approve: () => void decide(true),
     deny: openDeny,
-    edit: () => (mode === "edit" ? undefined : startEdit()),
+    edit: () => (mode === "edit" || stamped ? undefined : startEdit()),
   }));
 
   const title = approvalTitle(preview, name);
   const { tool } = splitToolName(name);
+  const locked = busy !== null || stamped !== null;
 
   return (
     <section
@@ -176,82 +210,72 @@ export function ApprovalCard(props: ApprovalCardProps) {
           void decide(true);
         }
       }}
-      className={cx(
-        "overflow-hidden rounded-card border border-attention/35 bg-surface",
-        props.glow && "anim-glow",
-        props.className,
-      )}
+      className={cx("slip relative", props.className)}
     >
-      <div className="bg-attention-soft px-4 pt-3.5 pb-3.5 sm:px-5">
-        <div className="flex items-center gap-2 text-12 font-medium text-attention">
-          <span className="size-1.5 rounded-full bg-attention" />
-          Needs your approval
-        </div>
-        <h3 id={`${id}-title`} className="mt-1.5 text-16 font-medium break-words text-fg">
-          {title}
-        </h3>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          {tainted ? (
-            <span className="inline-flex items-center gap-1 text-13 font-medium text-attention">
-              <ShieldAlert className="size-3.5" />
-              {TAINT_SENTENCE}
-            </span>
-          ) : null}
+      {props.glow ? (
+        <span
+          aria-hidden="true"
+          className="anim-glow pointer-events-none absolute inset-0 rounded-[8px]"
+        />
+      ) : null}
+
+      {/* The slip's header: what kind of paper this is and where it goes. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-dashed border-line-strong px-4 py-3 sm:px-6">
+        <span className="flex items-center gap-2 text-13 font-medium text-attention">
+          <span aria-hidden="true" className="relative grid size-2 place-items-center">
+            {stamped ? null : <span className="m-ring absolute size-2 rounded-full bg-attention" />}
+            <span className="size-2 rounded-full bg-attention" />
+          </span>
+          Needs your sign-off
+        </span>
+        <span className="ml-auto flex min-w-0 items-center gap-2">
           <ToolSource name={name} />
-          <EffectPill effect={effect} className="bg-surface/80" />
-          {reason ? <span className="min-w-0 text-13 text-fg-muted">{reason}</span> : null}
-        </div>
+          <EffectPill effect={effect} />
+        </span>
       </div>
 
-      <div className="border-t border-attention/20 px-4 py-4 sm:px-5">
-        <div className="mb-2.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="eyebrow">
-              {mode === "edit" ? "Editing" : preview ? humanToolName(name) : tool}
-            </span>
+      <div className="px-4 pt-5 sm:px-6">
+        <h3
+          id={`${id}-title`}
+          className="font-serif text-[25px] leading-[1.15] tracking-[-0.01em] break-words text-fg sm:text-[30px]"
+        >
+          {title}
+        </h3>
+        {tainted || reason ? (
+          <div className="mt-2.5 space-y-1">
+            {tainted ? (
+              <p className="flex items-start gap-1.5 text-13 font-medium text-attention">
+                <ShieldAlert className="mt-[3px] size-3.5 shrink-0" />
+                {TAINT_SENTENCE}
+              </p>
+            ) : null}
+            {reason ? <p className="text-13 text-fg-muted">{reason}</p> : null}
+          </div>
+        ) : null}
+
+        <div className="mt-5 mb-3 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="eyebrow truncate">{mode === "edit" ? "Editing" : humanize(tool)}</span>
             {isEdited ? <Pill tone="accent">Edited</Pill> : null}
           </div>
-          <div className="flex items-center gap-1">
-            {mode === "edit" ? (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={resetEdit}
-                disabled={busy !== null}
-              >
-                <Undo2 className="size-3.5" />
-                Discard edits
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={startEdit}
-                disabled={busy !== null}
-              >
-                <Pencil className="size-3.5" />
-                Edit
-              </button>
-            )}
-            {objectInput || mode === "view" ? (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                aria-pressed={raw}
-                onClick={toggleRaw}
-                disabled={busy !== null}
-              >
-                <Code className="size-3.5" />
-                {raw
-                  ? mode === "edit"
-                    ? "Edit fields"
-                    : "Hide raw"
-                  : mode === "edit"
-                    ? "Edit raw"
-                    : "View raw"}
-              </button>
-            ) : null}
-          </div>
+          {objectInput || mode === "view" ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm -mr-2 shrink-0"
+              aria-pressed={raw}
+              onClick={toggleRaw}
+              disabled={locked}
+            >
+              <Code className="size-3.5" />
+              {raw
+                ? mode === "edit"
+                  ? "Edit fields"
+                  : "Hide raw"
+                : mode === "edit"
+                  ? "Edit raw"
+                  : "View raw"}
+            </button>
+          ) : null}
         </div>
 
         {mode === "edit" ? (
@@ -275,7 +299,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
         )}
 
         {denying ? (
-          <div className="anim-row-in mt-4">
+          <div className="anim-row-in mt-5">
             <label htmlFor={`${id}-deny`} className="label">
               Tell the agent why <span className="font-normal text-fg-faint">(optional)</span>
             </label>
@@ -307,51 +331,96 @@ export function ApprovalCard(props: ApprovalCardProps) {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-3 sm:px-5">
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy !== null}
-          onClick={() => void decide(true)}
-          aria-keyshortcuts="Meta+Enter Control+Enter"
-        >
-          {busy === "approve" ? <LoaderCircle className="anim-spin" /> : <Check />}
-          {busy === "approve" ? "Approving…" : isEdited ? "Approve edited" : "Approve"}
-          <span className="ml-1 hidden items-center gap-0.5 opacity-70 sm:inline-flex">
-            <span className="text-12">⌘↵</span>
-          </span>
-        </button>
-        {denying ? (
-          <>
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={busy !== null}
-              onClick={() => void decide(false)}
+      {/* The signature line: the buttons sit on it like a pen on paper. */}
+      <div className="relative px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
+        <div className={cx("flex flex-wrap items-center gap-2", stamped && "opacity-40")}>
+          <button
+            type="button"
+            className="btn btn-primary h-10 px-5"
+            disabled={locked}
+            onClick={() => void decide(true)}
+            aria-keyshortcuts="Meta+Enter Control+Enter"
+          >
+            {busy === "approve" ? <LoaderCircle className="anim-spin" /> : <Check />}
+            {busy === "approve" ? "Approving…" : isEdited ? "Approve edited" : "Approve"}
+            <span
+              aria-hidden="true"
+              className="ml-1 hidden font-mono text-[11px] opacity-60 sm:inline"
             >
-              {busy === "deny" ? <LoaderCircle className="anim-spin" /> : <CircleSlash />}
-              {busy === "deny" ? "Denying…" : "Deny"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={busy !== null}
-              onClick={() => setDenying(false)}
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <button type="button" className="btn" disabled={busy !== null} onClick={openDeny}>
-            Deny…
+              ⌘↵
+            </span>
           </button>
-        )}
-        <Link
-          href={`/settings?section=rules&allow=${encodeURIComponent(name)}`}
-          className="ml-auto text-12 text-fg-muted underline-offset-2 hover:text-fg hover:underline"
-        >
-          Always allow…
-        </Link>
+          {denying ? null : mode === "edit" ? (
+            <button type="button" className="btn h-10" onClick={resetEdit} disabled={locked}>
+              <Undo2 className="size-4" />
+              Discard edits
+            </button>
+          ) : (
+            <button type="button" className="btn h-10" onClick={startEdit} disabled={locked}>
+              <Pencil className="size-4" />
+              Edit
+            </button>
+          )}
+          {denying ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-danger h-10"
+                disabled={locked}
+                onClick={() => void decide(false)}
+              >
+                {busy === "deny" ? <LoaderCircle className="anim-spin" /> : <CircleSlash />}
+                {busy === "deny" ? "Denying…" : "Deny"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost h-10"
+                disabled={locked}
+                onClick={() => setDenying(false)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost h-10 text-danger"
+              disabled={locked}
+              onClick={openDeny}
+            >
+              Deny…
+            </button>
+          )}
+        </div>
+        <div className="mt-3 flex items-baseline gap-3 border-t border-fg/55 pt-1.5">
+          <span className="font-mono text-[10.5px] tracking-[0.14em] text-fg-faint uppercase">
+            {stamped === "approved"
+              ? "Signed off by you"
+              : stamped === "denied"
+                ? "Declined by you"
+                : "Your signature"}
+          </span>
+          <Link
+            href={`/settings?section=rules&allow=${encodeURIComponent(name)}`}
+            className={cx(
+              "ml-auto text-12 text-fg-muted underline-offset-2 transition-opacity hover:text-fg hover:underline",
+              stamped && "opacity-0",
+            )}
+          >
+            Always allow…
+          </Link>
+        </div>
+        {stamped ? (
+          <span
+            role="status"
+            className={cx(
+              "stamp stamp-in pointer-events-none absolute right-5 bottom-12 z-10 text-[24px] sm:right-10 sm:bottom-[46px] sm:text-[30px]",
+              stamped === "approved" ? "text-ok" : "text-danger",
+            )}
+          >
+            {stamped === "approved" ? "Approved" : "Denied"}
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -396,34 +465,61 @@ export function ApprovalReceipt({
             ? PAST[effect]
             : "running…"
     : null;
+  const failed = approved && phase === "failed";
   return (
     <div
       className={cx(
-        "anim-fade-in flex min-w-0 items-center gap-2.5 rounded-[10px] border border-line bg-surface px-3 py-2 text-13",
+        "anim-fade-in flex min-w-0 items-center gap-3 rounded-[8px] bg-surface px-3 py-2.5 text-13 shadow-[0_0_0_1px_var(--line)]",
         className,
       )}
     >
-      {approved ? (
-        phase === "running" || phase === undefined ? (
-          <LoaderCircle className="anim-spin shrink-0 text-accent" />
-        ) : (
-          <Check className={cx("shrink-0", phase === "failed" ? "text-danger" : "text-ok")} />
-        )
-      ) : (
-        <CircleSlash className="shrink-0 text-danger" />
-      )}
+      <MiniStamp tone={approved ? "ok" : "danger"}>{approved ? "Approved" : "Denied"}</MiniStamp>
       <span className="min-w-0 flex-1 truncate text-fg">{approvalTitle(preview, name)}</span>
-      <span className="shrink-0 text-fg-muted">
+      <span
+        className={cx(
+          "flex shrink-0 items-center gap-1.5",
+          failed ? "text-danger" : "text-fg-muted",
+        )}
+      >
         {approved ? (
           <>
-            Approved by you{edited ? " (edited)" : ""} · {outcome}
+            {phase === "running" || phase === undefined ? (
+              <LoaderCircle className="anim-spin size-3.5 text-accent" />
+            ) : null}
+            <span>
+              <span className="hidden sm:inline">By you{edited ? ", edited" : ""} · </span>
+              {outcome}
+            </span>
           </>
         ) : (
-          <span className="block max-w-[46vw] truncate sm:max-w-80" title={reason ?? undefined}>
-            Denied{reason ? `: ${reason}` : ""}
+          <span className="block max-w-[40vw] truncate sm:max-w-80" title={reason ?? undefined}>
+            {reason ? reason : "by you"}
           </span>
         )}
       </span>
     </div>
+  );
+}
+
+/** A small inked mark for receipts and lists: the stamp, at desk size. */
+export function MiniStamp({
+  tone,
+  children,
+  className,
+}: {
+  tone: "ok" | "danger";
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cx(
+        "inline-flex h-5 shrink-0 -rotate-3 items-center rounded-[4px] border-[1.5px] border-current px-1.5 font-mono text-[10px] leading-none font-semibold tracking-[0.12em] uppercase",
+        tone === "ok" ? "text-ok" : "text-danger",
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }

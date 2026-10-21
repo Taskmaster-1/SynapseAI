@@ -4,81 +4,101 @@
 
 :root {
   color-scheme: light;
-  --canvas: #f6f5f1;
-  --surface: #ffffff;
-  --sunken: #efede7;
-  --line: #e5e2da;
-  --line-strong: #d3cfc4;
-  --fg: #1b1a17;
-  --fg-muted: #69655c;
-  --fg-faint: #9a9589;
+  --canvas: #f4f1ea;
+  --surface: #fffdf8;
+  --sunken: #ebe6db;
+  --line: #e2dccf;
+  --line-strong: #cfc7b6;
+  --fg: #15140f;
+  --fg-muted: #5f5a4f;
+  --fg-faint: #948d7e;
   --accent: #3b48cc;
   --accent-hover: #2f3bb3;
   --on-accent: #ffffff;
-  --accent-soft: #ecedfb;
+  --accent-soft: #e6e7f8;
   --attention: #b45309;
-  --attention-soft: #fbf1e2;
+  --attention-soft: #fbefdc;
   --danger: #b42318;
-  --danger-soft: #fceae9;
+  --danger-soft: #f9e3df;
   --ok: #18794e;
-  --ok-soft: #e7f5ee;
-  --hover: rgb(27 26 23 / 0.045);
-  --scrim: rgb(27 26 23 / 0.28);
-  --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.18), 0 0 0 1px var(--line);
-  --mono-mix: 20%;
+  --ok-soft: #e3f1e8;
+  --hover: rgb(21 20 15 / 0.05);
+  --scrim: rgb(21 20 15 / 0.28);
+  --shadow-pop: 0 16px 40px -14px rgb(21 20 15 / 0.22), 0 0 0 1px var(--line);
+  --slip-shadow:
+    0 1px 0 rgb(21 20 15 / 0.04), 0 18px 40px -18px rgb(21 20 15 / 0.35),
+    0 2px 6px -2px rgb(21 20 15 / 0.12);
+  --grain-opacity: 0.06;
+  --grain-blend: multiply;
+  --mono-mix: 22%;
+
+  /* Brand fields: the same in both themes. */
+  --ink: #15140f;
+  --paper: #f4f1ea;
+  --field-blue: #2b36b8;
+  --field-amber: #f2a83b;
+  --sage: #b9c9a8;
+  --blush: #f1c6b4;
+  --lilac: #d9d2f5;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --canvas: #0f0f0e;
-    --surface: #181816;
-    --sunken: #0b0b0a;
-    --line: #272623;
-    --line-strong: #3a3833;
-    --fg: #eceae4;
-    --fg-muted: #a39f95;
-    --fg-faint: #6e6a61;
+    --canvas: #13120f;
+    --surface: #1c1b17;
+    --sunken: #0e0d0b;
+    --line: #2b2924;
+    --line-strong: #3e3b34;
+    --fg: #efeae0;
+    --fg-muted: #a8a193;
+    --fg-faint: #716b5f;
     --accent: #8b95ff;
     --accent-hover: #a2aaff;
-    --on-accent: #0f0f0e;
-    --accent-soft: #1e2140;
-    --attention: #f0a23b;
-    --attention-soft: #2a1f10;
+    --on-accent: #13120f;
+    --accent-soft: #1f2142;
+    --attention: #f2a83b;
+    --attention-soft: #2b2011;
     --danger: #f97066;
     --danger-soft: #2c1513;
     --ok: #4cc38a;
-    --ok-soft: #10251b;
-    --hover: rgb(236 234 228 / 0.05);
+    --ok-soft: #11261c;
+    --hover: rgb(239 234 224 / 0.05);
     --scrim: rgb(0 0 0 / 0.55);
-    --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.6), 0 0 0 1px var(--line);
+    --shadow-pop: 0 16px 40px -14px rgb(0 0 0 / 0.65), 0 0 0 1px var(--line);
+    --slip-shadow: 0 0 0 1px var(--line), 0 18px 40px -18px rgb(0 0 0 / 0.7);
+    --grain-opacity: 0.05;
+    --grain-blend: screen;
     --mono-mix: 34%;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --canvas: #0f0f0e;
-  --surface: #181816;
-  --sunken: #0b0b0a;
-  --line: #272623;
-  --line-strong: #3a3833;
-  --fg: #eceae4;
-  --fg-muted: #a39f95;
-  --fg-faint: #6e6a61;
+  --canvas: #13120f;
+  --surface: #1c1b17;
+  --sunken: #0e0d0b;
+  --line: #2b2924;
+  --line-strong: #3e3b34;
+  --fg: #efeae0;
+  --fg-muted: #a8a193;
+  --fg-faint: #716b5f;
   --accent: #8b95ff;
   --accent-hover: #a2aaff;
-  --on-accent: #0f0f0e;
-  --accent-soft: #1e2140;
-  --attention: #f0a23b;
-  --attention-soft: #2a1f10;
+  --on-accent: #13120f;
+  --accent-soft: #1f2142;
+  --attention: #f2a83b;
+  --attention-soft: #2b2011;
   --danger: #f97066;
   --danger-soft: #2c1513;
   --ok: #4cc38a;
-  --ok-soft: #10251b;
-  --hover: rgb(236 234 228 / 0.05);
+  --ok-soft: #11261c;
+  --hover: rgb(239 234 224 / 0.05);
   --scrim: rgb(0 0 0 / 0.55);
-  --shadow-pop: 0 12px 32px -12px rgb(0 0 0 / 0.6), 0 0 0 1px var(--line);
+  --shadow-pop: 0 16px 40px -14px rgb(0 0 0 / 0.65), 0 0 0 1px var(--line);
+  --slip-shadow: 0 0 0 1px var(--line), 0 18px 40px -18px rgb(0 0 0 / 0.7);
+  --grain-opacity: 0.05;
+  --grain-blend: screen;
   --mono-mix: 34%;
 }
 
@@ -103,7 +123,7 @@
   --color-ok-soft: var(--ok-soft);
   --color-hover: var(--hover);
   --color-scrim: var(--scrim);
-  /* Landing fields (defined on .landing). */
+  /* Brand fields. */
   --color-ink: var(--ink);
   --color-paper: var(--paper);
   --color-field-blue: var(--field-blue);
@@ -120,12 +140,12 @@
 }
 
 @theme {
-  /* Type scale (px): 12 / 13 / 14 / 16 / 20 / 28 / 40 */
-  --text-12: 12px;
+  /* Type scale (px): 12.5 / 14 / 15 / 16 / 20 / 28 / 40. Names are historical. */
+  --text-12: 12.5px;
   --text-12--line-height: 1.5;
-  --text-13: 13px;
+  --text-13: 14px;
   --text-13--line-height: 1.5;
-  --text-14: 14px;
+  --text-14: 15px;
   --text-14--line-height: 1.5;
   --text-16: 16px;
   --text-16--line-height: 1.5;
@@ -137,7 +157,7 @@
   --text-40--line-height: 1.1;
 
   --radius-card: 12px;
-  --radius-control: 8px;
+  --radius-control: 10px;
 
   --breakpoint-wide: 75rem; /* 1200px: run panel docks */
 }
@@ -152,7 +172,7 @@
     background: var(--canvas);
     color: var(--fg);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -191,34 +211,40 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--radius-control);
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
     border: 1px solid var(--line-strong);
     background: var(--surface);
     color: var(--fg);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     white-space: nowrap;
     transition:
-      background-color 140ms ease-out,
-      border-color 140ms ease-out,
-      color 140ms ease-out;
+      background-color 160ms ease-out,
+      border-color 160ms ease-out,
+      color 160ms ease-out,
+      scale 160ms var(--ease-spring);
   }
   .btn:hover:not(:disabled) {
     background: var(--sunken);
   }
+  .btn:active:not(:disabled) {
+    scale: 0.97;
+  }
   .btn:disabled {
     opacity: 0.5;
   }
+  /* Primary actions are ink, like a pen; the accent is kept for links and focus. */
   .btn-primary {
+    background: var(--fg);
+    border-color: var(--fg);
+    color: var(--canvas);
+  }
+  .btn-primary:hover:not(:disabled) {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
   }
   .btn-danger {
     color: var(--danger);
@@ -237,26 +263,26 @@
     color: var(--fg);
   }
   .btn-sm {
-    height: 28px;
-    padding: 0 10px;
-    font-size: 12px;
+    height: 30px;
+    padding: 0 12px;
+    font-size: 13px;
   }
   .btn-icon {
-    width: 32px;
+    width: 36px;
     padding: 0;
   }
   .btn-icon.btn-sm {
-    width: 28px;
+    width: 30px;
   }
   .input {
     width: 100%;
-    min-height: 36px;
-    padding: 7px 11px;
+    min-height: 40px;
+    padding: 8px 12px;
     border-radius: var(--radius-control);
     border: 1px solid var(--line-strong);
     background: var(--surface);
     color: var(--fg);
-    font-size: 14px;
+    font-size: 15px;
     transition:
       border-color 140ms ease-out,
       box-shadow 140ms ease-out;
@@ -278,13 +304,13 @@
   }
   .label {
     display: block;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--fg);
     margin-bottom: 6px;
   }
   .hint {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--fg-muted);
   }
   .card {
@@ -292,11 +318,30 @@
     border-radius: var(--radius-card);
     background: var(--surface);
   }
+  /* A sheet of paper: the shape approvals, receipts and drafts take. */
+  .slip {
+    background: var(--surface);
+    border-radius: 8px;
+    box-shadow: var(--slip-shadow);
+  }
+  /* Paper grain over the whole app; static and tiny. */
+  .grain::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
   .eyebrow {
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 500;
     color: var(--fg-faint);
-    letter-spacing: 0.02em;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
   .code {
     font-family: var(--font-mono);
@@ -338,7 +383,7 @@
 
 .prose-agent {
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
 }
 .prose-agent > * + * {
@@ -910,6 +955,7 @@ a:hover > .brand .brand-spark {
     transform: scale(1) rotate(-8deg);
   }
 }
+.stamp,
 .landing-stamp {
   display: inline-block;
   border: 3px solid currentColor;
@@ -922,6 +968,7 @@ a:hover > .brand .brand-spark {
   /* Ink that didn't take everywhere. */
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 -2.2 2.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
+.stamp-in,
 .landing-stamp-in {
   animation: stamp-land 560ms cubic-bezier(0.2, 0.7, 0.2, 1) var(--d, 0ms) both;
 }

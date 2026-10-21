@@ -50,7 +50,7 @@ function Chips({ items }: { items: unknown[] }) {
         <span
           // biome-ignore lint/suspicious/noArrayIndexKey: static list
           key={i}
-          className="inline-flex max-w-full items-center rounded-full border border-line bg-surface px-2 py-px text-13 break-all text-fg"
+          className="inline-flex max-w-full items-center rounded-full bg-sunken px-2.5 py-px text-13 [overflow-wrap:anywhere] text-fg"
         >
           {String(x)}
         </span>
@@ -70,7 +70,7 @@ function Scalar({ value }: { value: unknown }) {
   if (s === "") return <span className="text-fg-faint italic">empty</span>;
   if (s.includes("\n") || s.length > 140) {
     return (
-      <div className="max-h-72 overflow-auto rounded-control bg-sunken px-3 py-2.5 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
+      <div className="scroll-thin max-h-72 overflow-auto border-l-2 border-line-strong py-0.5 pl-3 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
         {s}
       </div>
     );
@@ -128,35 +128,68 @@ function asList(v: unknown): unknown[] {
   return Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : [v];
 }
 
+function Recipients({ items }: { items: unknown[] }) {
+  if (items.length === 0) return <span className="text-fg-faint italic">empty</span>;
+  return (
+    <span className="font-medium [overflow-wrap:anywhere] text-fg">
+      {items.map((x) => String(x)).join(", ")}
+    </span>
+  );
+}
+
+/** An email reads like the letter it is: headers, then the body set like a page. */
 function EmailView({ obj }: { obj: Obj }) {
   const head = EMAIL_HEAD.filter((k) => k in obj);
   const bodyKey = BODY_KEYS.find((k) => k in obj);
+  const body = bodyKey ? obj[bodyKey] : undefined;
   const rest = Object.keys(obj).filter(
     (k) => !(EMAIL_HEAD as readonly string[]).includes(k) && k !== bodyKey,
   );
+  const long = typeof body === "string" && body.length > 700;
   return (
-    <div className="overflow-hidden rounded-[10px] border border-line bg-surface">
-      <dl className="divide-y divide-line">
+    <div>
+      <dl className="space-y-1.5">
         {head.map((k) => (
-          <div key={k} className="flex items-baseline gap-3 px-3.5 py-2">
-            <dt className="w-14 shrink-0 text-13 text-fg-muted">{label(k)}</dt>
-            <dd className={cx("min-w-0 flex-1 text-14", k === "subject" && "font-medium")}>
-              {k === "subject" ? <Scalar value={obj[k]} /> : <Chips items={asList(obj[k])} />}
+          <div key={k} className="flex items-baseline gap-3 sm:gap-4">
+            <dt className="w-14 shrink-0 text-13 text-fg-muted sm:w-16">{label(k)}</dt>
+            <dd className="min-w-0 flex-1 text-14">
+              {k === "subject" ? <Scalar value={obj[k]} /> : <Recipients items={asList(obj[k])} />}
             </dd>
           </div>
         ))}
       </dl>
       {bodyKey ? (
-        <div className="border-t border-line px-3.5 py-3 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
-          {typeof obj[bodyKey] === "string" ? (
-            (obj[bodyKey] as string)
-          ) : (
-            <Value value={obj[bodyKey]} />
-          )}
-        </div>
+        typeof body === "string" ? (
+          <div
+            className={cx(
+              "mt-5 font-serif whitespace-pre-wrap break-words text-fg",
+              long
+                ? "scroll-thin max-h-[420px] overflow-auto text-[18px] leading-[1.45]"
+                : "text-[20px] leading-[1.35] sm:text-[22px]",
+            )}
+          >
+            {body.trim() ? (
+              body
+                .trim()
+                .split(/\n\s*\n/)
+                .map((para, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: paragraphs of a static body
+                  <p key={i} className={cx(i > 0 && "mt-[0.6em]")}>
+                    {para}
+                  </p>
+                ))
+            ) : (
+              <span className="text-fg-faint italic">empty</span>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4">
+            <Value value={body} />
+          </div>
+        )
       ) : null}
       {rest.length > 0 ? (
-        <div className="border-t border-line px-3.5 py-3">
+        <div className="mt-5 border-t border-dashed border-line-strong pt-4">
           <Fields obj={obj} skip={[...EMAIL_HEAD, ...(bodyKey ? [bodyKey] : [])]} />
         </div>
       ) : null}
@@ -278,7 +311,10 @@ export function PayloadEditor({
                 <textarea
                   id={id}
                   data-autofocus={i === 0 ? true : undefined}
-                  className="input min-h-28 resize-y"
+                  className={cx(
+                    "input min-h-28 resize-y",
+                    BODY_KEYS.includes(k) && "font-serif text-[19px] leading-[1.4]",
+                  )}
                   rows={Math.min(14, Math.max(4, f.text.split("\n").length + 1))}
                   value={f.text}
                   onChange={(e) => set(k, { ...f, text: e.target.value })}

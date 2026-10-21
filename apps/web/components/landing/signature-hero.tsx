@@ -25,7 +25,16 @@ const pct = (x: number, y: number): CSSProperties => ({
   top: `${(y / 900) * 100}%`,
 });
 
-function Slip({ className, style }: { className?: string; style?: CSSProperties }) {
+/** The approval slip from the hero; the sign-in page reuses it. */
+export function Slip({
+  className,
+  style,
+  stampDelay = 3100,
+}: {
+  className?: string;
+  style?: CSSProperties;
+  stampDelay?: number;
+}) {
   return (
     <div className={className} style={style}>
       <div className="landing-slip relative overflow-hidden rotate-[2.5deg]">
@@ -66,7 +75,7 @@ function Slip({ className, style }: { className?: string; style?: CSSProperties 
         </div>
         <span
           className="landing-stamp landing-stamp-in absolute right-5 bottom-14 text-[15px] text-ok"
-          style={{ "--d": "3100ms" } as CSSProperties}
+          style={{ "--d": `${stampDelay}ms` } as CSSProperties}
         >
           Approved
         </span>

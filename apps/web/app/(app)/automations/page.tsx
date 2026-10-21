@@ -48,6 +48,7 @@ export default function AutomationsPage() {
   return (
     <Page>
       <PageHeader
+        eyebrow="On a schedule"
         title="Automations"
         description="Prompts that run on a schedule, each in its own task. Anything that needs your OK waits in the Inbox."
         actions={
@@ -66,7 +67,7 @@ export default function AutomationsPage() {
         ) : null
       ) : list.length === 0 ? (
         <EmptyState
-          icon={<Repeat className="size-5" />}
+          illustration={<SampleSchedule />}
           title="Nothing scheduled yet"
           action={
             <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
@@ -144,86 +145,94 @@ function AutomationCard({
   return (
     <article
       className={cx(
-        "rounded-card border border-line bg-surface p-5",
+        "flex overflow-hidden rounded-[16px] border border-line bg-surface",
         !a.enabled && "bg-surface/60",
       )}
     >
-      <div className="flex items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <h2 className={cx("text-16 font-medium", a.enabled ? "text-fg" : "text-fg-muted")}>
-            {a.name}
-          </h2>
-          <p className="mt-1 line-clamp-2 text-14 text-fg-muted">{a.prompt}</p>
-        </div>
-        <Switch
-          checked={a.enabled}
-          label={a.enabled ? `Pause ${a.name}` : `Enable ${a.name}`}
-          disabled={busy !== null}
-          onChange={(enabled) =>
-            void act("toggle", async () => {
-              const res = await api.updateAutomation(a.id, { enabled });
-              onChange(res.automation);
-              toast(enabled ? "Automation on" : "Automation paused", "success");
-            })
-          }
-        />
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
-        <span className="inline-flex items-center gap-1.5 text-fg">
-          <Repeat className={a.enabled ? "text-accent" : "text-fg-faint"} />
-          {humanSchedule(a.schedule, a.timezone)}
-        </span>
-        <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
-          {a.schedule}
-        </code>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-3.5 text-13">
-        <span className="text-fg-muted" title={formatDateTime(a.nextRunAt)}>
-          Next{" "}
-          <span className="text-fg">
-            {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
-          </span>
-        </span>
-        <span className="text-fg-muted" title={formatDateTime(a.lastRunAt)}>
-          Last{" "}
-          {a.lastRunAt && a.chatId ? (
-            <Link href={`/t/${a.chatId}`} className="text-fg hover:underline">
-              {formatRelative(a.lastRunAt)}
-            </Link>
-          ) : (
-            <span className="text-fg">never</span>
-          )}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
+      <ScheduleStub cron={a.schedule} enabled={a.enabled} />
+      <div className="min-w-0 flex-1 p-5">
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <h2
+              className={cx(
+                "font-serif text-[24px] leading-[1.1]",
+                a.enabled ? "text-fg" : "text-fg-muted",
+              )}
+            >
+              {a.name}
+            </h2>
+            <p className="mt-1 line-clamp-2 text-14 text-fg-muted">{a.prompt}</p>
+          </div>
+          <Switch
+            checked={a.enabled}
+            label={a.enabled ? `Pause ${a.name}` : `Enable ${a.name}`}
             disabled={busy !== null}
-            onClick={onEdit}
-          >
-            <Pencil className="size-3.5" />
-            Edit
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={busy !== null}
-            onClick={() =>
-              void act("run", async () => {
-                const res = await api.runAutomation(a.id);
-                void reload();
-                router.push(`/t/${res.chatId}`);
+            onChange={(enabled) =>
+              void act("toggle", async () => {
+                const res = await api.updateAutomation(a.id, { enabled });
+                onChange(res.automation);
+                toast(enabled ? "Automation on" : "Automation paused", "success");
               })
             }
-          >
-            {busy === "run" ? (
-              <LoaderCircle className="anim-spin size-3.5" />
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
+          <span className="inline-flex items-center gap-1.5 text-fg">
+            <Repeat className={a.enabled ? "text-accent" : "text-fg-faint"} />
+            {humanSchedule(a.schedule, a.timezone)}
+          </span>
+          <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
+            {a.schedule}
+          </code>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-3.5 text-13">
+          <span className="text-fg-muted" title={formatDateTime(a.nextRunAt)}>
+            Next{" "}
+            <span className="text-fg">
+              {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
+            </span>
+          </span>
+          <span className="text-fg-muted" title={formatDateTime(a.lastRunAt)}>
+            Last{" "}
+            {a.lastRunAt && a.chatId ? (
+              <Link href={`/t/${a.chatId}`} className="text-fg hover:underline">
+                {formatRelative(a.lastRunAt)}
+              </Link>
             ) : (
-              <Play className="size-3.5" />
+              <span className="text-fg">never</span>
             )}
-            Run now
-          </button>
-        </span>
+          </span>
+          <span className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busy !== null}
+              onClick={onEdit}
+            >
+              <Pencil className="size-3.5" />
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy !== null}
+              onClick={() =>
+                void act("run", async () => {
+                  const res = await api.runAutomation(a.id);
+                  void reload();
+                  router.push(`/t/${res.chatId}`);
+                })
+              }
+            >
+              {busy === "run" ? (
+                <LoaderCircle className="anim-spin size-3.5" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+              Run now
+            </button>
+          </span>
+        </div>
       </div>
     </article>
   );
@@ -446,5 +455,76 @@ function AutomationForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function splitSchedule(cron: string): [string, string | null] {
+  const d = describeCron(cron);
+  if (!d) return ["Custom", null];
+  const [when, at] = d.split(" at ");
+  return at ? [when!, at] : [d, null];
+}
+
+/** The tear-off stub on the left of a schedule ticket. */
+function ScheduleStub({ cron, enabled }: { cron: string; enabled: boolean }) {
+  const [when, at] = splitSchedule(cron);
+  return (
+    <div
+      aria-hidden="true"
+      className={cx(
+        "hidden w-[112px] shrink-0 flex-col items-center justify-center border-r border-dashed border-line-strong bg-sunken/60 px-3 text-center sm:flex",
+        !enabled && "opacity-60",
+      )}
+    >
+      {at ? (
+        <span className="tabular font-serif text-[34px] leading-none text-fg">{at}</span>
+      ) : (
+        <Repeat className="size-6 text-fg-faint" />
+      )}
+      <span className="mt-1.5 font-mono text-[10px] leading-tight tracking-[0.1em] text-fg-faint uppercase">
+        {when}
+      </span>
+    </div>
+  );
+}
+
+/** Empty-state art: two schedule tickets. */
+function SampleSchedule() {
+  const ticket = (at: string, when: string, name: string, line: string) => (
+    <div className="slip flex w-[270px] overflow-hidden">
+      <div className="flex w-[78px] shrink-0 flex-col items-center justify-center border-r border-dashed border-line-strong bg-sunken/60 py-3">
+        <span className="font-serif text-[24px] leading-none text-fg">{at}</span>
+        <span className="mt-1 font-mono text-[9px] tracking-[0.1em] text-fg-faint uppercase">
+          {when}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1 px-3.5 py-3">
+        <p className="truncate font-serif text-[18px] leading-tight text-fg">{name}</p>
+        <p className="mt-0.5 truncate text-[11px] text-fg-muted">{line}</p>
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="relative h-3 w-5 rounded-full bg-accent">
+            <span className="absolute top-0.5 right-0.5 size-2 rounded-full bg-surface" />
+          </span>
+          <span className="font-mono text-[9px] tracking-[0.08em] text-fg-faint uppercase">
+            Next in 14h
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+  return (
+    <div className="relative h-[200px] w-[300px]">
+      <div className="absolute top-2 left-6 rotate-[4deg] opacity-70">
+        {ticket("17:00", "Fridays", "What shipped", "Summarise merged PRs and closed issues")}
+      </div>
+      <div className="absolute top-[78px] left-0 rotate-[-2deg]">
+        {ticket(
+          "8:00",
+          "Weekdays",
+          "Morning brief",
+          "Unread email, today's Linear, anything urgent",
+        )}
+      </div>
+    </div>
   );
 }
