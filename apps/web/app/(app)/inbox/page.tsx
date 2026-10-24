@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Inbox as InboxIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -8,11 +8,12 @@ import {
   type ApprovalHandle,
   ApprovalReceipt,
   approvalTitle,
+  MiniStamp,
 } from "@/components/approval/approval-card";
 import { Markdown } from "@/components/markdown";
-import { EffectPill, EmptyState, Kbd, Skeleton, StatusDot } from "@/components/ui";
+import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
-import { cx, formatDateTime, formatRelative } from "@/lib/format";
+import { cx, formatDateTime, formatRelative, splitToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useMedia } from "@/lib/use-media";
 import { useWorkspace } from "@/lib/workspace";
@@ -112,6 +113,7 @@ export default function InboxPage() {
 
   const loading = approvals === null;
   const empty = !loading && ordered.length === 0;
+  const signed = ordered.length - pending.length;
 
   return (
     <div className="flex h-full min-h-0">
@@ -122,41 +124,53 @@ export default function InboxPage() {
           mobileDetail && "hidden md:flex",
         )}
       >
-        <header className="shrink-0 px-5 pt-8 pb-4 md:pt-10">
-          <h1 className="font-serif text-[34px] leading-none text-fg md:text-40">Inbox</h1>
-          <p className="mt-2 text-13 text-fg-muted">
+        <header className="shrink-0 px-5 pt-8 pb-5 md:pt-10">
+          <h1 className="flex items-baseline gap-3 font-serif text-[44px] leading-none tracking-[-0.02em] text-fg md:text-[52px]">
+            Inbox
+            {pending.length > 0 ? (
+              <span className="text-attention italic tabular-nums">{pending.length}</span>
+            ) : null}
+          </h1>
+          <p className="mt-2.5 text-13 text-fg-muted">
             {loading
               ? "Loading…"
               : pending.length
-                ? `${pending.length} waiting on you`
-                : "Nothing waiting"}
+                ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}`
+                : signed
+                  ? `All signed · ${signed} this visit`
+                  : "Nothing waiting on you"}
           </p>
         </header>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-6">
           {loading ? (
-            <div className="space-y-2 px-2">
+            <div className="space-y-2.5 px-2">
               {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-16 rounded-[10px]" />
+                <Skeleton key={i} className="h-[84px] rounded-[8px]" />
               ))}
             </div>
-          ) : empty ? null : (
+          ) : empty ? (
+            <div className="px-2 md:hidden">
+              <InboxEmpty heading={false} />
+            </div>
+          ) : (
             groups.map((g) => (
-              <div key={g.chatId} className="mb-4">
-                <div className="flex items-center gap-2 px-2 pb-1.5">
+              <div key={g.chatId} className="mb-5">
+                <div className="flex items-center gap-2 px-2 pb-2">
                   <StatusDot
                     status={g.items.some((a) => !decided[a.toolCallId]) ? "needs" : "done"}
                   />
                   <Link
                     href={`/t/${g.chatId}`}
-                    className="min-w-0 truncate text-12 font-medium text-fg-muted hover:text-fg"
+                    className="min-w-0 truncate text-12 text-fg-muted hover:text-fg"
                   >
                     {g.title || "Untitled task"}
                   </Link>
                 </div>
-                <ul className="space-y-1">
+                <ul className="space-y-2">
                   {g.items.map((a) => {
                     const d = decided[a.toolCallId];
                     const on = a.toolCallId === selected;
+                    const { source } = splitToolName(a.name);
                     return (
                       <li key={a.toolCallId}>
                         <button
@@ -167,29 +181,38 @@ export default function InboxPage() {
                             setMobileDetail(true);
                           }}
                           className={cx(
-                            "flex w-full flex-col gap-1.5 rounded-[10px] px-3 py-2.5 text-left transition-colors duration-150",
+                            "relative flex w-full flex-col gap-2 rounded-[8px] px-3.5 py-3 text-left transition-[background-color,box-shadow,translate] duration-150",
                             on
-                              ? "bg-surface shadow-[0_0_0_1px_var(--line-strong)]"
-                              : "hover:bg-hover",
-                            d && "opacity-60",
+                              ? "bg-surface shadow-[var(--slip-shadow)] md:translate-x-1"
+                              : d
+                                ? "hover:bg-hover"
+                                : "bg-surface/60 shadow-[0_0_0_1px_var(--line)] hover:bg-surface",
                           )}
                         >
+                          {on && !d ? (
+                            <span
+                              aria-hidden="true"
+                              className="absolute top-3 bottom-3 left-0 w-[3px] rounded-r-full bg-attention"
+                            />
+                          ) : null}
                           <span
                             className={cx(
-                              "line-clamp-2 text-13 font-medium text-fg",
-                              d && "line-through decoration-fg-faint",
+                              "line-clamp-2 font-serif text-[19px] leading-[1.2] text-fg",
+                              d && "text-fg-muted",
                             )}
                           >
                             {approvalTitle(a.preview, a.name)}
                           </span>
-                          <span className="flex items-center gap-2 text-12 text-fg-faint">
-                            <EffectPill effect={a.effect} />
+                          <span className="flex min-w-0 items-center gap-2 text-12 text-fg-faint">
+                            <Monogram name={source ?? "Synapse"} size={16} />
                             {d ? (
-                              <span className={d.approved ? "text-ok" : "text-danger"}>
+                              <MiniStamp tone={d.approved ? "ok" : "danger"}>
                                 {d.approved ? "Approved" : "Denied"}
-                              </span>
-                            ) : null}
-                            <span className="ml-auto" title={formatDateTime(a.createdAt)}>
+                              </MiniStamp>
+                            ) : (
+                              <EffectPill effect={a.effect} />
+                            )}
+                            <span className="ml-auto shrink-0" title={formatDateTime(a.createdAt)}>
                               {formatRelative(a.createdAt)}
                             </span>
                           </span>
@@ -201,6 +224,15 @@ export default function InboxPage() {
               </div>
             ))
           )}
+          {!loading ? (
+            <Link
+              href="/activity"
+              className="mx-2 mt-2 flex items-center gap-1.5 text-12 text-fg-muted hover:text-fg"
+            >
+              Earlier decisions are kept in Activity
+              <ArrowRight className="size-3" />
+            </Link>
+          ) : null}
         </div>
         {!empty && !loading ? (
           <footer className="hidden shrink-0 items-center gap-3 border-t border-line px-5 py-2.5 text-12 text-fg-faint md:flex">
@@ -229,11 +261,8 @@ export default function InboxPage() {
         )}
       >
         {empty ? (
-          <div className="mx-auto max-w-[520px] px-4 pt-16 md:pt-28">
-            <EmptyState icon={<InboxIcon className="size-5" />} title="All clear.">
-              When the agent wants to send, change or delete something, it waits here for your yes
-              or no.
-            </EmptyState>
+          <div className="mx-auto max-w-[560px] px-8 pt-16 md:pt-24">
+            <InboxEmpty />
           </div>
         ) : current ? (
           <div className="mx-auto w-full max-w-[720px] px-4 pt-4 pb-12 md:px-8 md:pt-10">
@@ -257,7 +286,14 @@ export default function InboxPage() {
                   phase="continuing"
                 />
                 {pending.length === 0 ? (
-                  <p className="pt-6 text-center font-serif text-28 text-fg">All clear.</p>
+                  <div className="anim-fade-in pt-10 pb-4 text-center">
+                    <p className="font-serif text-40 text-fg">
+                      All <span className="italic">clear.</span>
+                    </p>
+                    <p className="mt-2 text-13 text-fg-muted">
+                      Everything that needed your signature has it.
+                    </p>
+                  </div>
                 ) : null}
               </div>
             ) : (
@@ -284,6 +320,61 @@ export default function InboxPage() {
   );
 }
 
+/** Nothing waiting: a faded example of what will land here, so the page teaches itself. */
+function InboxEmpty({ heading = true }: { heading?: boolean }) {
+  return (
+    <div className="pt-2 pb-8">
+      {heading ? (
+        <p className="mb-3 font-serif text-[48px] leading-none tracking-[-0.02em] text-fg">
+          All <span className="italic">clear.</span>
+        </p>
+      ) : null}
+      <p className="max-w-[420px] text-14 text-fg-muted">
+        When the agent wants to send, change or delete something, it lands here for your signature.
+      </p>
+      <div aria-hidden="true" className="relative mt-12 select-none">
+        <span className="eyebrow absolute -top-7 left-1">For example</span>
+        <span className="stamp pointer-events-none absolute right-6 bottom-[22%] z-10 text-[22px] text-ok opacity-50">
+          Approved
+        </span>
+        <div className="slip rotate-[-1.5deg] opacity-60 [mask-image:linear-gradient(to_bottom,#000_55%,transparent)]">
+          <div className="flex items-center gap-2 border-b border-dashed border-line-strong px-5 py-3 text-13">
+            <span className="size-2 rounded-full bg-attention" />
+            <span className="font-medium text-attention">Needs your sign-off</span>
+            <span className="ml-auto flex items-center gap-1.5 text-fg-muted">
+              <Monogram name="gmail" size={16} />
+              gmail
+            </span>
+            <EffectPill effect="send" />
+          </div>
+          <div className="space-y-1.5 px-5 pt-4 text-13">
+            <div className="flex gap-3">
+              <span className="w-14 text-fg-faint">To</span>
+              <span className="font-medium text-fg">priya@northwind.co</span>
+            </div>
+            <div className="flex gap-3">
+              <span className="w-14 text-fg-faint">Subject</span>
+              <span className="text-fg">Contract, signed copy</span>
+            </div>
+          </div>
+          <p className="px-5 pt-4 font-serif text-[21px] leading-[1.3] text-fg">
+            Hi Priya, the countersigned contract is attached. Looking forward to kicking off on
+            Monday.
+          </p>
+          <div className="flex items-center gap-2 px-5 pt-5 pb-5">
+            <span className="inline-flex h-9 items-center rounded-full bg-fg px-4 text-13 font-medium text-canvas">
+              Approve
+            </span>
+            <span className="inline-flex h-9 items-center rounded-full border border-line-strong px-4 text-13 text-fg">
+              Edit
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskContext({ chatId, title }: { chatId: string; title: string }) {
   const chat = useApi(() => api.chat(chatId), chatId);
   const last = useMemo(() => {
@@ -303,9 +394,9 @@ function TaskContext({ chatId, title }: { chatId: string; title: string }) {
   const askText = ask?.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
 
   return (
-    <section className="mt-8" aria-label="Task context">
+    <section className="mt-10" aria-label="Task context">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-13 font-medium text-fg-muted">From the task</h2>
+        <h2 className="eyebrow">From the task</h2>
         <Link
           href={`/t/${chatId}`}
           className="inline-flex items-center gap-1 text-13 font-medium text-accent hover:underline"
@@ -313,8 +404,8 @@ function TaskContext({ chatId, title }: { chatId: string; title: string }) {
           Open task <ArrowRight className="size-3.5" />
         </Link>
       </div>
-      <div className="rounded-card border border-line bg-surface px-4 py-4">
-        <p className="text-14 font-medium text-fg">{title || "Untitled task"}</p>
+      <div className="border-t border-line pt-4">
+        <p className="font-serif text-[22px] leading-tight text-fg">{title || "Untitled task"}</p>
         {chat.loading && !chat.data ? (
           <div className="mt-3 space-y-2">
             <Skeleton className="h-3.5 w-3/4" />
@@ -326,7 +417,7 @@ function TaskContext({ chatId, title }: { chatId: string; title: string }) {
               <p className="mt-2 text-13 text-fg-muted">You asked: “{askText}”</p>
             ) : null}
             {last ? (
-              <div className="mt-3 border-l-2 border-line pl-3 text-fg-muted">
+              <div className="mt-3 border-l-2 border-line-strong pl-3.5 text-fg-muted">
                 <Markdown text={last} />
               </div>
             ) : (

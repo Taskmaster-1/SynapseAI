@@ -9,9 +9,9 @@ import { THEME_KEY as KEY } from "./theme-boot";
 function read(): ThemePref {
   try {
     const t = localStorage.getItem(KEY);
-    return t === "light" || t === "dark" ? t : "system";
+    return t === "system" || t === "dark" ? t : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -25,7 +25,7 @@ const listeners = new Set<(p: ThemePref) => void>();
 
 /** Theme preference shared across components; persisted per browser. */
 export function useTheme() {
-  const [pref, setPref] = useState<ThemePref>("system");
+  const [pref, setPref] = useState<ThemePref>("light");
   useEffect(() => {
     setPref(read());
     listeners.add(setPref);
@@ -35,8 +35,7 @@ export function useTheme() {
   }, []);
   const set = useCallback((next: ThemePref) => {
     try {
-      if (next === "system") localStorage.removeItem(KEY);
-      else localStorage.setItem(KEY, next);
+      localStorage.setItem(KEY, next);
     } catch {
       // storage unavailable: still apply for this page
     }

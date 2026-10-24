@@ -256,9 +256,9 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
   return (
     <div className="space-y-10">
       <section>
-        <h3 className="text-16 font-medium text-fg">By default</h3>
+        <h3 className="font-serif text-[24px] leading-tight text-fg">By default</h3>
         <p className="mt-1 mb-4 text-13 text-fg-muted">What happens when no rule below matches.</p>
-        <ul className="divide-y divide-line rounded-card border border-line bg-surface">
+        <ul className="divide-y divide-line rounded-[16px] border border-line bg-surface">
           {EFFECTS.map((effect) => (
             <li
               key={effect}
@@ -287,7 +287,7 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
       <section>
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-16 font-medium text-fg">Rules</h3>
+            <h3 className="font-serif text-[24px] leading-tight text-fg">Rules</h3>
             <p className="mt-1 text-13 text-fg-muted">
               Checked top to bottom; the first match wins. A matching Block always wins. Drag to
               reorder.
@@ -308,9 +308,22 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
           </button>
         </div>
         {rules.length === 0 ? (
-          <p className="rounded-card border border-dashed border-line-strong px-4 py-6 text-center text-13 text-fg-muted">
-            No rules — the defaults above apply to everything.
-          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[16px] bg-sunken/70 px-5 py-4">
+            <p className="min-w-0 flex-1 text-13 text-fg-muted">
+              No rules yet, so the defaults above apply to everything. A rule reads like a sentence:
+            </p>
+            <p
+              aria-hidden="true"
+              className="inline-flex flex-wrap items-center gap-1.5 text-13 text-fg-muted"
+            >
+              When
+              <span className="rounded-[6px] border border-line-strong bg-surface px-1.5 font-mono text-12 text-fg">
+                gmail__send_email
+              </span>
+              <span>→</span>
+              <span className="rounded-[6px] bg-ok-soft px-1.5 font-medium text-ok">Allow</span>
+            </p>
+          </div>
         ) : (
           <ol className="space-y-2">
             {rules.map((r, i) => (
@@ -328,7 +341,7 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
                   setOver(null);
                 }}
                 className={cx(
-                  "rounded-card border bg-surface transition-[border-color,opacity] duration-150",
+                  "rounded-[16px] border bg-surface transition-[border-color,opacity] duration-150",
                   over === i && dragging !== null && dragging !== i
                     ? "border-accent"
                     : "border-line",
@@ -468,7 +481,7 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
 
       <div
         className={cx(
-          "sticky bottom-4 z-10 flex items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-pop transition-opacity duration-150",
+          "slip sticky bottom-4 z-10 flex items-center gap-3 rounded-full py-2 pr-2 pl-5 transition-opacity duration-150",
           dirty || error ? "opacity-100" : "pointer-events-none opacity-0",
         )}
         aria-hidden={!(dirty || error)}

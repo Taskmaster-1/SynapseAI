@@ -17,7 +17,7 @@ import { useMedia } from "@/lib/use-media";
 import { useRunStream } from "@/lib/use-run-stream";
 import { useWorkspace } from "@/lib/workspace";
 import { Composer, type ComposerHandle } from "./composer";
-import { Conversation } from "./conversation";
+import { Conversation, RunReceipt } from "./conversation";
 import { type PanelTab, RunPanel } from "./run-panel";
 
 interface State {
@@ -341,7 +341,7 @@ export function TaskView({ taskId }: { taskId: string }) {
             stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}
         >
-          <div className="mx-auto w-full max-w-[760px] px-4 pt-8 pb-10 md:px-8">
+          <div className="mx-auto w-full max-w-[800px] px-4 pt-8 pb-12 md:px-8 md:pt-12">
             {state ? (
               <Conversation
                 messages={state.messages}
@@ -353,21 +353,33 @@ export function TaskView({ taskId }: { taskId: string }) {
             ) : (
               <ConversationSkeleton />
             )}
+            {state && run?.status === "completed" && !hasAwaiting ? (
+              <div className="mt-10">
+                <RunReceipt run={run} messages={state.messages} tainted={tainted} />
+              </div>
+            ) : null}
             {run?.status === "failed" && run.error ? (
-              <p className="mt-6 rounded-[10px] border border-danger/25 bg-danger-soft px-3.5 py-2.5 text-13 text-danger">
-                The task failed: {run.error}{" "}
-                <Link
-                  href="/settings?section=models"
-                  className="font-medium underline underline-offset-2"
-                >
-                  Models &amp; keys
-                </Link>
-              </p>
+              <div className="mt-8 md:grid md:grid-cols-[76px_minmax(0,1fr)] md:gap-x-6">
+                <div className="eyebrow pt-3 text-danger md:text-right">Failed</div>
+                <p className="mt-2 max-w-[68ch] rounded-[8px] border-l-2 border-danger bg-danger-soft px-4 py-3 text-13 text-danger md:mt-0">
+                  The task failed: {run.error}{" "}
+                  <Link
+                    href="/settings?section=models"
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Models &amp; keys
+                  </Link>
+                </p>
+              </div>
             ) : null}
           </div>
         </div>
-        <div className="shrink-0 bg-canvas">
-          <div className="mx-auto w-full max-w-[760px] px-4 pb-4 md:px-8">
+        <div className="relative shrink-0 bg-canvas">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-linear-to-t from-canvas to-transparent"
+          />
+          <div className="mx-auto w-full max-w-[800px] px-3 pb-3 md:px-8 md:pb-5">
             <Composer
               handle={composer}
               value={draft}
@@ -393,7 +405,7 @@ export function TaskView({ taskId }: { taskId: string }) {
         panelOpen ? (
           <aside
             aria-label="Run panel"
-            className="w-[360px] shrink-0 border-l border-line bg-surface/50"
+            className="w-[360px] shrink-0 border-l border-line bg-sunken/40"
           >
             {panel(false)}
           </aside>
@@ -421,18 +433,16 @@ export function TaskView({ taskId }: { taskId: string }) {
 
 function ConversationSkeleton() {
   return (
-    <div className="space-y-6" aria-busy="true">
-      <div className="flex justify-end">
-        <Skeleton className="h-9 w-64 rounded-[14px]" />
+    <div className="space-y-9 md:pl-[100px]" aria-busy="true">
+      <div className="space-y-2.5">
+        <Skeleton className="h-3 w-10" />
+        <Skeleton className="h-7 w-4/5" />
       </div>
-      <div className="space-y-2">
-        <Skeleton className="h-4 w-3/4" />
-        <Skeleton className="h-4 w-2/3" />
-      </div>
-      <Skeleton className="h-10 w-full rounded-[10px]" />
-      <div className="space-y-2">
-        <Skeleton className="h-4 w-5/6" />
-        <Skeleton className="h-4 w-1/2" />
+      <div className="space-y-2.5">
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-5 w-3/4" />
+        <Skeleton className="h-5 w-1/2" />
       </div>
     </div>
   );
@@ -479,7 +489,7 @@ function TaskHeader({
   }
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 md:px-5">
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-canvas px-3 md:px-5">
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         {loading ? (
           <Skeleton className="h-5 w-56" />
@@ -487,7 +497,7 @@ function TaskHeader({
           <input
             ref={input}
             aria-label="Task title"
-            className="input h-8 min-h-8 max-w-md py-0 text-14 font-medium"
+            className="input h-9 min-h-9 max-w-md py-0 font-serif text-[21px]"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onBlur={commit}
@@ -506,7 +516,9 @@ function TaskHeader({
             title="Rename"
             className="group -ml-1.5 flex min-w-0 items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-left hover:bg-hover"
           >
-            <h1 className="truncate text-14 font-medium text-fg">{title || "Untitled task"}</h1>
+            <h1 className="truncate font-serif text-[21px] leading-[1.15] tracking-[-0.01em] text-fg">
+              {title || "Untitled task"}
+            </h1>
             <Pencil className="size-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100" />
           </button>
         )}
@@ -518,7 +530,7 @@ function TaskHeader({
         {tainted ? <TaintShield /> : null}
         {cost ? (
           <span
-            className="tabular hidden text-12 text-fg-faint lg:inline"
+            className="tabular hidden font-mono text-[11.5px] text-fg-faint lg:inline"
             title="Cost of the latest run"
           >
             {formatCost(cost)}

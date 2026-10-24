@@ -11,41 +11,44 @@ decide on anything that acts in the world. Two ideas drive every screen:
 
 ## Visual language
 
-- **Feel:** warm, editorial, quiet. Paper-like neutrals, one confident ink accent, amber
-  reserved for "needs you". No gradients, no glassmorphism, no emoji in chrome.
+- **Feel:** paper and ink, editorial, tactile. The app and the landing page share one
+  language: warm paper, ink type, paper "slips" for anything you sign, a rubber stamp
+  when you decide, printed receipts for what a run did. Amber is reserved for "needs you".
+  No gradients, no glassmorphism, no emoji in chrome.
 - **Type:** Geist (UI, variable, self-hosted via `@fontsource-variable/geist`),
-  Instrument Serif (display: greetings, page titles, empty states) via `next/font/google`
-  (downloaded at build, self-hosted), Geist Mono for code and arguments.
-  Scale (px): 12 / 13 / 14 (base) / 16 / 20 / 28 / 40 (serif display). Line-height 1.5
-  body, 1.2 headings. Tabular numbers for money and counts.
-- **Colour tokens** (CSS variables on `:root`, dark via `prefers-color-scheme` and a
-  `data-theme` override):
+  Instrument Serif (display: greetings, page titles, task titles, drafts, empty states) via
+  `next/font/google`, Geist Mono for code, arguments, receipts and `.eyebrow` labels (11px
+  uppercase, tracked). Scale (px): 12.5 / 14 / 15 (base) / 16 / 20 / 28 / 40, display up to
+  56. The utility names `text-12/13/14` are historical. Tabular numbers for money and counts.
+- **Theme:** paper (light) is the default. Dark is opt-in from Settings → Appearance or the
+  account menu, and "System" follows the OS. `lib/theme-boot.ts` applies it before paint.
+- **Colour tokens** (CSS variables on `:root`; dark via `data-theme="dark"`, or the OS when
+  the preference is "system"):
 
   | Token | Light | Dark | Use |
   |---|---|---|---|
-  | `--canvas` | `#F6F5F1` | `#0F0F0E` | app background |
-  | `--surface` | `#FFFFFF` | `#181816` | cards, panels |
-  | `--sunken` | `#EFEDE7` | `#0B0B0A` | inputs, code, wells |
-  | `--line` | `#E5E2DA` | `#272623` | hairlines |
-  | `--line-strong` | `#D3CFC4` | `#3A3833` | input borders, focus-adjacent |
-  | `--fg` | `#1B1A17` | `#ECEAE4` | primary text |
-  | `--fg-muted` | `#69655C` | `#A39F95` | secondary text |
-  | `--fg-faint` | `#9A9589` | `#6E6A61` | meta, placeholders |
-  | `--accent` | `#3B48CC` | `#8B95FF` | primary actions, links, focus ring |
-  | `--accent-soft` | `#ECEDFB` | `#1E2140` | selected rows, accent wells |
-  | `--attention` | `#B45309` | `#F0A23B` | approvals, "needs you" |
-  | `--attention-soft` | `#FBF1E2` | `#2A1F10` | approval card wash |
+  | `--canvas` | `#F4F1EA` | `#13120F` | app background (paper) |
+  | `--surface` | `#FFFDF8` | `#1C1B17` | slips, cards, panels |
+  | `--sunken` | `#EBE6DB` | `#0E0D0B` | wells, code |
+  | `--line` | `#E2DCCF` | `#2B2924` | hairlines |
+  | `--line-strong` | `#CFC7B6` | `#3E3B34` | input borders |
+  | `--fg` | `#15140F` | `#EFEAE0` | ink: text and primary buttons |
+  | `--fg-muted` | `#5F5A4F` | `#A8A193` | secondary text |
+  | `--fg-faint` | `#948D7E` | `#716B5F` | meta, placeholders |
+  | `--accent` | `#3B48CC` | `#8B95FF` | links, focus, the brand node; hover on ink buttons |
+  | `--attention` | `#B45309` | `#F2A83B` | approvals, "needs you" |
   | `--danger` | `#B42318` | `#F97066` | destructive, deny, errors |
-  | `--danger-soft` | `#FCEBE9` | `#2C1513` | |
-  | `--ok` | `#18794E` | `#4CC38A` | success |
-  | `--ok-soft` | `#E7F5EE` | `#10251B` | |
+  | `--ok` | `#18794E` | `#4CC38A` | success, the APPROVED stamp |
 
-  Effect colours: read = `--fg-muted` on `--sunken`; write = accent; send = attention;
-  destructive = danger.
-- **Shape & depth:** radius 12 (cards), 8 (controls), 999 (pills). Hairline borders over
-  shadows; one elevation shadow for popovers: `0 12px 32px -12px rgb(0 0 0 / .18)`.
-- **Motion:** 140–180 ms ease-out. New timeline rows slide in 4 px and fade; streaming text
-  has a soft caret; a newly requested approval card gets one gentle amber glow. Respect
+  Each colour has a `-soft` wash. Brand fields, the same in both themes: `ink`, `paper`,
+  `field-amber` `#F2A83B`, `field-blue` `#2B36B8`, `sage`, `blush`, `lilac`.
+- **Shape & depth:** buttons are pills; primary is ink (`.btn-primary`). Radius 12 cards,
+  10 inputs. `.slip` is a sheet of paper (8px radius, `--slip-shadow`) used for approvals,
+  drafts and tickets. `.stamp` / `.stamp-in` is the rubber stamp (APPROVED in `ok`, DENIED in
+  `danger`). `.grain` lays a faint paper texture over the app.
+- **Motion:** 140–200 ms ease-out for UI. The stamp lands with a short spring when you
+  decide, then the slip resolves. Running steps pulse softly; new rows slide in 4 px. A
+  newly requested approval gets one gentle amber glow. Everything respects
   `prefers-reduced-motion`.
 - **Icons:** lucide-react, 16 px, 1.75 stroke. Connections get a monogram tile (first
   letter on a tinted square) — no third-party logos in the repo.
@@ -98,8 +101,9 @@ decide on anything that acts in the world. Two ideas drive every screen:
   width with no bubble. Tool calls render as a compact **step group** inline ("Used 2
   tools · gmail, linear ▸") that expands to rows; the full story lives in the Activity tab.
   Handover rows render as a divider "Earlier conversation summarised".
-- **Approval card** (inline, and identical in Inbox):
-  - Eyebrow: amber dot + "Needs your approval".
+- **Approval card** (inline, and identical in Inbox): a paper slip.
+  - Header over a dashed rule: pulsing amber dot + "Needs your sign-off", with the
+    connection monogram and effect pill on the right.
   - Title: the tool's `preview` ("Email bob@acme.com — “Re: Sync tomorrow?”"), falling back
     to a humanised tool name ("gmail · Send email").
   - Meta row: connection monogram + name, effect pill, the `reason` sentence. If the run is
@@ -110,11 +114,13 @@ decide on anything that acts in the world. Two ideas drive every screen:
     objects as indented groups; a "View raw" toggle shows pretty JSON.
   - **Edit** turns fields into inputs/textareas in place (raw JSON editor for anything
     nested), with "Edited" badge; Approve sends the edited input.
-  - Actions: **Approve** (primary, ⌘↵), **Deny** (opens an inline reason field, Enter to
-    send), and a quiet "Always allow…" link to Settings → Approval rules prefilled with the
-    tool name.
-  - After the decision: card collapses to a one-line receipt ("Approved by you · sent" /
-    "Denied: <reason>").
+  - Footer is a signature line ("Your signature"): **Approve** (ink, ⌘↵), **Edit**,
+    **Deny** (opens an inline reason field, Enter to send), and a quiet "Always allow…"
+    link to Settings → Approval rules prefilled with the tool name.
+  - After the decision an APPROVED (green) or DENIED (red) stamp lands on the slip, then
+    it collapses to a one-line receipt ("Approved by you · sent" / "Denied: <reason>").
+- **Run receipt:** when a run completes with nothing waiting, a small printed receipt
+  (perforated edges, mono) lists the steps, model, tools, tokens, time and total cost.
 - Composer pinned at the bottom: auto-growing textarea, Enter to send, Shift+Enter newline;
   while a run is active the button reads "Queue" with hint "The agent will read this at
   its next step".
@@ -158,8 +164,9 @@ Usage summary (today, 7 days, 30 days spend; small bar chart of daily spend), ru
 tool-call audit trail (who decided, when, reason).
 
 ### Sign in / Sign up
-Split layout: left panel (surface, serif headline "An agent that asks before it acts.",
-a static mock approval card as illustration), right the form. Single column on mobile.
+Split layout: left an amber field with the serif headline "Nothing leaves without you." and
+the approval slip from the landing page, whose stamp lands on load; right the form on
+paper. Always paper, whatever the theme. Single column on mobile.
 
 ## Interaction details
 

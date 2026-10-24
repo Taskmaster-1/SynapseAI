@@ -58,7 +58,12 @@ export default function ActivityPage() {
   return (
     <Page wide>
       <PageHeader
-        title="Activity"
+        eyebrow="The ledger · last 30 days"
+        title={
+          <>
+            Activity <span className="text-fg-muted italic">&amp; spend</span>
+          </>
+        }
         description="Every run, what it cost, and every tool call with the decision behind it."
         actions={
           <button
@@ -78,43 +83,78 @@ export default function ActivityPage() {
 
       <section
         aria-label="Spend"
-        className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"
+        className="grid items-start gap-5 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]"
       >
-        <dl className="grid grid-cols-3 gap-3 md:grid-cols-1">
-          {(
-            [
-              ["Today", sum(1)],
-              ["7 days", sum(7)],
-              ["30 days", sum(30)],
-            ] as const
-          ).map(([k, v]) => (
-            <div key={k} className="rounded-card border border-line bg-surface px-4 py-3">
-              <dt className="text-12 text-fg-muted">{k}</dt>
-              <dd className="tabular mt-0.5 text-20 font-medium text-fg">
-                {usage.data ? formatCost(v) : <Skeleton className="mt-1 h-5 w-14" />}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <div className="slip landing-receipt px-5 pt-6 pb-6 md:rotate-[-0.6deg]">
+          <p className="eyebrow flex justify-between">
+            <span>Spend</span>
+            <span>USD</span>
+          </p>
+          <dl className="mt-3 space-y-2.5">
+            {(
+              [
+                ["Today", sum(1)],
+                ["7 days", sum(7)],
+                ["30 days", sum(30)],
+              ] as const
+            ).map(([k, v], i) => (
+              <div
+                key={k}
+                className={cx(
+                  "flex items-baseline gap-2",
+                  i === 2 && "border-t border-dashed border-line-strong pt-3",
+                )}
+              >
+                <dt className="font-mono text-12 text-fg-muted uppercase">{k}</dt>
+                <span
+                  aria-hidden="true"
+                  className="flex-1 border-b border-dotted border-line-strong"
+                />
+                <dd
+                  className={cx(
+                    "tabular font-serif leading-none text-fg",
+                    i === 2 ? "text-[34px]" : "text-[26px]",
+                  )}
+                >
+                  {usage.data ? formatCost(v) : <Skeleton className="h-6 w-14" />}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-4 font-mono text-[10.5px] tracking-[0.08em] text-fg-faint uppercase">
+            {list ? `${plural(list.length, "run")} on file` : "\u00a0"}
+          </p>
+        </div>
         <SpendChart days={series} loading={!usage.data} />
       </section>
 
       <section className="mt-10" aria-labelledby="runs-h">
-        <h2 id="runs-h" className="mb-3 text-13 font-medium text-fg-muted">
-          Runs
-        </h2>
+        <div className="mb-4 flex items-end justify-between gap-3 border-b border-line pb-2.5">
+          <h2 id="runs-h" className="font-serif text-[24px] leading-none text-fg">
+            Runs
+          </h2>
+          {list && list.length > 0 ? <span className="eyebrow">Newest first</span> : null}
+        </div>
         {runs.error ? <ErrorNote>{errorMessage(runs.error)}</ErrorNote> : null}
         {!list ? (
           <Skeleton className="h-64 rounded-card" />
         ) : list.length === 0 ? (
-          <EmptyState compact title="No runs yet">
-            Start a task and its runs show up here.
+          <EmptyState
+            title="Nothing on the ledger yet"
+            illustration={<SampleReceipt />}
+            action={
+              <Link href="/?new=1" className="btn btn-primary">
+                Start a task <ArrowRight className="size-3.5" />
+              </Link>
+            }
+          >
+            Each run lands here as a receipt: what it touched, what you signed, what it cost.
           </EmptyState>
         ) : (
           <>
-            <div className="hidden overflow-hidden rounded-card border border-line bg-surface md:block">
+            <div className="hidden overflow-hidden rounded-[16px] border border-line bg-surface md:block">
               <table className="w-full table-fixed text-left text-13">
-                <thead className="border-b border-line text-12 text-fg-muted">
+                <thead className="border-b border-line bg-sunken/50 font-mono text-[10.5px] tracking-[0.1em] text-fg-faint uppercase">
                   <tr>
                     <th className="w-[120px] px-4 py-2.5 font-medium">Status</th>
                     <th className="px-3 py-2.5 font-medium">Task</th>
@@ -171,7 +211,7 @@ export default function ActivityPage() {
                 </tbody>
               </table>
             </div>
-            <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface md:hidden">
+            <ul className="divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface md:hidden">
               {list.map((r) => (
                 <li key={r.id}>
                   <button
@@ -223,9 +263,9 @@ function SpendChart({ days, loading }: { days: UsageDay[]; loading: boolean }) {
     });
   const h = hover !== null ? days[hover] : null;
   return (
-    <figure className="flex flex-col rounded-card border border-line bg-surface px-4 pt-3 pb-3">
+    <figure className="flex h-full flex-col rounded-[16px] border border-line bg-surface px-5 pt-4 pb-4">
       <figcaption className="flex items-baseline justify-between gap-3">
-        <span className="text-12 text-fg-muted">Daily spend · last 30 days</span>
+        <span className="eyebrow">Daily spend</span>
         <span className="tabular text-12 text-fg" aria-live="polite">
           {h
             ? `${label(h.date)} · ${formatCost(h.costUsd)} · ${h.runs} runs`
@@ -233,10 +273,10 @@ function SpendChart({ days, loading }: { days: UsageDay[]; loading: boolean }) {
         </span>
       </figcaption>
       {loading ? (
-        <Skeleton className="mt-3 h-[132px]" />
+        <Skeleton className="mt-4 h-[160px] flex-1" />
       ) : (
         // biome-ignore lint/a11y/noStaticElementInteractions: hover readout only; the same data is in the table below
-        <div className="relative mt-3 h-[132px]" onMouseLeave={() => setHover(null)}>
+        <div className="relative mt-4 h-[160px] flex-1" onMouseLeave={() => setHover(null)}>
           <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-px bg-line" />
           <div className="absolute inset-0 flex items-end gap-[2px]" aria-hidden="true">
             {days.map((d, i) => {
@@ -251,8 +291,8 @@ function SpendChart({ days, loading }: { days: UsageDay[]; loading: boolean }) {
                 >
                   <div
                     className={cx(
-                      "w-full rounded-t-[4px] transition-colors duration-150",
-                      d.costUsd > 0 ? (hover === i ? "bg-accent-hover" : "bg-accent") : "bg-line",
+                      "w-full rounded-t-[3px] transition-colors duration-150",
+                      d.costUsd > 0 ? (hover === i ? "bg-accent" : "bg-fg") : "bg-line-strong/60",
                       hover !== null && hover !== i && d.costUsd > 0 && "opacity-60",
                     )}
                     style={{ height: d.costUsd > 0 ? `max(${pct}%, 3px)` : "2px" }}
@@ -263,7 +303,10 @@ function SpendChart({ days, loading }: { days: UsageDay[]; loading: boolean }) {
           </div>
         </div>
       )}
-      <div className="mt-1.5 flex justify-between text-[11px] text-fg-faint" aria-hidden="true">
+      <div
+        className="mt-2 flex justify-between font-mono text-[10.5px] tracking-[0.06em] text-fg-faint uppercase"
+        aria-hidden="true"
+      >
         <span>{days[0] ? label(days[0].date) : ""}</span>
         <span>Today</span>
       </div>
@@ -397,6 +440,42 @@ function RunDetail({ run }: { run: RunRow }) {
           </ol>
         )}
       </section>
+    </div>
+  );
+}
+
+/** Empty-state art: a faint printed receipt of a run. */
+function SampleReceipt() {
+  const rows: [string, string, string][] = [
+    ["github", "read 3 PRs", "auto"],
+    ["linear", "found ENG-212", "auto"],
+    ["gmail", "reply to Bob", "signed"],
+  ];
+  return (
+    <div className="relative w-[250px] rotate-[2deg]">
+      <div className="slip landing-receipt px-5 pt-6 pb-6 font-mono text-[10.5px] text-fg-muted">
+        <p className="text-center tracking-[0.18em] text-fg uppercase">Run receipt</p>
+        <p className="mt-0.5 text-center text-fg-faint">Morning brief · 08:00</p>
+        <div className="my-3 border-t border-dashed border-line-strong" />
+        <ul className="space-y-1.5">
+          {rows.map(([tool, what, how]) => (
+            <li key={tool} className="flex items-center gap-1.5">
+              <span className="text-fg">{tool}</span>
+              <span className="truncate">{what}</span>
+              <span className="flex-1 border-b border-dotted border-line-strong" />
+              <span className={how === "signed" ? "text-attention" : undefined}>{how}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="my-3 border-t border-dashed border-line-strong" />
+        <p className="flex justify-between">
+          <span>6 steps · 1.2k tok</span>
+          <span className="font-serif text-[20px] leading-none text-fg">$0.04</span>
+        </p>
+      </div>
+      <span className="stamp absolute -top-3 -right-4 bg-surface/70 text-[12px] text-ok">
+        Approved
+      </span>
     </div>
   );
 }

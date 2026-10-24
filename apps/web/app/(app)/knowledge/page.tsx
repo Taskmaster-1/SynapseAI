@@ -20,7 +20,12 @@ export default function KnowledgePage() {
   return (
     <Page>
       <PageHeader
-        title="Knowledge"
+        eyebrow="What it knows"
+        title={
+          <>
+            Knowledge <span className="text-fg-muted italic">&amp; memory</span>
+          </>
+        }
         description="What the agent can look up and what it remembers about you."
       />
       <Tabs<Tab>
@@ -100,14 +105,16 @@ function Documents() {
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         className={cx(
-          "flex w-full flex-col items-center justify-center rounded-card border border-dashed px-4 py-9 text-center transition-colors duration-150",
-          dragging ? "border-accent bg-accent-soft" : "border-line-strong hover:bg-hover",
+          "flex w-full flex-col items-center justify-center rounded-[16px] border-[1.5px] border-dashed px-4 py-10 text-center transition-colors duration-150",
+          dragging
+            ? "border-accent bg-accent-soft"
+            : "border-line-strong bg-surface/50 hover:border-fg-faint hover:bg-surface",
         )}
       >
-        <span className="grid size-9 place-items-center rounded-full bg-sunken text-fg-muted">
+        <span className="grid size-10 place-items-center rounded-full bg-fg text-canvas">
           {uploading > 0 ? <LoaderCircle className="anim-spin" /> : <Upload />}
         </span>
-        <span className="mt-3 text-14 font-medium text-fg">
+        <span className="mt-3.5 font-serif text-[22px] leading-tight text-fg">
           {uploading > 0 ? `Uploading ${uploading}…` : "Drop files here, or click to upload"}
         </span>
         <span className="mt-1 text-12 text-fg-muted">
@@ -133,18 +140,21 @@ function Documents() {
       <SearchBox />
 
       <section>
-        <h2 className="mb-3 text-13 font-medium text-fg-muted">
-          Library{list ? <span className="tabular text-fg-faint"> · {list.length}</span> : null}
+        <h2 className="mb-4 flex items-baseline gap-2 border-b border-line pb-2.5 font-serif text-[24px] leading-none text-fg">
+          Library
+          {list ? (
+            <span className="tabular font-sans text-13 text-fg-faint">{list.length}</span>
+          ) : null}
         </h2>
         {docs.error ? <ErrorNote>{errorMessage(docs.error)}</ErrorNote> : null}
         {!list ? (
           <Skeleton className="h-16 rounded-card" />
         ) : list.length === 0 ? (
-          <EmptyState compact title="No documents yet">
-            Upload handbooks, policies or notes and the agent can search them.
+          <EmptyState compact illustration={<SampleDocuments />} title="The shelf is empty">
+            Drop handbooks, policies or notes above and the agent can search them.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
+          <ul className="divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface">
             {list.map((d) => (
               <li key={d.id} className="flex items-center gap-3 px-4 py-3">
                 <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-sunken text-fg-muted">
@@ -245,7 +255,9 @@ function SearchBox() {
 
   return (
     <section>
-      <h2 className="mb-3 text-13 font-medium text-fg-muted">Search like the agent would</h2>
+      <h2 className="mb-4 border-b border-line pb-2.5 font-serif text-[24px] leading-none text-fg">
+        Search <span className="text-fg-muted italic">like the agent would</span>
+      </h2>
       <search>
         <form onSubmit={search} className="relative">
           <label htmlFor="kb-search" className="sr-only">
@@ -333,7 +345,7 @@ function MemoryTab() {
       <p className="text-14 text-fg-muted">
         Notes the agent reads at the start of every task. It can add its own — review them here.
       </p>
-      <form onSubmit={add} className="rounded-card border border-line bg-surface p-3">
+      <form onSubmit={add} className="slip p-3.5">
         <label htmlFor="mem-new" className="sr-only">
           New note
         </label>
@@ -358,11 +370,11 @@ function MemoryTab() {
       {!list ? (
         <Skeleton className="h-24 rounded-card" />
       ) : list.length === 0 ? (
-        <EmptyState compact title="No notes yet">
-          Add what you'd tell a new assistant on day one.
+        <EmptyState compact illustration={<SampleNote />} title="No notes yet">
+          Write above what you'd tell a new assistant on day one.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface">
+        <ul className="divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface">
           {list.map((m) => (
             <li key={m.id}>
               <MemoryItem memory={m} onSaved={replace} onDeleted={() => drop(m.id)} />
@@ -494,6 +506,64 @@ function MemoryItem({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ---------- Empty-state art ----------
+
+function SampleDocuments() {
+  const docs = [
+    { name: "handbook.md", r: -7, x: 0, y: 40, lines: [90, 70, 82, 60] },
+    { name: "refunds.md", r: 5, x: 100, y: 0, lines: [80, 92, 55, 74] },
+    { name: "q4-plan.md", r: -1.5, x: 50, y: 64, lines: [85, 64, 90, 48] },
+  ];
+  return (
+    <div className="relative h-[190px] w-[260px]">
+      {docs.map((d) => (
+        <div
+          key={d.name}
+          className="slip absolute w-[150px] px-3.5 pt-3 pb-4"
+          style={{ left: d.x, top: d.y, rotate: `${d.r}deg` }}
+        >
+          <p className="flex items-center gap-1.5 font-mono text-[9.5px] text-fg-muted">
+            <FileText className="size-3" /> {d.name}
+          </p>
+          <div className="mt-2.5 space-y-1.5">
+            {d.lines.map((w) => (
+              <span
+                key={`${d.name}-${w}`}
+                className="block h-[5px] rounded-full bg-line"
+                style={{ width: `${w}%` }}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SampleNote() {
+  return (
+    <div className="relative w-[240px] rotate-[-2.5deg]">
+      <div
+        className="slip relative overflow-hidden px-5 pt-4 pb-5"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(to bottom, transparent 0 25px, color-mix(in srgb, var(--accent) 16%, transparent) 25px 26px)",
+          backgroundPosition: "0 14px",
+        }}
+      >
+        <span className="absolute inset-y-0 left-3 w-px bg-danger/30" />
+        <p className="pl-2 font-mono text-[9.5px] tracking-[0.12em] text-fg-faint uppercase">
+          Note · You
+        </p>
+        <p className="mt-1.5 pl-2 font-serif text-[19px] leading-[26px] text-fg italic">
+          Keep replies short. Sign emails as Ada. Never book before 10am.
+        </p>
+      </div>
+      <span className="absolute -top-2 left-1/2 h-5 w-14 -translate-x-1/2 rotate-[3deg] bg-field-amber/50" />
     </div>
   );
 }

@@ -75,7 +75,7 @@ export function RunPanel({
           ]}
         />
       </div>
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-8">
         {tab === "activity" ? (
           <ActivityTimeline messages={messages} taintedRuns={taintedRuns} focusStep={focusStep} />
         ) : (
@@ -111,9 +111,11 @@ function ActivityTimeline({
 
   if (steps.length === 0) {
     return (
-      <div className="py-10 text-center">
-        <p className="font-serif text-20 text-fg">No steps yet</p>
-        <p className="mt-1 text-13 text-fg-muted">
+      <div className="py-12 text-center">
+        <p className="font-serif text-[26px] leading-tight text-fg">
+          No steps <span className="italic">yet</span>
+        </p>
+        <p className="mx-auto mt-2 max-w-[24ch] text-13 text-fg-muted">
           Every tool the agent uses shows up here, in order.
         </p>
       </div>
@@ -122,14 +124,22 @@ function ActivityTimeline({
 
   return (
     <ol className="relative">
-      <span aria-hidden="true" className="absolute top-3 bottom-3 left-[11px] w-px bg-line" />
+      <span
+        aria-hidden="true"
+        className="absolute top-4 bottom-4 left-[11.5px] border-l border-dashed border-line-strong"
+      />
       {rows.map((r) =>
         r.kind === "ask" ? (
-          <li key={r.id} className="relative flex gap-3 pb-4">
-            <span className="relative z-10 grid size-6 shrink-0 place-items-center rounded-full border border-line bg-canvas text-fg-faint">
+          <li key={r.id} className="relative flex gap-3 pb-5">
+            <span className="relative z-10 grid size-6 shrink-0 place-items-center rounded-full bg-fg text-canvas">
               <User className="size-3.5" />
             </span>
-            <p className="line-clamp-2 min-w-0 pt-0.5 text-13 text-fg-muted">{r.text}</p>
+            <div className="min-w-0">
+              <div className="eyebrow">You asked</div>
+              <p className="mt-0.5 line-clamp-3 font-serif text-[17px] leading-[1.3] text-fg">
+                {r.text}
+              </p>
+            </div>
           </li>
         ) : (
           <TimelineStep
@@ -156,9 +166,9 @@ function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; fo
     }
   }, [focused]);
   return (
-    <li ref={ref} className="anim-row-in relative pb-4">
+    <li ref={ref} className="anim-row-in relative pb-3.5">
       <div className="flex gap-3">
-        <span className="relative z-10 shrink-0 self-start rounded-[6px] bg-surface">
+        <span className="relative z-10 shrink-0 self-start">
           <Monogram name={source ?? "Synapse"} size={24} />
         </span>
         <div className="min-w-0 flex-1">
@@ -175,7 +185,7 @@ function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; fo
               <span className="block text-13 leading-snug break-words text-fg">
                 {approvalTitle(p.preview, p.name)}
               </span>
-              <span className="mt-1 flex flex-wrap items-center gap-1.5 text-12 text-fg-muted">
+              <span className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[11px] tracking-[0.02em] text-fg-muted">
                 <EffectPill effect={p.effect} />
                 <span
                   className={cx(
@@ -315,46 +325,52 @@ function Details({ messages, run }: { messages: UiMessage[]; run: TaskRun | null
     ],
   ];
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <section>
-        <h3 className="eyebrow mb-2">Latest run</h3>
-        <dl className="divide-y divide-line rounded-[10px] border border-line bg-surface">
+        <h3 className="eyebrow mb-3">Latest run</h3>
+        <dl className="space-y-2.5">
           {rows.map(([k, v]) => (
-            <div key={k} className="flex items-baseline justify-between gap-4 px-3 py-2 text-13">
-              <dt className="text-fg-muted">{k}</dt>
+            <div key={k} className="flex items-baseline gap-2 text-13">
+              <dt className="shrink-0 text-fg-muted">{k}</dt>
+              <span
+                aria-hidden="true"
+                className="min-w-4 flex-1 translate-y-[-3px] border-b border-dotted border-line-strong"
+              />
               <dd className="tabular min-w-0 truncate text-right text-fg">{v}</dd>
             </div>
           ))}
         </dl>
-        {run.error ? <p className="mt-2 text-13 text-danger">{run.error}</p> : null}
+        {run.error ? (
+          <p className="mt-3 border-l-2 border-danger pl-3 text-13 text-danger">{run.error}</p>
+        ) : null}
       </section>
       <section>
-        <h3 className="eyebrow mb-2">Policy decisions</h3>
-        <ul className="grid grid-cols-2 gap-2">
+        <h3 className="eyebrow mb-3">Policy decisions</h3>
+        <ul className="grid grid-cols-2 border-t border-l border-line">
           {[
             ["Allowed automatically", s.auto, "text-fg"],
             ["Approved by you", s.approved, "text-ok"],
             ["Denied", s.denied, "text-danger"],
             ["Blocked by rules", s.blocked, "text-danger"],
           ].map(([label, n, tone]) => (
-            <li
-              key={label as string}
-              className="rounded-[10px] border border-line bg-surface px-3 py-2.5"
-            >
+            <li key={label as string} className="border-r border-b border-line px-3 pt-2 pb-3">
               <div
                 className={cx(
-                  "tabular text-20 font-medium",
+                  "tabular font-serif text-[34px] leading-none",
                   (n as number) > 0 ? (tone as string) : "text-fg-faint",
                 )}
               >
                 {n}
               </div>
-              <div className="text-12 text-fg-muted">{label}</div>
+              <div className="mt-1.5 text-12 text-fg-muted">{label}</div>
             </li>
           ))}
         </ul>
         {s.waiting > 0 ? (
-          <p className="mt-2 text-12 text-attention">{s.waiting} waiting on you now.</p>
+          <p className="mt-3 inline-flex items-center gap-1.5 text-12 text-attention">
+            <span className="size-1.5 rounded-full bg-attention" />
+            {s.waiting} waiting on you now.
+          </p>
         ) : null}
         <p className="mt-3 text-12 text-fg-faint">Across every run in this task.</p>
       </section>
