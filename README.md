@@ -2,7 +2,7 @@
 
 **An open-source agent that does real work in your tools — and can't be talked into doing the wrong thing.**
 
-SynapseAI connects to the services you already use (GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
+SynapseAI works in the services you already use (Gmail and Google Calendar built in; GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. It doesn't wait to be asked: automations start work on a schedule, when an email arrives, or when another app calls a webhook. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
 
 ![A task waiting for approval: the agent drafted an email and shows it as an editable card, with the activity timeline on the right](docs/screenshots/task.png)
 
@@ -18,6 +18,7 @@ Agent products that act in your tools share three problems: approvals that live 
 | **Taint tracking (Rule of Two)** | When a run reads untrusted content — an email body, a web page, an MCP result — it is marked tainted, and from then on no write or send is auto-approved, whatever the rules say. Prompt injection can still mislead the model, but it can't act without you. |
 | **Approvals you can edit** | Approval cards show the full payload. Edit the email before it goes, deny with a reason the agent sees, or approve from the inbox later — paused runs live in Postgres, not in a process. |
 | **Durable runs** | Runs are leased to workers and checkpointed at every step. Restart a server mid-run and another worker picks it up; side-effecting calls interrupted mid-flight are reported as *unknown*, never silently retried. |
+| **Works when you're not looking** | Automations fire on a schedule, on new email, or on a webhook from GitHub, Linear, Stripe or anything else. Each event becomes its own task, starts tainted, and lands in your inbox only when it needs a signature. |
 | **Steer while it works** | Send a message while the agent is busy and it reads it at the next step. Send one while it's waiting for approval and the pending action is dropped in favour of your new instruction. |
 | **Predictable cost** | Per-run and per-day budgets enforced before every model call, a fallback chain across providers, prompt-cache-friendly history, and cost on every run, priced from a daily-synced catalog of 300+ models. |
 | **Yours** | MIT, self-hosted, one Postgres. Any model: Anthropic, OpenAI, Google, Vercel AI Gateway, or anything OpenAI-compatible (Ollama, vLLM). Users can bring their own keys. |
@@ -25,6 +26,8 @@ Agent products that act in your tools share three problems: approvals that live 
 ## Features
 
 - Chat with live streaming (reasoning, tool calls, results) that resumes after reconnects
+- Built-in Gmail and Google Calendar: search, read threads, draft, reply in-thread, label and archive, book and move meetings, answer invitations ([setup](docs/google.md))
+- Automations triggered by a cron schedule, new Gmail messages matching a search, or a secret webhook URL
 - MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
 - Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
@@ -72,7 +75,7 @@ The server is stateless apart from Postgres. Run the API and workers separately 
                                        Workers ─────────┘
                                          └─ runtime (packages/core): one model step at a time
                                             ├─ policy engine (effects, rules, taint, budgets)
-                                            ├─ tools (packages/tools): MCP, web, knowledge, memory
+                                            ├─ tools (packages/tools): Google, MCP, web, knowledge, memory
                                             └─ models: AI SDK providers + fallback chain
 ```
 
@@ -80,7 +83,7 @@ The server is stateless apart from Postgres. Run the API and workers separately 
 |---|---|
 | `packages/core` | Host-agnostic agent runtime: run loop, approval state machine, policy, compaction, model fallback, client event reducer. No database or HTTP. |
 | `packages/db` | Drizzle schema and migrations, Postgres store for the runtime, run leasing, ordered event log, secret encryption. |
-| `packages/tools` | MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
+| `packages/tools` | Gmail and Calendar, MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
 | `packages/evals` | Scenario harness (task + safety) with simulated users; `bun run evals`. |
 | `apps/server` | HTTP API, auth, SSE, worker. |
 | `apps/web` | Next.js UI. |

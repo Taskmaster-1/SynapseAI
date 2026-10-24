@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseModelRef } from "@synapse/core";
-import type { WebSearchConfig } from "@synapse/tools";
+import type { GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
 import { z } from "zod";
 
 const csv = z.string().transform((s) =>
@@ -54,8 +54,11 @@ const Env = z.object({
 
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  /** One Google OAuth app serves both "Sign in with Google" and the Gmail/Calendar integration. */
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** How often email triggers check for new mail. */
+  TRIGGER_POLL_SECONDS: z.coerce.number().int().min(30).default(120),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -82,8 +85,18 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         ? parsed.GOOGLE_GENERATIVE_AI_API_KEY
         : undefined;
 
+  const google: GoogleAppConfig | null =
+    parsed.GOOGLE_CLIENT_ID && parsed.GOOGLE_CLIENT_SECRET
+      ? {
+          clientId: parsed.GOOGLE_CLIENT_ID,
+          clientSecret: parsed.GOOGLE_CLIENT_SECRET,
+          publicUrl: parsed.PUBLIC_URL,
+        }
+      : null;
+
   return {
     ...parsed,
+    google,
     SYNAPSE_MODELS: models,
     SYNAPSE_SUMMARY_MODEL: summaryModel,
     secret,

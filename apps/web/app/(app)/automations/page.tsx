@@ -1,13 +1,33 @@
 "use client";
 
-import { ArrowRight, LoaderCircle, Pencil, Play, Plus, Repeat, Trash } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  Copy,
+  LoaderCircle,
+  Mail,
+  Pencil,
+  Play,
+  Plus,
+  Repeat,
+  RotateCw,
+  Trash,
+  Webhook,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { EmptyState, ErrorNote, Field, Page, PageHeader, Skeleton, Switch } from "@/components/ui";
-import { ApiError, type Automation, type AutomationInput, api, errorMessage } from "@/lib/api";
+import {
+  ApiError,
+  type Automation,
+  type AutomationInput,
+  type AutomationTrigger,
+  api,
+  errorMessage,
+} from "@/lib/api";
 import { describeCron, nextRuns, SCHEDULE_PRESETS } from "@/lib/cron";
 import { cx, formatDateTime, formatRelative } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -28,11 +48,12 @@ function humanSchedule(cron: string, tz: string) {
 
 export default function AutomationsPage() {
   const autos = useApi(() => api.automations());
-  const [editing, setEditing] = useState<Automation | "new" | null>(null);
+  const [editing, setEditing] = useState<Automation | "new" | "new-email" | null>(null);
   const list = autos.data?.automations;
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("new")) setEditing("new");
+    const q = new URLSearchParams(window.location.search);
+    if (q.has("new")) setEditing(q.get("new") === "email" ? "new-email" : "new");
   }, []);
 
   const upsert = (a: Automation) =>
@@ -48,9 +69,9 @@ export default function AutomationsPage() {
   return (
     <Page>
       <PageHeader
-        eyebrow="On a schedule"
+        eyebrow="Runs on its own"
         title="Automations"
-        description="Prompts that run on a schedule, each in its own task. Anything that needs your OK waits in the Inbox."
+        description="Prompts that run on a schedule, when an email arrives, or when another app calls a webhook. Anything that needs your OK waits in the Inbox."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
             <Plus />
@@ -68,15 +89,15 @@ export default function AutomationsPage() {
       ) : list.length === 0 ? (
         <EmptyState
           illustration={<SampleSchedule />}
-          title="Nothing scheduled yet"
+          title="Nothing running on its own yet"
           action={
             <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
               Create an automation
             </button>
           }
         >
-          A morning brief every weekday, a Friday summary of what shipped — set it once and it runs
-          on its own.
+          A morning brief every weekday, a draft reply for every customer email, a review for every
+          new pull request. Set it once and it runs on its own.
         </EmptyState>
       ) : (
         <ul className="space-y-3">
@@ -91,14 +112,15 @@ export default function AutomationsPage() {
       <Sheet
         open={editing !== null}
         onClose={() => setEditing(null)}
-        title={editing === "new" ? "New automation" : "Edit automation"}
+        title={typeof editing === "string" ? "New automation" : "Edit automation"}
         description="Runs as you, with your approval rules."
         width={520}
       >
         {editing !== null ? (
           <AutomationForm
-            key={editing === "new" ? "new" : editing.id}
-            initial={editing === "new" ? null : editing}
+            key={typeof editing === "string" ? editing : editing.id}
+            initial={typeof editing === "string" ? null : editing}
+            startWith={editing === "new-email" ? "gmail" : "schedule"}
             onCancel={() => setEditing(null)}
             onSaved={(a) => {
               upsert(a);
@@ -149,7 +171,11 @@ function AutomationCard({
         !a.enabled && "bg-surface/60",
       )}
     >
-      <ScheduleStub cron={a.schedule} enabled={a.enabled} />
+      {a.trigger.type === "schedule" ? (
+        <ScheduleStub cron={a.schedule} enabled={a.enabled} />
+      ) : (
+        <EventStub trigger={a.trigger} enabled={a.enabled} />
+      )}
       <div className="min-w-0 flex-1 p-5">
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
@@ -176,30 +202,29 @@ function AutomationCard({
             }
           />
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
-          <span className="inline-flex items-center gap-1.5 text-fg">
-            <Repeat className={a.enabled ? "text-accent" : "text-fg-faint"} />
-            {humanSchedule(a.schedule, a.timezone)}
-          </span>
-          <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
-            {a.schedule}
-          </code>
-        </div>
+        <TriggerLine automation={a} />
+        {a.lastError ? (
+          <p className="mt-2 text-13 text-danger" role="status">
+            {a.lastError}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-3.5 text-13">
-          <span className="text-fg-muted" title={formatDateTime(a.nextRunAt)}>
-            Next{" "}
-            <span className="text-fg">
-              {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
+          {a.trigger.type === "schedule" ? (
+            <span className="text-fg-muted" title={formatDateTime(a.nextRunAt)}>
+              Next{" "}
+              <span className="text-fg">
+                {a.enabled && a.nextRunAt ? formatRelative(a.nextRunAt) : "—"}
+              </span>
             </span>
-          </span>
+          ) : null}
           <span className="text-fg-muted" title={formatDateTime(a.lastRunAt)}>
             Last{" "}
-            {a.lastRunAt && a.chatId ? (
+            {a.lastRunAt && a.chatId && a.trigger.type === "schedule" ? (
               <Link href={`/t/${a.chatId}`} className="text-fg hover:underline">
                 {formatRelative(a.lastRunAt)}
               </Link>
             ) : (
-              <span className="text-fg">never</span>
+              <span className="text-fg">{a.lastRunAt ? formatRelative(a.lastRunAt) : "never"}</span>
             )}
           </span>
           <span className="ml-auto flex items-center gap-1.5">
@@ -240,11 +265,13 @@ function AutomationCard({
 
 function AutomationForm({
   initial,
+  startWith,
   onCancel,
   onSaved,
   onDeleted,
 }: {
   initial: Automation | null;
+  startWith: AutomationTrigger["type"];
   onCancel: () => void;
   onSaved: (a: Automation) => void;
   onDeleted: (id: string) => void;
@@ -252,7 +279,11 @@ function AutomationForm({
   const toast = useToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
-  const [schedule, setSchedule] = useState(initial?.schedule ?? SCHEDULE_PRESETS[0]!.cron);
+  const [kind, setKind] = useState<AutomationTrigger["type"]>(initial?.trigger.type ?? startWith);
+  const [query, setQuery] = useState(
+    initial?.trigger.type === "gmail" ? initial.trigger.query : "",
+  );
+  const [schedule, setSchedule] = useState(initial?.schedule || SCHEDULE_PRESETS[0]!.cron);
   const [timezone, setTimezone] = useState(initial?.timezone ?? localTimezone());
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);
@@ -270,10 +301,13 @@ function AutomationForm({
     setBusy(true);
     setError(null);
     setScheduleError(null);
+    const trigger: AutomationTrigger =
+      kind === "gmail" ? { type: "gmail", query: query.trim() } : { type: kind };
     const body: AutomationInput = {
       name: name.trim(),
       prompt: prompt.trim(),
-      schedule: schedule.trim(),
+      trigger,
+      ...(kind === "schedule" ? { schedule: schedule.trim() } : {}),
       timezone: timezone.trim() || "UTC",
       enabled,
     };
@@ -333,95 +367,108 @@ function AutomationForm({
           id="auto-prompt"
           className="input min-h-28 resize-y"
           required
-          placeholder="Summarise unread email and today's Linear issues. Flag anything urgent."
+          placeholder={
+            kind === "gmail"
+              ? "If it's a customer question, draft a reply in my tone. If it's a receipt, label it Receipts and archive it."
+              : kind === "webhook"
+                ? "Review this pull request: summarise the change and flag anything risky."
+                : "Summarise unread email and today's Linear issues. Flag anything urgent."
+          }
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
       </Field>
 
-      <fieldset>
-        <legend className="label">When</legend>
-        <div className="flex flex-wrap gap-1.5">
-          {SCHEDULE_PRESETS.map((p) => {
-            const on = schedule.trim() === p.cron;
-            return (
-              <button
-                key={p.cron}
-                type="button"
-                aria-pressed={on}
-                onClick={() => {
-                  setSchedule(p.cron);
+      <TriggerPicker value={kind} onChange={setKind} />
+
+      {kind === "gmail" ? <EmailTriggerFields query={query} onChange={setQuery} /> : null}
+      {kind === "webhook" ? <WebhookFields automation={initial} onRotated={onSaved} /> : null}
+
+      {kind === "schedule" ? (
+        <fieldset>
+          <legend className="label">When</legend>
+          <div className="flex flex-wrap gap-1.5">
+            {SCHEDULE_PRESETS.map((p) => {
+              const on = schedule.trim() === p.cron;
+              return (
+                <button
+                  key={p.cron}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => {
+                    setSchedule(p.cron);
+                    setScheduleError(null);
+                  }}
+                  className={cx(
+                    "h-8 rounded-full border px-3 text-13 transition-colors duration-150",
+                    on
+                      ? "border-accent bg-accent-soft text-accent"
+                      : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+                  )}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
+            <div>
+              <label htmlFor="auto-schedule" className="hint mb-1 block">
+                Cron (5 fields, ≥ 15 min apart)
+              </label>
+              <input
+                id="auto-schedule"
+                className="input font-mono text-13"
+                required
+                value={schedule}
+                aria-invalid={scheduleError ? true : undefined}
+                aria-describedby="auto-schedule-desc"
+                onChange={(e) => {
+                  setSchedule(e.target.value);
                   setScheduleError(null);
                 }}
-                className={cx(
-                  "h-8 rounded-full border px-3 text-13 transition-colors duration-150",
-                  on
-                    ? "border-accent bg-accent-soft text-accent"
-                    : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
-                )}
-              >
-                {p.label}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
-          <div>
-            <label htmlFor="auto-schedule" className="hint mb-1 block">
-              Cron (5 fields, ≥ 15 min apart)
-            </label>
-            <input
-              id="auto-schedule"
-              className="input font-mono text-13"
-              required
-              value={schedule}
-              aria-invalid={scheduleError ? true : undefined}
-              aria-describedby="auto-schedule-desc"
-              onChange={(e) => {
-                setSchedule(e.target.value);
-                setScheduleError(null);
-              }}
-            />
+              />
+            </div>
+            <div>
+              <label htmlFor="auto-tz" className="hint mb-1 block">
+                Timezone
+              </label>
+              <input
+                id="auto-tz"
+                className="input"
+                placeholder="Europe/Berlin"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+              />
+            </div>
           </div>
-          <div>
-            <label htmlFor="auto-tz" className="hint mb-1 block">
-              Timezone
-            </label>
-            <input
-              id="auto-tz"
-              className="input"
-              placeholder="Europe/Berlin"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-            />
-          </div>
-        </div>
-        <div id="auto-schedule-desc" className="mt-3 rounded-[10px] bg-sunken px-3.5 py-3">
-          {scheduleError ? (
-            <p role="alert" className="text-13 text-danger">
-              {scheduleError}
-            </p>
-          ) : preview === null ? (
-            <p className="text-13 text-fg-muted">That doesn't look like a valid schedule yet.</p>
-          ) : (
-            <>
-              <p className="text-13 font-medium text-fg">
-                {described ? `${described} (${tz})` : `Custom schedule (${tz})`}
+          <div id="auto-schedule-desc" className="mt-3 rounded-[10px] bg-sunken px-3.5 py-3">
+            {scheduleError ? (
+              <p role="alert" className="text-13 text-danger">
+                {scheduleError}
               </p>
-              <p className="eyebrow mt-2.5 mb-1">Next 3 runs</p>
-              <ol className="space-y-0.5 text-13 text-fg-muted">
-                {preview.length === 0 ? <li>Not within the next month.</li> : null}
-                {preview.map((d) => (
-                  <li key={d.getTime()} className="tabular flex items-center gap-2">
-                    <ArrowRight className="size-3 text-fg-faint" />
-                    {fmt(d)}
-                  </li>
-                ))}
-              </ol>
-            </>
-          )}
-        </div>
-      </fieldset>
+            ) : preview === null ? (
+              <p className="text-13 text-fg-muted">That doesn't look like a valid schedule yet.</p>
+            ) : (
+              <>
+                <p className="text-13 font-medium text-fg">
+                  {described ? `${described} (${tz})` : `Custom schedule (${tz})`}
+                </p>
+                <p className="eyebrow mt-2.5 mb-1">Next 3 runs</p>
+                <ol className="space-y-0.5 text-13 text-fg-muted">
+                  {preview.length === 0 ? <li>Not within the next month.</li> : null}
+                  {preview.map((d) => (
+                    <li key={d.getTime()} className="tabular flex items-center gap-2">
+                      <ArrowRight className="size-3 text-fg-faint" />
+                      {fmt(d)}
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )}
+          </div>
+        </fieldset>
+      ) : null}
 
       <div className="flex items-center justify-between rounded-[10px] border border-line px-3.5 py-3">
         <div>
@@ -525,6 +572,288 @@ function SampleSchedule() {
           "Unread email, today's Linear, anything urgent",
         )}
       </div>
+    </div>
+  );
+}
+
+const TRIGGERS: {
+  type: AutomationTrigger["type"];
+  label: string;
+  hint: string;
+  icon: typeof Repeat;
+}[] = [
+  {
+    type: "schedule",
+    label: "On a schedule",
+    hint: "Every weekday at 8, every Friday…",
+    icon: Repeat,
+  },
+  {
+    type: "gmail",
+    label: "When email arrives",
+    hint: "New mail in Gmail that matches",
+    icon: Mail,
+  },
+  {
+    type: "webhook",
+    label: "On a webhook",
+    hint: "GitHub, Linear, Stripe, Zapier…",
+    icon: Webhook,
+  },
+];
+
+function TriggerPicker({
+  value,
+  onChange,
+}: {
+  value: AutomationTrigger["type"];
+  onChange: (t: AutomationTrigger["type"]) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="label">Starts</legend>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {TRIGGERS.map((t) => {
+          const on = value === t.type;
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.type}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(t.type)}
+              className={cx(
+                "rounded-[12px] border px-3 py-2.5 text-left transition-colors duration-150",
+                on ? "border-accent bg-accent-soft" : "border-line hover:border-line-strong",
+              )}
+            >
+              <Icon className={cx("size-4", on ? "text-accent" : "text-fg-faint")} />
+              <span
+                className={cx("mt-1.5 block text-13 font-medium", on ? "text-accent" : "text-fg")}
+              >
+                {t.label}
+              </span>
+              <span className="mt-0.5 block text-12 leading-snug text-fg-muted">{t.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+const EMAIL_FILTERS = [
+  { label: "Everything new", q: "" },
+  { label: "Important", q: "is:important" },
+  { label: "From a domain", q: "from:@acme.com" },
+  { label: "Invoices", q: "subject:(invoice OR receipt)" },
+];
+
+function EmailTriggerFields({ query, onChange }: { query: string; onChange: (q: string) => void }) {
+  const integ = useApi(() => api.integrations());
+  const google = integ.data?.google;
+  const connected = google?.connection?.status === "active";
+  return (
+    <div className="space-y-3">
+      {google && !connected ? (
+        <div className="rounded-[10px] border border-attention/40 bg-attention/10 px-3.5 py-3 text-13 text-fg">
+          {google.available ? (
+            <>
+              Email triggers watch your Gmail.{" "}
+              <Link href="/connections" className="font-medium text-accent hover:underline">
+                Connect Google
+              </Link>{" "}
+              first.
+            </>
+          ) : (
+            <>Email triggers need Google set up on this server. See docs/google.md.</>
+          )}
+        </div>
+      ) : null}
+      <div>
+        <label htmlFor="auto-query" className="label">
+          Which emails? <span className="font-normal text-fg-muted">(Gmail search)</span>
+        </label>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {EMAIL_FILTERS.map((f) => (
+            <button
+              key={f.label}
+              type="button"
+              aria-pressed={query.trim() === f.q}
+              onClick={() => onChange(f.q)}
+              className={cx(
+                "h-8 rounded-full border px-3 text-13 transition-colors duration-150",
+                query.trim() === f.q
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <input
+          id="auto-query"
+          className="input font-mono text-13"
+          placeholder="Empty = every new email in your inbox"
+          value={query}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <p className="hint mt-1.5">
+          Checked every couple of minutes. Each new email becomes its own task. Mail already in your
+          inbox doesn't count, and emails you send never trigger it.
+        </p>
+      </div>
+      <SafetyNote>
+        The email is written by someone else, so these tasks can read freely but can't send, change
+        or delete anything without your sign-off, even where you've set "always allow".
+      </SafetyNote>
+    </div>
+  );
+}
+
+function WebhookFields({
+  automation,
+  onRotated,
+}: {
+  automation: Automation | null;
+  onRotated: (a: Automation) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const url = automation?.trigger.type === "webhook" ? automation.webhookUrl : null;
+  return (
+    <div className="space-y-3">
+      {url ? (
+        <div>
+          <p className="label">Webhook URL</p>
+          <CopyField value={url} />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <p className="hint">Anyone with this URL can start a task. Keep it secret.</p>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm shrink-0"
+              disabled={busy}
+              onClick={async () => {
+                if (!automation || !window.confirm("Make a new URL? The old one stops working."))
+                  return;
+                setBusy(true);
+                try {
+                  const res = await api.updateAutomation(automation.id, { rotateWebhook: true });
+                  onRotated(res.automation);
+                  toast("New webhook URL made", "success");
+                } catch (err) {
+                  toast(errorMessage(err), "error");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <RotateCw className="size-3.5" />
+              New URL
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="rounded-[10px] bg-sunken px-3.5 py-3 text-13 text-fg-muted">
+          You'll get a secret URL once it's saved. Point GitHub, Linear, Stripe, Zapier or any app
+          that sends webhooks at it. Each delivery starts its own task, with the payload attached.
+        </p>
+      )}
+      <SafetyNote>
+        Payloads come from outside, so these tasks can read freely but can't send, change or delete
+        anything without your sign-off.
+      </SafetyNote>
+    </div>
+  );
+}
+
+function SafetyNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex gap-2.5 border-l-2 border-accent pl-3 text-13 leading-relaxed text-fg-muted">
+      {children}
+    </p>
+  );
+}
+
+function CopyField({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-1.5 rounded-[10px] border border-line bg-sunken py-1 pr-1 pl-3">
+      <code className="min-w-0 flex-1 truncate font-mono text-12 text-fg">{value}</code>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm shrink-0"
+        onClick={() => {
+          void navigator.clipboard?.writeText(value).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+          });
+        }}
+      >
+        {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+function TriggerLine({ automation: a }: { automation: Automation }) {
+  const iconClass = a.enabled ? "text-accent" : "text-fg-faint";
+  if (a.trigger.type === "schedule")
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
+        <span className="inline-flex items-center gap-1.5 text-fg">
+          <Repeat className={iconClass} />
+          {humanSchedule(a.schedule, a.timezone)}
+        </span>
+        <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
+          {a.schedule}
+        </code>
+      </div>
+    );
+  if (a.trigger.type === "gmail")
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
+        <span className="inline-flex items-center gap-1.5 text-fg">
+          <Mail className={iconClass} />
+          When a new email arrives
+        </span>
+        {a.trigger.query ? (
+          <code className="rounded-[5px] bg-sunken px-1.5 py-px font-mono text-12 text-fg-muted">
+            {a.trigger.query}
+          </code>
+        ) : (
+          <span className="text-fg-muted">in your inbox</span>
+        )}
+      </div>
+    );
+  return (
+    <div className="mt-4 space-y-2 text-13">
+      <span className="inline-flex items-center gap-1.5 text-fg">
+        <Webhook className={iconClass} />
+        When the webhook is called
+      </span>
+      {a.webhookUrl ? <CopyField value={a.webhookUrl} /> : null}
+    </div>
+  );
+}
+
+/** The stub for event triggers: what it listens for instead of a time. */
+function EventStub({ trigger, enabled }: { trigger: AutomationTrigger; enabled: boolean }) {
+  const Icon = trigger.type === "gmail" ? Mail : Webhook;
+  return (
+    <div
+      aria-hidden="true"
+      className={cx(
+        "hidden w-[112px] shrink-0 flex-col items-center justify-center border-r border-dashed border-line-strong bg-sunken/60 px-3 text-center sm:flex",
+        !enabled && "opacity-60",
+      )}
+    >
+      <Icon className="size-7 text-fg" strokeWidth={1.5} />
+      <span className="mt-2 font-mono text-[10px] leading-tight tracking-[0.1em] text-fg-faint uppercase">
+        {trigger.type === "gmail" ? "On email" : "On webhook"}
+      </span>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { Cron } from "croner";
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, lte, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import { sendMessage } from "./runs";
 import { automations } from "./schema";
@@ -40,7 +40,13 @@ export async function fireDueAutomations(db: Db, now = new Date()): Promise<stri
       const [due] = await tx
         .select()
         .from(automations)
-        .where(and(eq(automations.enabled, true), lte(automations.nextRunAt, now)))
+        .where(
+          and(
+            eq(automations.enabled, true),
+            lte(automations.nextRunAt, now),
+            sql`${automations.trigger}->>'type' = 'schedule'`,
+          ),
+        )
         .orderBy(asc(automations.nextRunAt))
         .limit(1)
         .for("update", { skipLocked: true });
@@ -66,4 +72,37 @@ export async function fireDueAutomations(db: Db, now = new Date()): Promise<stri
     if (!runId) return fired;
     if (runId !== "skipped") fired.push(runId);
   }
+}
+
+/**
+ * Claims the gmail-triggered automations that are due a poll and pushes their next poll
+ * `intervalMs` out, so concurrent schedulers never poll the same automation twice.
+ */
+export async function claimDuePolls(
+  db: Db,
+  intervalMs: number,
+  now = new Date(),
+): Promise<(typeof automations.$inferSelect)[]> {
+  return db.transaction(async (tx) => {
+    const due = await tx
+      .select()
+      .from(automations)
+      .where(
+        and(
+          eq(automations.enabled, true),
+          lte(automations.nextRunAt, now),
+          sql`${automations.trigger}->>'type' = 'gmail'`,
+        ),
+      )
+      .orderBy(asc(automations.nextRunAt))
+      .limit(20)
+      .for("update", { skipLocked: true });
+    for (const row of due) {
+      await tx
+        .update(automations)
+        .set({ nextRunAt: new Date(now.getTime() + intervalMs) })
+        .where(eq(automations.id, row.id));
+    }
+    return due;
+  });
 }

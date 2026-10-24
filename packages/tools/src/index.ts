@@ -3,12 +3,17 @@ import type { Db, SecretBox } from "@synapse/db";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
 import { type WebSearchConfig, webFetchTool, webSearchTool } from "./builtin/web";
+import { calendarTools } from "./google/calendar";
+import { type GoogleAppConfig, GoogleClient } from "./google/client";
+import { gmailTools } from "./google/gmail";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 
 export * from "./builtin/knowledge";
 export { loadMemoryBlock } from "./builtin/memory";
 export { htmlToText, type WebSearchConfig } from "./builtin/web";
+export * from "./google/client";
+export { buildMime, type MessageSummary, newMessagesSince } from "./google/gmail";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
 export * from "./ssrf";
@@ -19,6 +24,8 @@ export interface ToolsetConfig {
   app: OAuthAppConfig;
   webSearch: WebSearchConfig | null;
   embedder: Embedder | null;
+  /** Set when the operator configured a Google OAuth app. */
+  google: GoogleAppConfig | null;
 }
 
 /**
@@ -33,6 +40,13 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     ...memoryTools(cfg.db),
     ...(cfg.webSearch ? [webSearchTool(cfg.webSearch)] : []),
   ];
+  if (cfg.google) {
+    const google = await GoogleClient.forUser(cfg.google, cfg.db, cfg.box, userId);
+    if (google) {
+      const client = async () => google;
+      builtin.push(...gmailTools(client), ...calendarTools(client));
+    }
+  }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {
     if (!registry.get(tool.name)) registry.add(tool);

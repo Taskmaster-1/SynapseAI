@@ -417,8 +417,8 @@ function WorksWith() {
               <span className="italic">server.</span>
             </p>
             <p className="mx-auto mt-6 max-w-[420px] text-[17px] text-paper/75">
-              GitHub, Linear, Notion, or the one your team built last week. Connect with OAuth, and
-              every tool is labelled by what it can do.
+              Gmail and Calendar are built in. Add GitHub, Linear, Notion, or the one your team
+              built last week. Every tool is labelled by what it can do.
             </p>
           </Reveal>
         </div>

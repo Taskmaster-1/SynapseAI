@@ -21,6 +21,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { log } from "./log";
 import { buildSystemPrompt } from "./prompt";
 import { RUNS_CHANNEL, type Services } from "./services";
+import { pollGmailTriggers } from "./triggers";
 
 const LEASE_MS = 60_000;
 const IDLE_POLL_MS = 5_000;
@@ -67,6 +68,13 @@ export class Worker {
       if (fired.length) log.info("automations fired", { count: fired.length });
     } catch (error) {
       log.error("automation scheduler failed", { error: String(error) });
+    }
+    try {
+      const fired = await pollGmailTriggers(this.s);
+      for (const runId of fired) await this.s.wake(runId);
+      if (fired.length) log.info("email triggers fired", { count: fired.length });
+    } catch (error) {
+      log.error("email trigger poll failed", { error: String(error) });
     }
   }
 
@@ -211,6 +219,8 @@ export class Worker {
         .where(
           and(eq(schema.connections.userId, run.userId), eq(schema.connections.status, "active")),
         );
+      if (toolset.registry.get("gmail_search"))
+        conns.unshift({ name: "Gmail and Google Calendar" });
       const system = buildSystemPrompt({
         userName: user?.name ?? "there",
         instructions: settings?.instructions ?? null,

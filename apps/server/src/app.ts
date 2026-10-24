@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import { type AppEnv, onError, requireUser } from "./http";
 import { documents, memories, policy, settings, usage } from "./routes/account";
-import { automations } from "./routes/automations";
+import { automations, hooks } from "./routes/automations";
 import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
+import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
 import { approvals, runs } from "./routes/runs";
 import type { Services } from "./services";
@@ -45,12 +46,15 @@ export function createApp(services: Services) {
         github: Boolean(config.GITHUB_CLIENT_ID),
         google: Boolean(config.GOOGLE_CLIENT_ID),
       },
+      integrations: { google: Boolean(config.google) },
       features: { webSearch: Boolean(config.webSearch), embeddings: Boolean(config.embedding) },
       models: config.SYNAPSE_MODELS,
     }),
   );
   app.get("/oauth/client-metadata.json", (c) => c.json(clientMetadataDocument(c)));
   app.on(["GET", "POST"], "/api/auth/*", (c) => services.auth.handler(c.req.raw));
+  // Public: authenticated by the secret token in the URL, not a session.
+  app.route("/api/hooks", hooks);
 
   const api = new Hono<AppEnv>();
   api.use(requireUser);
@@ -59,6 +63,8 @@ export function createApp(services: Services) {
   api.route("/approvals", approvals);
   api.route("/connections/oauth/callback", oauthCallback);
   api.route("/connections", connections);
+  api.route("/integrations/google/callback", googleCallback);
+  api.route("/integrations", integrations);
   api.route("/policy", policy);
   api.route("/memories", memories);
   api.route("/documents", documents);

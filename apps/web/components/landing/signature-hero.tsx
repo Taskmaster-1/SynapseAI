@@ -116,8 +116,8 @@ function Lede() {
         className="landing-rise max-w-[440px] text-[18px] leading-[1.5] text-fg-muted"
         style={{ "--d": "550ms" } as CSSProperties}
       >
-        Synapse is an open-source agent for GitHub, Linear, Notion and any MCP server. It reads on
-        its own. Anything that sends, changes or deletes waits for your signature.
+        Synapse is an open-source agent for Gmail, Calendar, GitHub and any MCP server. It starts
+        work on its own. Anything that sends, changes or deletes waits for your signature.
       </p>
       <div
         className="landing-rise mt-7 flex flex-wrap items-center gap-3"

@@ -34,7 +34,6 @@ await database.migrate();
 const { db } = database;
 const auth = createAuth(db, config);
 const box = await SecretBox.fromSecret(config.secret);
-void box;
 
 const existing = await db.select().from(schema.user).where(eq(schema.user.email, EMAIL));
 if (existing.length > 0) {
@@ -97,23 +96,24 @@ const INBOX = [
 ];
 
 const tools = new ToolRegistry([
+  tool("gmail_search", "read", "List recent emails.", obj({ query: { type: "string" } }), () => ({
+    type: "json",
+    value: INBOX,
+  })),
   tool(
-    "gmail__list_messages",
-    "read",
-    "List recent emails.",
-    obj({ query: { type: "string" } }),
-    () => ({ type: "json", value: INBOX }),
-  ),
-  tool(
-    "gmail__send_email",
+    "gmail_send",
     "send",
     "Send an email.",
-    obj({ to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, [
-      "to",
-      "body",
-    ]),
+    obj(
+      {
+        to: { type: "array", items: { type: "string" } },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
+      ["to", "body"],
+    ),
     () => ({ type: "text", value: "Sent." }),
-    (i) => `Email ${String(i.to)}: “${String(i.subject ?? "")}”`,
+    (i) => `Email ${[i.to].flat().join(", ")}: ${String(i.subject ?? "")}`,
   ),
   tool(
     "github__create_issue",
@@ -199,7 +199,7 @@ console.log("Seeding demo tasks:");
 await task("Go through my inbox and tell me what needs a reply", [
   {
     text: "Let me look at your recent email.",
-    toolCalls: [{ name: "gmail__list_messages", input: { query: "is:unread" }, id: "t1" }],
+    toolCalls: [{ name: "gmail_search", input: { query: "is:unread" }, id: "t1" }],
   },
   {
     text: [
@@ -276,9 +276,9 @@ await task("Reply to Bob that 3pm tomorrow works for me", [
     text: "Here's a draft reply to Bob:",
     toolCalls: [
       {
-        name: "gmail__send_email",
+        name: "gmail_send",
         input: {
-          to: "bob@acme.com",
+          to: ["bob@acme.com"],
           subject: "Re: Sync tomorrow?",
           body: "Hi Bob,\n\n3pm tomorrow works for me — talk then.\n\nAda",
         },
@@ -303,12 +303,25 @@ await db.insert(schema.automations).values({
   nextRunAt: nextRun("0 9 * * 1-5", "UTC"),
   lastRunAt: new Date(Date.now() - 20 * 3600_000),
 });
+const [hookChat] = await db
+  .insert(schema.chats)
+  .values({ userId, title: "Review new pull requests" })
+  .returning();
+await db.insert(schema.automations).values({
+  userId,
+  name: "Review new pull requests",
+  prompt: "Summarise the change, flag anything risky, and draft a review comment.",
+  trigger: { type: "webhook" },
+  chatId: hookChat!.id,
+  webhookSecret: await box.seal(crypto.randomUUID().replaceAll("-", "")),
+  lastRunAt: new Date(Date.now() - 3 * 3600_000),
+});
 await task(
   "[Scheduled: Morning brief]\n\nSummarise unread email and today's Linear issues. Flag anything urgent.",
   [
     {
       toolCalls: [
-        { name: "gmail__list_messages", input: {}, id: "b1" },
+        { name: "gmail_search", input: {}, id: "b1" },
         { name: "linear__list_issues", input: { team: "ENG" }, id: "b2" },
       ],
     },
@@ -361,7 +374,7 @@ await db.insert(schema.policyRules).values([
   {
     userId,
     position: 0,
-    tool: "gmail__send_email",
+    tool: "gmail_send",
     decision: "allow",
     when: [{ path: "to", op: "allEndWith", value: ["@acme.com"] }],
     note: "Internal email is fine",
