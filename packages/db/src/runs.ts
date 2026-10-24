@@ -10,14 +10,22 @@ export class NotFoundError extends Error {}
  * the chat history, every later run in that chat starts tainted. Messages left pending by
  * an earlier run that ended are moved in first, in order.
  */
-async function startRun(tx: Db, chatId: string, userId: string, trigger: string): Promise<string> {
+async function startRun(
+  tx: Db,
+  chatId: string,
+  userId: string,
+  trigger: string,
+  tainted = false,
+): Promise<string> {
   const [run] = await tx
     .insert(runs)
     .values({
       chatId,
       userId,
       trigger,
-      tainted: sql`exists (select 1 from runs r where r.chat_id = ${chatId} and r.tainted)`,
+      tainted: tainted
+        ? true
+        : sql`exists (select 1 from runs r where r.chat_id = ${chatId} and r.tainted)`,
     })
     .returning({ id: runs.id });
   const orphans = await tx
@@ -76,10 +84,12 @@ const ACTIVE = ["queued", "running", "waiting"] as const;
  *  - active run: the message is queued as a pending input and picked up at the next step.
  *    If the run is waiting on approvals, those are denied ("the user moved on") and the
  *    run is re-queued so it can respond to the new message.
+ *
+ * `tainted` marks the run for messages that carry third-party content (event triggers).
  */
 export async function sendMessage(
   db: Db,
-  args: { userId: string; chatId: string; content: string; trigger?: string },
+  args: { userId: string; chatId: string; content: string; trigger?: string; tainted?: boolean },
 ): Promise<{ runId: string; queued: "new_run" | "pending_input" | "skipped" }> {
   return db.transaction(async (tx) => {
     const [chat] = await tx
@@ -100,6 +110,7 @@ export async function sendMessage(
         chat.id,
         args.userId,
         args.trigger ?? "chat",
+        args.tainted,
       );
       await tx.insert(messages).values({
         chatId: chat.id,
@@ -113,6 +124,7 @@ export async function sendMessage(
     if (args.trigger === "schedule") return { runId: active.id, queued: "skipped" as const };
 
     await tx.insert(pendingInputs).values({ chatId: chat.id, content: args.content });
+    if (args.tainted) await tx.update(runs).set({ tainted: true }).where(eq(runs.id, active.id));
     if (active.status === "waiting") {
       await tx
         .update(toolCalls)
@@ -303,4 +315,28 @@ export async function releaseRun(
 /** Successful completion resets the attempt counter so later turns get a fresh budget. */
 export async function resetAttempts(db: Db, runId: string) {
   await db.update(runs).set({ attempts: 0 }).where(eq(runs.id, runId));
+}
+
+/**
+ * Starts a task in a fresh chat for one trigger event (a new email, a webhook call). The
+ * run starts tainted: the message carries third-party content, so nothing the agent does
+ * in it is auto-allowed beyond reads.
+ */
+export async function startTriggeredTask(
+  db: Db,
+  args: { userId: string; title: string; content: string; trigger: string },
+): Promise<{ chatId: string; runId: string }> {
+  return db.transaction(async (tx) => {
+    const [chat] = await tx
+      .insert(chats)
+      .values({ userId: args.userId, title: args.title.slice(0, 120) })
+      .returning({ id: chats.id });
+    const runId = await startRun(tx as unknown as Db, chat!.id, args.userId, args.trigger, true);
+    await tx.insert(messages).values({
+      chatId: chat!.id,
+      runId,
+      message: { role: "user", content: args.content },
+    });
+    return { chatId: chat!.id, runId };
+  });
 }

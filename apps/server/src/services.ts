@@ -67,6 +67,7 @@ export async function createServices(config: Config): Promise<Services> {
       app: { publicUrl: config.PUBLIC_URL, appName: "SynapseAI" },
       webSearch: config.webSearch,
       embedder: config.embedding ? createEmbedder(config.embedding) : null,
+      google: config.google,
     },
     wake: (runId) => database.notify(RUNS_CHANNEL, runId),
     close: async () => {

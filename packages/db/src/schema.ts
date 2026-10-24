@@ -301,6 +301,31 @@ export const connections = pgTable(
   (t) => [uniqueIndex("connections_user_name_idx").on(t.userId, t.name)],
 );
 
+/**
+ * First-party integrations (Google today). One row per user and provider; tokens are
+ * sealed with the server secret. Tools for these are built in, not served over MCP.
+ */
+export const integrations = pgTable(
+  "integrations",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<"google">().notNull(),
+    /** The account the user connected, e.g. their Google email address. */
+    account: text("account").notNull(),
+    status: text("status").$type<"active" | "needs_auth" | "error">().notNull(),
+    /** Sealed token JSON. */
+    secret: text("secret").notNull(),
+    scopes: text("scopes").notNull().default(""),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("integrations_user_provider_idx").on(t.userId, t.provider)],
+);
+
 // ── Knowledge & memory ─────────────────────────────────────────────────────
 
 export const memories = pgTable(
@@ -368,7 +393,27 @@ export const chunks = pgTable(
 
 // ── Automations ────────────────────────────────────────────────────────────
 
-/** A prompt that runs on a schedule in its own chat. Approvals land in the inbox. */
+/** What starts an automation. */
+export type AutomationTrigger =
+  /** Five-field cron in `schedule`. */
+  | { type: "schedule" }
+  /** New Gmail messages matching `query` (Gmail search syntax; empty = whole inbox). */
+  | { type: "gmail"; query: string }
+  /** POST to the automation's secret webhook URL. */
+  | { type: "webhook" };
+
+/** Poll state for event triggers. */
+export interface TriggerCursor {
+  /** Newest message time seen, in ms. */
+  after: number;
+  /** Message ids at exactly `after`, so ties are not fired twice. */
+  seen: string[];
+}
+
+/**
+ * A prompt that runs in its own chat when its trigger fires: on a schedule, on new email,
+ * or on a webhook. Approvals land in the inbox.
+ */
 export const automations = pgTable(
   "automations",
   {
@@ -378,14 +423,20 @@ export const automations = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     prompt: text("prompt").notNull(),
-    /** Five-field cron expression, evaluated in `timezone`. */
-    schedule: text("schedule").notNull(),
+    trigger: jsonb("trigger").$type<AutomationTrigger>().notNull().default({ type: "schedule" }),
+    /** Five-field cron expression, evaluated in `timezone`. Empty for event triggers. */
+    schedule: text("schedule").notNull().default(""),
     timezone: text("timezone").notNull().default("UTC"),
     enabled: boolean("enabled").notNull().default(true),
     chatId: text("chat_id")
       .notNull()
       .references(() => chats.id, { onDelete: "cascade" }),
+    /** Next fire (schedule) or next poll (gmail). */
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    cursor: jsonb("cursor").$type<TriggerCursor>(),
+    /** Sealed webhook token; the URL is /api/hooks/<id>/<token>. */
+    webhookSecret: text("webhook_secret"),
+    lastError: text("last_error"),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

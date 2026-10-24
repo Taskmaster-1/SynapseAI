@@ -15,8 +15,9 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 | Method | Path | Response |
 |---|---|---|
 | GET | `/api/health` | `{ ok: true }` |
-| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
+| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
 | GET | `/oauth/client-metadata.json` | OAuth client metadata document for MCP servers |
+| POST | `/api/hooks/:automationId/:token` | Starts a task for a webhook automation. Any body (JSON is pretty-printed for the agent, capped at 16 KB). `202 { ok, taskId }`; `404` for an unknown id or wrong token, `409` when paused, `413` over 256 KB, `429` over 60 per hour |
 
 ## Chats
 
@@ -77,6 +78,18 @@ Event types (`RunEvent` in `packages/core/src/types.ts`): `run.status`, `message
 | GET | `/api/connections/oauth/callback?code&state` | | redirects to `${WEB_URL}/connections?connected=<id>` or `?error=…` |
 | GET | `/api/connections/presets` | | `{ presets: { name, url, description, docs }[] }` — well-known remote MCP servers |
 
+## Integrations (built in)
+
+Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` on the server ([setup](google.md)).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null } }` |
+| POST | `/api/integrations/google/connect` | | `{ url }` — open it in the browser; Google redirects back to the callback |
+| GET | `/api/integrations/google/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=google` or `?error=<message>` |
+| DELETE | `/api/integrations/google` | | `204` — revokes the grant at Google and deletes the tokens |
+
 ## Policy
 
 | Method | Path | Body | Response |
@@ -121,13 +134,22 @@ for that provider. Available models come first, then newest. `updatedAt` is the 
 
 ## Automations
 
-Prompts that run on a schedule, each in its own chat. Anything that needs approval waits in
-the approvals inbox.
+Prompts that run when their trigger fires. Anything that needs approval waits in the
+approvals inbox.
+
+| `trigger` | Fires | Where it runs |
+|---|---|---|
+| `{ type: "schedule" }` | On the 5-field cron in `schedule` (≥ 15 min apart), in `timezone` | The automation's own chat |
+| `{ type: "gmail", query }` | For each new Gmail message matching `query` (Gmail search syntax; empty = inbox). Polled every `TRIGGER_POLL_SECONDS` (120). Mail you send and mail that was there before the trigger was created never fire it. | A new task per email |
+| `{ type: "webhook" }` | On `POST webhookUrl` | A new task per delivery |
+
+Email and webhook tasks start **tainted**: their first message carries third-party content,
+so no write, send or destructive call is auto-allowed, whatever your rules say.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/automations` | | `{ automations: { id, name, prompt, schedule, timezone, enabled, chatId, nextRunAt, lastRunAt }[] }` |
-| POST | `/api/automations` | `{ name, prompt, schedule, timezone?, enabled? }` — `schedule` is 5-field cron, ≥ 15 min apart | `{ automation }` (`422 invalid_schedule` with a message) |
-| PATCH | `/api/automations/:id` | partial of the above | `{ automation }` |
+| GET | `/api/automations` | | `{ automations: { id, name, prompt, trigger, schedule, timezone, enabled, chatId, nextRunAt, lastRunAt, lastError, webhookUrl }[] }` |
+| POST | `/api/automations` | `{ name, prompt, trigger?, schedule?, timezone?, enabled? }` — `trigger` defaults to schedule | `{ automation }` (`422 invalid_schedule`, `422 google_not_connected`) |
+| PATCH | `/api/automations/:id` | any of the above, plus `rotateWebhook: true` for a new URL; omitted fields keep their value | `{ automation }` |
 | DELETE | `/api/automations/:id` | | `204` |
 | POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now |

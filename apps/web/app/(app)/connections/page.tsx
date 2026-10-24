@@ -6,10 +6,12 @@ import {
   ExternalLink,
   KeyRound,
   LoaderCircle,
+  Mail,
   Plus,
   RefreshCw,
   Trash,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { Sheet } from "@/components/overlay";
@@ -29,7 +31,14 @@ import {
   Skeleton,
   Switch,
 } from "@/components/ui";
-import { api, type Connection, type ConnectionStatus, errorMessage, type Preset } from "@/lib/api";
+import {
+  api,
+  type Connection,
+  type ConnectionStatus,
+  errorMessage,
+  type GoogleIntegration,
+  type Preset,
+} from "@/lib/api";
 import { hostOf, humanize } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
@@ -62,6 +71,7 @@ export default function ConnectionsPage() {
   const toast = useToast();
   const conns = useApi(() => api.connections());
   const presets = useApi(() => api.presets());
+  const integrations = useApi(() => api.integrations());
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -71,8 +81,9 @@ export default function ConnectionsPage() {
     const q = new URLSearchParams(window.location.search);
     const connected = q.get("connected");
     const error = q.get("error");
-    if (connected) toast("Connection authorized", "success");
-    if (error) toast(`Authorization failed: ${error}`, "error");
+    if (connected === "google") toast("Google connected", "success");
+    else if (connected) toast("Connection authorized", "success");
+    if (error) toast(error.includes(" ") ? error : `Authorization failed: ${error}`, "error");
     if (q.has("add")) setAdding(true);
     if (connected || error || q.has("add")) router.replace("/connections");
   }, []);
@@ -99,9 +110,9 @@ export default function ConnectionsPage() {
   return (
     <Page wide>
       <PageHeader
-        eyebrow="Tools · MCP servers"
+        eyebrow="Tools"
         title="Connections"
-        description="MCP servers the agent can work in. Every tool has an effect — read, write, send or destructive — and your approval rules key off it."
+        description="Where the agent can work. Gmail and Calendar are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus />
@@ -109,6 +120,21 @@ export default function ConnectionsPage() {
           </button>
         }
       />
+      <section aria-labelledby="builtin-title" className="mb-10">
+        <h2 id="builtin-title" className="eyebrow mb-3">
+          Built in
+        </h2>
+        {integrations.data ? (
+          <GoogleCard
+            google={integrations.data.google}
+            onChange={() => void integrations.reload()}
+          />
+        ) : (
+          <Skeleton className="h-40 rounded-card" />
+        )}
+      </section>
+
+      <h2 className="eyebrow mb-3">MCP servers</h2>
       {conns.error ? <ErrorNote>{errorMessage(conns.error)}</ErrorNote> : null}
       {!list ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -593,5 +619,127 @@ function SampleConnections() {
         <BrandGlyph className="size-7" />
       </div>
     </div>
+  );
+}
+
+const GOOGLE_SETUP = "https://github.com/Taskmaster-1/SynapseAI/blob/main/docs/google.md";
+
+/** Gmail and Calendar, built in: one OAuth consent, no MCP server to run. */
+function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
+  const conn = google.connection;
+  const connected = conn?.status === "active";
+
+  async function connect() {
+    setBusy("connect");
+    try {
+      const { url } = await api.connectGoogle();
+      startOAuth(url);
+    } catch (err) {
+      toast(errorMessage(err), "error");
+      setBusy(null);
+    }
+  }
+
+  async function disconnect() {
+    if (
+      !window.confirm(
+        "Disconnect Google? The agent loses access to Gmail and Calendar, and email automations stop.",
+      )
+    )
+      return;
+    setBusy("disconnect");
+    try {
+      await api.disconnectGoogle();
+      toast("Google disconnected", "success");
+      onChange();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <article className="overflow-hidden rounded-[16px] border border-line bg-surface">
+      <div className="flex flex-wrap items-start gap-4 p-5">
+        <span className="flex -space-x-1.5">
+          <Monogram name="Gmail" size={40} className="ring-2 ring-surface" />
+          <Monogram name="Calendar" size={40} className="ring-2 ring-surface" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-serif text-[24px] leading-[1.1] text-fg">Gmail and Calendar</div>
+          <div className="mt-0.5 truncate text-13 text-fg-muted">
+            {conn
+              ? conn.account
+              : "Read and answer email, organise your inbox, book and move meetings."}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {conn ? <StatusPill status={conn.status} /> : null}
+          {!google.available ? (
+            <a href={GOOGLE_SETUP} target="_blank" rel="noreferrer" className="btn btn-sm">
+              Setup guide
+              <ExternalLink className="size-3.5" />
+            </a>
+          ) : connected ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm text-danger"
+              disabled={busy !== null}
+              onClick={() => void disconnect()}
+            >
+              {busy === "disconnect" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={busy !== null}
+              onClick={() => void connect()}
+            >
+              {busy === "connect" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+              {conn ? "Reconnect Google" : "Connect Google"}
+            </button>
+          )}
+        </div>
+      </div>
+      {conn?.lastError && !connected ? (
+        <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
+      ) : null}
+      {!google.available ? (
+        <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
+          This server has no Google app yet. Whoever runs it sets{" "}
+          <code className="font-mono text-12">GOOGLE_CLIENT_ID</code> and{" "}
+          <code className="font-mono text-12">GOOGLE_CLIENT_SECRET</code>; it takes about five
+          minutes.
+        </p>
+      ) : (
+        <div className="border-t border-dashed border-line px-5 py-4">
+          <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {google.tools.map((t) => (
+              <li key={t.name} className="flex items-center justify-between gap-3 text-13">
+                <span className={connected ? "text-fg" : "text-fg-muted"}>{t.title}</span>
+                <EffectPill effect={t.effect} />
+              </li>
+            ))}
+          </ul>
+          {connected ? (
+            <p className="mt-4 flex flex-wrap items-center gap-x-2 text-13 text-fg-muted">
+              <Mail className="size-3.5 text-accent" />
+              Let it act when mail arrives:
+              <Link
+                href="/automations?new=email"
+                className="font-medium text-accent hover:underline"
+              >
+                Create an email automation
+              </Link>
+            </p>
+          ) : null}
+        </div>
+      )}
+    </article>
   );
 }

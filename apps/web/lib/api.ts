@@ -278,11 +278,21 @@ export interface UsageDay {
   outputTokens: number;
 }
 
+export type AutomationTrigger =
+  | { type: "schedule" }
+  | { type: "gmail"; query: string }
+  | { type: "webhook" };
+
 export interface Automation {
   id: string;
   name: string;
   prompt: string;
+  trigger: AutomationTrigger;
+  /** Cron; empty for event triggers. */
   schedule: string;
+  /** Secret URL for webhook triggers. */
+  webhookUrl: string | null;
+  lastError: string | null;
   timezone: string;
   enabled: boolean;
   chatId: string | null;
@@ -293,9 +303,23 @@ export interface Automation {
 export interface AutomationInput {
   name: string;
   prompt: string;
-  schedule: string;
+  trigger?: AutomationTrigger;
+  schedule?: string;
   timezone?: string;
   enabled?: boolean;
+  rotateWebhook?: boolean;
+}
+
+export interface GoogleIntegration {
+  /** False when the server has no Google OAuth app configured. */
+  available: boolean;
+  tools: { name: string; effect: Effect; title: string }[];
+  connection: {
+    account: string;
+    status: "active" | "needs_auth" | "error";
+    lastError: string | null;
+    connectedAt: string;
+  } | null;
 }
 
 // ---------- Endpoints ----------
@@ -368,6 +392,9 @@ export const api = {
   searchDocuments: (q: string, signal?: AbortSignal) =>
     get<{ results: SearchResult[] }>(`/api/documents/search?q=${enc(q)}`, { signal }),
 
+  integrations: () => get<{ google: GoogleIntegration }>("/api/integrations"),
+  connectGoogle: () => post<{ url: string }>("/api/integrations/google/connect", {}),
+  disconnectGoogle: () => del("/api/integrations/google"),
   automations: () => get<{ automations: Automation[] }>("/api/automations"),
   createAutomation: (body: AutomationInput) =>
     post<{ automation: Automation }>("/api/automations", body),
