@@ -344,6 +344,51 @@ export const integrations = pgTable(
   (t) => [uniqueIndex("integrations_user_provider_idx").on(t.userId, t.provider)],
 );
 
+/**
+ * Slack, connected per user to approve from a DM. The bot token is sealed; the Slack user
+ * who installed it (`slackUserId` in `teamId`) is the only Slack identity that may act for
+ * this Synapse user.
+ */
+export const slackAccounts = pgTable(
+  "slack_accounts",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => user.id, { onDelete: "cascade" }),
+    teamId: text("team_id").notNull(),
+    teamName: text("team_name").notNull(),
+    slackUserId: text("slack_user_id").notNull(),
+    botUserId: text("bot_user_id"),
+    /** Sealed bot token (xoxb-…). */
+    botToken: text("bot_token").notNull(),
+    scopes: text("scopes").notNull().default(""),
+    status: text("status").$type<"active" | "error">().notNull(),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("slack_accounts_team_user_idx").on(t.teamId, t.slackUserId)],
+);
+
+/** The Slack DM sent about an approval, per recipient, so it can be updated once decided. */
+export const slackMessages = pgTable(
+  "slack_messages",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    toolCallId: text("tool_call_id").notNull(),
+    /** The Synapse user it was sent to. */
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    ts: text("ts").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.toolCallId, t.userId] })],
+);
+
 // ── Knowledge & memory ─────────────────────────────────────────────────────
 
 export const memories = pgTable(

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { parseModelRef } from "@synapse/core";
 import type { GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
 import { z } from "zod";
+import type { SlackAppConfig } from "./notify/slack-api";
 
 const csv = z.string().transform((s) =>
   s
@@ -57,6 +58,10 @@ const Env = z.object({
   /** One Google OAuth app serves both "Sign in with Google" and the Gmail/Calendar integration. */
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** Slack app for approving from Slack (docs/slack.md). All three are needed. */
+  SLACK_CLIENT_ID: z.string().optional(),
+  SLACK_CLIENT_SECRET: z.string().optional(),
+  SLACK_SIGNING_SECRET: z.string().optional(),
   /** How often email triggers check for new mail. */
   TRIGGER_POLL_SECONDS: z.coerce.number().int().min(30).default(120),
 });
@@ -94,9 +99,20 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         }
       : null;
 
+  const slack: SlackAppConfig | null =
+    parsed.SLACK_CLIENT_ID && parsed.SLACK_CLIENT_SECRET && parsed.SLACK_SIGNING_SECRET
+      ? {
+          clientId: parsed.SLACK_CLIENT_ID,
+          clientSecret: parsed.SLACK_CLIENT_SECRET,
+          signingSecret: parsed.SLACK_SIGNING_SECRET,
+          publicUrl: parsed.PUBLIC_URL,
+        }
+      : null;
+
   return {
     ...parsed,
     google,
+    slack,
     SYNAPSE_MODELS: models,
     SYNAPSE_SUMMARY_MODEL: summaryModel,
     secret,

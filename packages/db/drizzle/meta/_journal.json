@@ -43,6 +43,13 @@
       "when": 1792891462021,
       "tag": "0005_approval_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792891725994,
+      "tag": "0006_slack",
+      "breakpoints": true
     }
   ]
 }

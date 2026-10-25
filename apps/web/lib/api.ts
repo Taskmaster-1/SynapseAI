@@ -328,6 +328,18 @@ export interface GoogleIntegration {
   } | null;
 }
 
+export interface SlackIntegration {
+  /** False when the server has no Slack app configured. */
+  available: boolean;
+  connection: {
+    /** Workspace name. */
+    team: string;
+    status: "active" | "error";
+    lastError: string | null;
+    connectedAt: string;
+  } | null;
+}
+
 // ---------- Endpoints ----------
 
 export interface SessionUser {
@@ -416,9 +428,13 @@ export const api = {
   searchDocuments: (q: string, signal?: AbortSignal) =>
     get<{ results: SearchResult[] }>(`/api/documents/search?q=${enc(q)}`, { signal }),
 
-  integrations: () => get<{ google: GoogleIntegration }>("/api/integrations"),
+  integrations: () =>
+    get<{ google: GoogleIntegration; slack: SlackIntegration }>("/api/integrations"),
   connectGoogle: () => post<{ url: string }>("/api/integrations/google/connect", {}),
   disconnectGoogle: () => del("/api/integrations/google"),
+  connectSlack: () => post<{ url: string }>("/api/integrations/slack/connect", {}),
+  testSlack: () => post<{ ok: true }>("/api/integrations/slack/test", {}),
+  disconnectSlack: () => del("/api/integrations/slack"),
   automations: () => get<{ automations: Automation[] }>("/api/automations"),
   createAutomation: (body: AutomationInput) =>
     post<{ automation: Automation }>("/api/automations", body),

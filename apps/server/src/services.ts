@@ -3,6 +3,7 @@ import { createEmbedder, type ToolsetConfig } from "@synapse/tools";
 import { type Auth, createAuth } from "./auth";
 import type { Config } from "./config";
 import { Notifier } from "./notify/notifier";
+import { SlackChannel } from "./notify/slack";
 
 export const RUNS_CHANNEL = "synapse_runs";
 
@@ -47,6 +48,8 @@ export interface Services {
   toolset: ToolsetConfig;
   /** Tells people about approvals through push, Slack and other channels. */
   notifier: Notifier;
+  /** Set when a Slack app is configured; also registered with the notifier. */
+  slack: SlackChannel | null;
   /** Wakes idle workers (on any instance) when a run becomes runnable. */
   wake: (runId: string) => Promise<void>;
   close: () => Promise<void>;
@@ -73,11 +76,14 @@ export async function createServices(config: Config): Promise<Services> {
       google: config.google,
     },
     notifier: new Notifier(() => services),
+    slack: config.slack ? new SlackChannel(() => services) : null,
     wake: (runId) => database.notify(RUNS_CHANNEL, runId),
     close: async () => {
+      await services.slack?.settled();
       await stop();
       await database.close();
     },
   };
+  if (services.slack) services.notifier.add(services.slack);
   return services;
 }

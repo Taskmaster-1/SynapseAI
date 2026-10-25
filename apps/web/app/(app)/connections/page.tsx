@@ -38,6 +38,7 @@ import {
   errorMessage,
   type GoogleIntegration,
   type Preset,
+  type SlackIntegration,
 } from "@/lib/api";
 import { hostOf, humanize } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -82,6 +83,7 @@ export default function ConnectionsPage() {
     const connected = q.get("connected");
     const error = q.get("error");
     if (connected === "google") toast("Google connected", "success");
+    else if (connected === "slack") toast("Slack connected", "success");
     else if (connected) toast("Connection authorized", "success");
     if (error) toast(error.includes(" ") ? error : `Authorization failed: ${error}`, "error");
     if (q.has("add")) setAdding(true);
@@ -125,10 +127,16 @@ export default function ConnectionsPage() {
           Built in
         </h2>
         {integrations.data ? (
-          <GoogleCard
-            google={integrations.data.google}
-            onChange={() => void integrations.reload()}
-          />
+          <div className="space-y-3">
+            <GoogleCard
+              google={integrations.data.google}
+              onChange={() => void integrations.reload()}
+            />
+            <SlackCard
+              slack={integrations.data.slack}
+              onChange={() => void integrations.reload()}
+            />
+          </div>
         ) : (
           <Skeleton className="h-40 rounded-card" />
         )}
@@ -740,6 +748,138 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
           ) : null}
         </div>
       )}
+    </article>
+  );
+}
+
+const SLACK_SETUP = "https://github.com/Taskmaster-1/SynapseAI/blob/main/docs/slack.md";
+
+function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<"connect" | "disconnect" | "test" | null>(null);
+  const conn = slack.connection;
+  const connected = conn?.status === "active";
+
+  async function connect() {
+    setBusy("connect");
+    try {
+      const { url } = await api.connectSlack();
+      startOAuth(url);
+    } catch (err) {
+      toast(errorMessage(err), "error");
+      setBusy(null);
+    }
+  }
+
+  async function run(label: "disconnect" | "test", fn: () => Promise<void>) {
+    setBusy(label);
+    try {
+      await fn();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const disconnect = () => {
+    if (!window.confirm("Disconnect Slack? Approvals stop arriving as Slack messages.")) return;
+    void run("disconnect", async () => {
+      await api.disconnectSlack();
+      toast("Slack disconnected", "success");
+      onChange();
+    });
+  };
+
+  const test = () =>
+    void run("test", async () => {
+      await api.testSlack();
+      toast("Sent. Check your Slack messages from Synapse.", "success");
+      onChange();
+    });
+
+  return (
+    <article className="overflow-hidden rounded-[16px] border border-line bg-surface">
+      <div className="flex flex-wrap items-start gap-4 p-5">
+        <Monogram name="Slack" size={40} />
+        <div className="min-w-0 flex-1">
+          <div className="font-serif text-[24px] leading-[1.1] text-fg">Slack</div>
+          <div className="mt-0.5 truncate text-13 text-fg-muted">
+            {conn
+              ? `${conn.team} workspace`
+              : "Approve or deny from a Slack message when a task needs your OK."}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {conn ? <StatusPill status={conn.status} /> : null}
+          {!slack.available ? (
+            <a href={SLACK_SETUP} target="_blank" rel="noreferrer" className="btn btn-sm">
+              Setup guide
+              <ExternalLink className="size-3.5" />
+            </a>
+          ) : conn ? (
+            <>
+              {connected ? (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busy !== null}
+                  onClick={test}
+                >
+                  {busy === "test" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+                  Send a test DM
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={busy !== null}
+                  onClick={() => void connect()}
+                >
+                  {busy === "connect" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+                  Reconnect Slack
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm text-danger"
+                disabled={busy !== null}
+                onClick={disconnect}
+              >
+                {busy === "disconnect" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={busy !== null}
+              onClick={() => void connect()}
+            >
+              {busy === "connect" ? <LoaderCircle className="anim-spin size-3.5" /> : null}
+              Connect Slack
+            </button>
+          )}
+        </div>
+      </div>
+      {conn?.lastError && !connected ? (
+        <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
+      ) : null}
+      <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
+        {!slack.available ? (
+          <>
+            This server has no Slack app yet. Whoever runs it creates one from the manifest in the
+            guide and sets <code className="font-mono text-12">SLACK_CLIENT_ID</code>,{" "}
+            <code className="font-mono text-12">SLACK_CLIENT_SECRET</code> and{" "}
+            <code className="font-mono text-12">SLACK_SIGNING_SECRET</code>.
+          </>
+        ) : connected ? (
+          "When a task needs your OK, Synapse messages you in Slack. Only you can press its buttons, and the message updates wherever you decide."
+        ) : (
+          "Synapse messages you directly; it can't read your channels or messages."
+        )}
+      </p>
     </article>
   );
 }

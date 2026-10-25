@@ -15,8 +15,9 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 | Method | Path | Response |
 |---|---|---|
 | GET | `/api/health` | `{ ok: true }` |
-| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
+| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
 | GET | `/oauth/client-metadata.json` | OAuth client metadata document for MCP servers |
+| POST | `/api/slack/interactions` | Slack's interactivity endpoint (button clicks). Authenticated by Slack's `X-Slack-Signature` over the raw body, rejected (`401`) when wrong or more than 5 minutes old. Answers `200` at once and decides in the background |
 | POST | `/api/hooks/:automationId/:token` | Starts a task for a webhook automation. Any body (JSON is pretty-printed for the agent, capped at 16 KB). `202 { ok, taskId }`; `404` for an unknown id or wrong token, `409` when paused, `413` over 256 KB, `429` over 60 per hour |
 
 ## Chats
@@ -87,10 +88,17 @@ Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null } }` |
+| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null }, slack: { available, connection: { team, status, lastError, connectedAt } \| null } }` |
 | POST | `/api/integrations/google/connect` | | `{ url }` — open it in the browser; Google redirects back to the callback |
 | GET | `/api/integrations/google/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=google` or `?error=<message>` |
 | DELETE | `/api/integrations/google` | | `204` — revokes the grant at Google and deletes the tokens |
+| POST | `/api/integrations/slack/connect` | | `{ url }` — Slack's install page; needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET` ([setup](slack.md)), else `422 not_configured` |
+| GET | `/api/integrations/slack/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=slack` or `?error=<message>` |
+| POST | `/api/integrations/slack/test` | | `{ ok: true }` — sends a test DM (`422 slack_not_connected`, `422 slack_error`) |
+| DELETE | `/api/integrations/slack` | | `204` — revokes the bot token at Slack and deletes it |
+
+With Slack connected, each approval addressed to you arrives as a Slack DM with Approve and
+Deny; decisions made there are recorded with `decidedVia: "slack"`.
 
 ## Policy
 
