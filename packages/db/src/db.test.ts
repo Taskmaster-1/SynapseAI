@@ -13,7 +13,7 @@ import {
   requestCancel,
   sendMessage,
 } from "./runs";
-import { automations, chats, pendingInputs, runs, user } from "./schema";
+import { automations, chats, pendingInputs, runs, toolCalls, user } from "./schema";
 import { PgRunStore } from "./store";
 
 let database: Database;
@@ -67,7 +67,7 @@ describe("postgres store", () => {
     await expect(
       decideToolCall(database.db, { userId: "u2", runId, toolCallId: "c1", approved: true }),
     ).rejects.toThrow();
-    await decideToolCall(database.db, {
+    const { executeAfter } = await decideToolCall(database.db, {
       userId: "u1",
       runId,
       toolCallId: "c1",
@@ -78,8 +78,20 @@ describe("postgres store", () => {
       decideToolCall(database.db, { userId: "u1", runId, toolCallId: "c1", approved: true }),
     ).rejects.toBeInstanceOf(ConflictError);
 
+    // A send waits out the default 10s undo window; the run is queued for when it ends.
     const [queued] = await database.db.select().from(runs).where(eq(runs.id, runId));
     expect(queued!.status).toBe("queued");
+    expect(executeAfter!.getTime() - Date.now()).toBeGreaterThan(8_000);
+    expect(queued!.leaseExpiresAt).toEqual(executeAfter);
+    expect(await runAgent(opts)).toBe("running");
+    expect((await store.listToolCalls(runId))[0]).toMatchObject({
+      status: "approved",
+      executeAfter: executeAfter!.toISOString(),
+    });
+    await database.db
+      .update(toolCalls)
+      .set({ executeAfter: new Date(Date.now() - 1) })
+      .where(eq(toolCalls.runId, runId));
 
     expect(await runAgent(opts)).toBe("completed");
     const calls = await store.listToolCalls(runId);

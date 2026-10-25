@@ -39,10 +39,12 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/runs/:id/events?after=<seq>` | | **SSE** stream (see below) |
-| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown }` | `204`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card) |
+| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before |
+| POST | `/api/runs/:id/tool-calls/:toolCallId/undo` | | `204`; `409` once the window has ended ("Too late to undo: it already ran."). The call is denied and the agent is told the user undid it |
+| POST | `/api/runs/:id/tool-calls/decisions` | `{ decisions: { toolCallId, approved, reason?, input? }[] }` (`input`: approve with edited input, same as the single route) | `{ executeAfter: Record<toolCallId, string> }` for calls that opened an undo window; all or nothing in one transaction: `409` if any call is no longer awaiting approval, `400` on duplicate ids. The run is re-queued once when nothing is left awaiting |
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
-| GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, createdAt }[] }` (audit view) |
+| GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, executeAfter, createdAt }[] }` (audit view) |
 | GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user |
 
 ### Event stream
@@ -96,6 +98,16 @@ Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 |---|---|---|---|
 | GET | `/api/policy` | | `{ defaults: PolicyDefaults, rules: PolicyRule[] }` |
 | PUT | `/api/policy` | `{ defaults, rules }` (rules in priority order) | same |
+| GET | `/api/policy/suggestions` | | `{ suggestions: RuleSuggestion[] }` |
+| POST | `/api/policy/suggestions/:id/accept` | | `{ defaults, rules }` — adds the allow rule first; `404` if not a current suggestion |
+| POST | `/api/policy/suggestions/:id/dismiss` | | `204` — hidden for good |
+
+Suggestions ("approvals that learn") come from your own decisions on non-read actions over the
+last 60 days: at least 5 unedited approvals of a tool, and no denial or edit among its last 10
+decisions. Recipients that all share one (non-public) email domain become an `allEndWith`
+condition; a single `repo`/`project`/`channel`/`team` becomes `equals`. Sending and
+destructive tools are only suggested with a condition. Learned rules are ordinary rules; a
+task that read outside content still asks.
 
 ## Memory
 
@@ -119,7 +131,7 @@ Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean> }` — keys are write-only |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
 | GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |

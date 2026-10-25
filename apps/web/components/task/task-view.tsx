@@ -7,12 +7,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard, ApprovalReceipt } from "@/components/approval/approval-card";
+import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
+import { LearnPrompt } from "@/components/approval/learned-rules";
 import { Menu } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { EmptyState, Skeleton, StatusPill, TaintShield, taskStatus } from "@/components/ui";
 import { ApiError, api, errorMessage, type TaskRun } from "@/lib/api";
 import { cx, formatCost } from "@/lib/format";
-import { denialReason, receiptPhase, type ToolPart } from "@/lib/steps";
+import { denialReason, isUndone, receiptPhase, type ToolPart } from "@/lib/steps";
 import { useMedia } from "@/lib/use-media";
 import { useRunStream } from "@/lib/use-run-stream";
 import { useWorkspace } from "@/lib/workspace";
@@ -28,6 +30,8 @@ interface Decided {
   approved: boolean;
   reason?: string;
   edited: boolean;
+  /** Set when an approved send or delete waits out its undo window. */
+  executeAfter?: string | null;
 }
 
 const PANEL_KEY = "synapse-run-panel";
@@ -227,16 +231,63 @@ export function TaskView({ taskId }: { taskId: string }) {
   function renderAsked(part: ToolPart, message: UiMessage) {
     const runId = message.runId ?? run?.id;
     const d = decided[part.toolCallId];
+    const executeAfter = d?.executeAfter ?? part.executeAfter;
+    const undo =
+      runId && executeAfter && (part.status === "approved" || part.status === "awaiting_approval")
+        ? { runId, toolCallId: part.toolCallId, executeAfter }
+        : null;
     if (d) {
       return (
-        <ApprovalReceipt
-          name={part.name}
-          preview={part.preview}
-          effect={part.effect}
-          approved={d.approved}
-          reason={d.reason}
-          edited={d.edited}
-          phase={part.status === "awaiting_approval" ? "running" : receiptPhase(part)}
+        <>
+          <ApprovalReceipt
+            name={part.name}
+            preview={part.preview}
+            effect={part.effect}
+            approved={d.approved}
+            reason={d.reason}
+            edited={d.edited}
+            undo={undo}
+            undone={isUndone(part.output)}
+            phase={part.status === "awaiting_approval" ? "running" : receiptPhase(part)}
+          />
+          {d.approved && !d.edited ? <LearnPrompt tool={part.name} className="mt-2" /> : null}
+        </>
+      );
+    }
+    // Two or more open asks from one step sign off together, as one checklist shown in
+    // place of the first. Plans keep their own card (they are a checklist already).
+    const group = runId
+      ? message.parts.filter(
+          (p): p is ToolPart =>
+            p.type === "tool" &&
+            p.status === "awaiting_approval" &&
+            p.name !== PLAN_TOOL &&
+            !decided[p.toolCallId],
+        )
+      : [];
+    if (runId && group.length >= 2 && group.some((p) => p.toolCallId === part.toolCallId)) {
+      if (group[0]!.toolCallId !== part.toolCallId) return null;
+      return (
+        <ApprovalBatch
+          key={group.map((p) => p.toolCallId).join()}
+          runId={runId}
+          items={group}
+          tainted={tainted}
+          glow={initialAwaiting !== null && group.some((p) => !initialAwaiting.has(p.toolCallId))}
+          onDecided={(outcome) => {
+            setDecided((m) => ({
+              ...m,
+              ...Object.fromEntries(
+                Object.entries(outcome).map(([id, approved]) => [id, { approved, edited: false }]),
+              ),
+            }));
+            follow(runId);
+            void reloadWorkspace();
+          }}
+          onConflict={() => {
+            void snapshot();
+            void reloadWorkspace();
+          }}
         />
       );
     }
@@ -248,6 +299,8 @@ export function TaskView({ taskId }: { taskId: string }) {
           effect={part.effect}
           approved={part.status !== "denied"}
           reason={denialReason(part.output)}
+          undo={undo}
+          undone={isUndone(part.output)}
           phase={receiptPhase(part)}
         />
       );

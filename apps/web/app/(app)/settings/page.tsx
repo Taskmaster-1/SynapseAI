@@ -18,7 +18,7 @@ import {
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
-import { ErrorNote, Field, Page, PageHeader, Pill, Skeleton } from "@/components/ui";
+import { ErrorNote, Field, Page, PageHeader, Pill, Segmented, Skeleton } from "@/components/ui";
 import {
   api,
   errorMessage,
@@ -290,7 +290,34 @@ function General({ settings, save }: { settings: Settings; save: SaveFn }) {
           setText(settings.instructions ?? "");
         }}
       />
+      <UndoWindow settings={settings} save={save} />
     </div>
+  );
+}
+
+const UNDO_OPTIONS = ["0", "5", "10", "30"] as const;
+
+/** Saved on click, like the theme: there's nothing to draft. */
+function UndoWindow({ settings, save }: { settings: Settings; save: SaveFn }) {
+  const [value, setValue] = useState(String(settings.undoSeconds));
+  useEffect(() => setValue(String(settings.undoSeconds)), [settings.undoSeconds]);
+  return (
+    <Field
+      label="Undo window for sends and deletes"
+      hint="After you approve an email or a delete, it waits this long before it runs, with an Undo button."
+      className="border-t border-line pt-6"
+    >
+      <Segmented<string>
+        label="Undo window"
+        value={value}
+        options={UNDO_OPTIONS.map((v) => ({ value: v, label: v === "0" ? "Off" : `${v}s` }))}
+        onChange={async (v) => {
+          const prev = value;
+          setValue(v);
+          if (!(await save({ undoSeconds: Number(v) }))) setValue(prev);
+        }}
+      />
+    </Field>
   );
 }
 

@@ -231,8 +231,11 @@ function AgentMessage({
               return <Reasoning key={b.key} text={b.text} live={streaming && isLast} />;
             case "steps":
               return <StepGroup key={b.key} parts={b.parts} onOpenStep={onOpenStep} />;
-            case "asked":
-              return <div key={b.key}>{renderAsked(b.part, message)}</div>;
+            case "asked": {
+              // Null when another block already shows this call (a grouped checklist).
+              const node = renderAsked(b.part, message);
+              return node == null ? null : <div key={b.key}>{node}</div>;
+            }
           }
           return null;
         })}

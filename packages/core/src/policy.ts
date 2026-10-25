@@ -25,7 +25,13 @@ export type ArgMatcher =
   | { path: string; op: "in"; value: JSONValue[] }
   /** Every string at `path` (scalar or array) ends with one of `value`. Handy for email domains. */
   | { path: string; op: "allEndWith"; value: string[] }
-  | { path: string; op: "matches"; value: string };
+  | { path: string; op: "matches"; value: string }
+  /**
+   * Every email address anywhere in the input (to, cc, bcc, attendees, any field) ends with
+   * one of `value`, and there is at least one. `path` is ignored. Safer than `allEndWith` on
+   * `to` alone, which says nothing about a `bcc` the agent adds.
+   */
+  | { path: string; op: "emailsEndWith"; value: string[] };
 
 export interface PolicyDefaults {
   read: Decision;
@@ -143,7 +149,9 @@ function escapeRegExp(s: string): string {
 }
 
 function matchesAll(matchers: ArgMatcher[] | undefined, input: JSONValue): boolean {
-  return (matchers ?? []).every((m) => matches(m, getPath(input, m.path)));
+  return (matchers ?? []).every((m) =>
+    matches(m, m.op === "emailsEndWith" ? input : getPath(input, m.path)),
+  );
 }
 
 function matches(m: ArgMatcher, value: JSONValue | undefined): boolean {
@@ -163,6 +171,13 @@ function matches(m: ArgMatcher, value: JSONValue | undefined): boolean {
         )
       );
     }
+    case "emailsEndWith": {
+      const emails = emailsIn(value);
+      return (
+        emails.length > 0 &&
+        emails.every((e) => m.value.some((suffix) => e.endsWith(suffix.toLowerCase())))
+      );
+    }
     case "matches":
       return (
         typeof value === "string" &&
@@ -172,6 +187,20 @@ function matches(m: ArgMatcher, value: JSONValue | undefined): boolean {
 }
 
 const MAX_MATCH_INPUT = 10_000;
+const EMAIL = /[^\s@<>"',;:()[\]]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
+
+/** Every email address in any string anywhere in a value, lowercased. */
+export function emailsIn(value: JSONValue | undefined): string[] {
+  const out: string[] = [];
+  const walk = (v: JSONValue | undefined) => {
+    if (typeof v === "string") {
+      for (const m of v.slice(0, MAX_MATCH_INPUT).matchAll(EMAIL)) out.push(m[0].toLowerCase());
+    } else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  walk(value);
+  return out;
+}
 const MAX_PATTERN = 500;
 
 /**

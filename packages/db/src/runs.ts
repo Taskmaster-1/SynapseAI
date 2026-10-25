@@ -1,7 +1,8 @@
+import { type Effect, type PlanGrant, UNDO_DENIAL } from "@synapse/core";
 import type { JSONValue } from "ai";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
-import { chats, messages, pendingInputs, runs, toolCalls } from "./schema";
+import { chats, messages, pendingInputs, runs, toolCalls, userSettings } from "./schema";
 
 export class NotFoundError extends Error {}
 
@@ -147,23 +148,106 @@ export async function sendMessage(
   });
 }
 
+export const DEFAULT_UNDO_SECONDS = 10;
+export const MAX_UNDO_SECONDS = 60;
+
+/**
+ * Seconds a person-approved call waits, with an Undo, before it runs. Only actions that
+ * reach other people or can't be taken back (send, destructive) wait; 0 means run now.
+ * Calls auto-allowed by policy never go through here.
+ */
+export function undoDelay(
+  effect: Effect,
+  settings: { undoSeconds?: number | null } | null | undefined,
+): number {
+  if (effect !== "send" && effect !== "destructive") return 0;
+  const seconds = settings?.undoSeconds ?? DEFAULT_UNDO_SECONDS;
+  return Math.max(0, Math.min(MAX_UNDO_SECONDS, Math.floor(seconds)));
+}
+
+/** Opens the undo window on an approved call. Uses the database clock, like undo does. */
+export async function startUndoWindow(
+  tx: Db,
+  runId: string,
+  toolCallId: string,
+  seconds: number,
+): Promise<Date | null> {
+  if (seconds <= 0) return null;
+  const [row] = await tx
+    .update(toolCalls)
+    .set({ executeAfter: sql`now() + (${seconds}::int * interval '1 second')` })
+    .where(
+      and(
+        eq(toolCalls.runId, runId),
+        eq(toolCalls.id, toolCallId),
+        eq(toolCalls.status, "approved"),
+      ),
+    )
+    .returning({ executeAfter: toolCalls.executeAfter });
+  return row?.executeAfter ?? null;
+}
+
+/**
+ * When a waiting run is re-queued: null if a worker can make progress now, otherwise the
+ * end of the earliest undo window (so no worker picks the run up early).
+ */
+export async function runnableAt(tx: Db, runId: string): Promise<Date | null> {
+  const [row] = await tx
+    .select({
+      ready: sql<boolean>`coalesce(bool_or(${toolCalls.executeAfter} is null or ${toolCalls.executeAfter} <= now()), true)`,
+      next: sql<string | Date | null>`min(${toolCalls.executeAfter})`,
+    })
+    .from(toolCalls)
+    .where(and(eq(toolCalls.runId, runId), eq(toolCalls.status, "approved")));
+  return !row || row.ready || !row.next ? null : new Date(row.next);
+}
+
+export interface ToolCallDecision {
+  toolCallId: string;
+  approved: boolean;
+  reason?: string;
+  editedInput?: JSONValue;
+}
+
+export interface DecisionOutcome {
+  /** End of the undo window each approval opened, by tool call id (only calls that wait). */
+  executeAfter: Record<string, Date>;
+  /** The run was re-queued (no approvals left)... */
+  requeued: boolean;
+  /** ...and no worker may take it before this time (null: now). */
+  runnableAt: Date | null;
+}
+
 /**
  * Approves or denies one awaiting tool call. Compare-and-set on status and owner, so a
  * double click, a replayed request or another user's id is a no-op (ConflictError).
- * When no approvals remain, the run is re-queued.
+ * Approving a send or destructive action opens the user's undo window (`executeAfter`).
+ * When no approvals remain, the run is re-queued, for after the window if it must wait.
  */
 export async function decideToolCall(
   db: Db,
-  args: {
-    userId: string;
-    runId: string;
-    toolCallId: string;
-    approved: boolean;
-    reason?: string;
-    editedInput?: JSONValue;
-  },
-): Promise<void> {
-  await db.transaction(async (tx) => {
+  args: { userId: string; runId: string } & ToolCallDecision,
+): Promise<{ executeAfter: Date | null; requeued: boolean; runnableAt: Date | null }> {
+  const { userId, runId, ...decision } = args;
+  const outcome = await decideToolCalls(db, { userId, runId, decisions: [decision] });
+  return {
+    executeAfter: outcome.executeAfter[decision.toolCallId] ?? null,
+    requeued: outcome.requeued,
+    runnableAt: outcome.runnableAt,
+  };
+}
+
+/**
+ * Decides several awaiting calls of one run at once, all or nothing: if any call is not
+ * awaiting approval (already decided, someone else's, unknown), nothing changes and a
+ * ConflictError is thrown. Each approved send or destructive call opens its undo window.
+ * The run is re-queued once, when none remain awaiting.
+ */
+export async function decideToolCalls(
+  db: Db,
+  args: { userId: string; runId: string; decisions: ToolCallDecision[] },
+): Promise<DecisionOutcome> {
+  return db.transaction(async (tx) => {
     const [run] = await tx
       .select({ id: runs.id, status: runs.status })
       .from(runs)
@@ -171,48 +255,136 @@ export async function decideToolCall(
       .for("update");
     if (!run) throw new NotFoundError("run not found");
 
-    const updated = await tx
-      .update(toolCalls)
-      .set({
-        status: args.approved ? "approved" : "denied",
-        decidedBy: args.userId,
-        decidedAt: new Date(),
-        ...(args.approved && args.editedInput !== undefined
-          ? { input: args.editedInput, inputEdited: true }
-          : {}),
-        ...(args.approved
-          ? {}
-          : {
-              output: {
-                type: "denied" as const,
-                reason: args.reason
-                  ? `The user denied this action: ${args.reason}`
-                  : "The user denied this action.",
-              },
-            }),
-      })
-      .where(
-        and(
-          eq(toolCalls.runId, run.id),
-          eq(toolCalls.id, args.toolCallId),
-          eq(toolCalls.userId, args.userId),
-          eq(toolCalls.status, "awaiting_approval"),
-        ),
-      )
-      .returning({ id: toolCalls.id });
-    if (updated.length === 0) throw new ConflictError("this action is no longer awaiting approval");
+    const [settings] = await tx
+      .select({ undoSeconds: userSettings.undoSeconds })
+      .from(userSettings)
+      .where(eq(userSettings.userId, args.userId));
+
+    const executeAfter: Record<string, Date> = {};
+    for (const d of args.decisions) {
+      const updated = await tx
+        .update(toolCalls)
+        .set({
+          status: d.approved ? "approved" : "denied",
+          decidedBy: args.userId,
+          decidedAt: new Date(),
+          ...(d.approved && d.editedInput !== undefined
+            ? { input: d.editedInput, inputEdited: true }
+            : {}),
+          ...(d.approved
+            ? {}
+            : {
+                output: {
+                  type: "denied" as const,
+                  reason: d.reason
+                    ? `The user denied this action: ${d.reason}`
+                    : "The user denied this action.",
+                },
+              }),
+        })
+        .where(
+          and(
+            eq(toolCalls.runId, run.id),
+            eq(toolCalls.id, d.toolCallId),
+            eq(toolCalls.userId, args.userId),
+            eq(toolCalls.status, "awaiting_approval"),
+          ),
+        )
+        .returning({ id: toolCalls.id, effect: toolCalls.effect });
+      if (updated.length === 0)
+        throw new ConflictError("this action is no longer awaiting approval");
+      if (d.approved) {
+        const seconds = undoDelay(updated[0]!.effect, settings);
+        const at = await startUndoWindow(tx as unknown as Db, run.id, d.toolCallId, seconds);
+        if (at) executeAfter[d.toolCallId] = at;
+      }
+    }
 
     const [{ remaining } = { remaining: 0 }] = await tx
       .select({ remaining: sql<number>`count(*)::int` })
       .from(toolCalls)
       .where(and(eq(toolCalls.runId, run.id), eq(toolCalls.status, "awaiting_approval")));
     if (remaining === 0 && run.status === "waiting") {
+      const at = await runnableAt(tx as unknown as Db, run.id);
       await tx
         .update(runs)
-        .set({ status: "queued", leaseExpiresAt: null })
+        .set({ status: "queued", leaseExpiresAt: at })
         .where(eq(runs.id, run.id));
+      return { executeAfter, requeued: true, runnableAt: at };
     }
+    return { executeAfter, requeued: false, runnableAt: null };
   });
+}
+
+/**
+ * Undoes an approved call while its undo window is open: compare-and-set approved → denied
+ * only while `execute_after` is still in the future (database clock). The worker's own
+ * approved → executing transition is the other side of the race, so exactly one wins.
+ * A parked run is re-queued at once so the agent can respond.
+ */
+export async function undoToolCall(
+  db: Db,
+  args: { userId: string; runId: string; toolCallId: string },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [run] = await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(and(eq(runs.id, args.runId), eq(runs.userId, args.userId)))
+      .for("update");
+    if (!run) throw new NotFoundError("run not found");
+
+    const undone = await tx
+      .update(toolCalls)
+      .set({
+        status: "denied",
+        decidedAt: new Date(),
+        output: { type: "denied" as const, reason: UNDO_DENIAL },
+      })
+      .where(
+        and(
+          eq(toolCalls.runId, run.id),
+          eq(toolCalls.id, args.toolCallId),
+          eq(toolCalls.userId, args.userId),
+          eq(toolCalls.status, "approved"),
+          sql`${toolCalls.executeAfter} > now()`,
+        ),
+      )
+      .returning({ id: toolCalls.id });
+    if (undone.length === 0) {
+      const [call] = await tx
+        .select({ status: toolCalls.status })
+        .from(toolCalls)
+        .where(
+          and(
+            eq(toolCalls.runId, run.id),
+            eq(toolCalls.id, args.toolCallId),
+            eq(toolCalls.userId, args.userId),
+          ),
+        );
+      if (!call) throw new NotFoundError("action not found");
+      throw new ConflictError(
+        call.status === "denied"
+          ? "Nothing to undo: this action won't run."
+          : "Too late to undo: it already ran.",
+      );
+    }
+
+    // Only a run no worker holds: never hand a leased run to a second worker.
+    await tx
+      .update(runs)
+      .set({ leaseExpiresAt: await runnableAt(tx as unknown as Db, run.id) })
+      .where(and(eq(runs.id, run.id), eq(runs.status, "queued"), isNull(runs.leaseOwner)));
+  });
+}
+
+/** Adds grants from an approved plan to the run; `propose_plan` calls this when it runs. */
+export async function addPlanGrants(db: Db, runId: string, grants: PlanGrant[]): Promise<void> {
+  if (grants.length === 0) return;
+  await db
+    .update(runs)
+    .set({ planGrants: sql`${runs.planGrants} || ${JSON.stringify(grants)}::jsonb` })
+    .where(eq(runs.id, runId));
 }
 
 export async function requestCancel(
@@ -225,10 +397,11 @@ export async function requestCancel(
     .where(
       and(eq(runs.id, args.runId), eq(runs.userId, args.userId), inArray(runs.status, [...ACTIVE])),
     )
-    .returning({ id: runs.id, status: runs.status });
+    .returning({ id: runs.id, status: runs.status, leaseOwner: runs.leaseOwner });
   if (!run) throw new ConflictError("run is not active");
-  // A paused run has no worker; queue it so a worker records the cancellation.
-  if (run.status === "waiting") {
+  // A paused run has no worker; queue it so a worker records the cancellation. That includes
+  // a run parked on an undo window, which would otherwise only stop when the window ends.
+  if (run.status === "waiting" || (run.status === "queued" && run.leaseOwner === null)) {
     await db
       .update(runs)
       .set({ status: "queued", leaseExpiresAt: null })

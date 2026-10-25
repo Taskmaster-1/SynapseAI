@@ -49,6 +49,7 @@ function toRecord(r: ToolCallRow): ToolCallRecord {
     output: r.output,
     decidedBy: r.decidedBy,
     preview: r.preview,
+    executeAfter: r.executeAfter?.toISOString() ?? null,
   };
 }
 
@@ -85,6 +86,7 @@ export class PgRunStore implements RunStore {
       costUsd: r.costUsd,
       error: r.error,
       cancelRequested: r.cancelRequested,
+      planGrants: r.planGrants,
     };
   }
 
@@ -157,7 +159,7 @@ export class PgRunStore implements RunStore {
         .returning();
       if (args.toolCalls.length > 0) {
         await tx.insert(toolCalls).values(
-          args.toolCalls.map((c) => ({
+          args.toolCalls.map(({ executeAfter: _undo, ...c }) => ({
             ...c,
             runId: args.runId,
             userId: run!.userId,

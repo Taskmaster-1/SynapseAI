@@ -21,6 +21,7 @@ import {
   toModelOutput,
 } from "./context";
 import { costUsd, isRetryable, type ModelSpec } from "./models";
+import { hashInput, PLAN_GRANT_REASON } from "./plan";
 import { evaluatePolicy } from "./policy";
 import type { EventSink, RunStore } from "./store";
 import type { ToolDefinition, ToolRegistry } from "./tools";
@@ -64,6 +65,9 @@ export class RunInterruptedError extends Error {
 
 const NEW_MESSAGE_DENIAL = "The user sent a new message instead of approving this action.";
 
+/** What the model is told when the person undoes an approved action inside its undo window. */
+export const UNDO_DENIAL = "The user undid this action before it ran.";
+
 export interface RunAgentOptions {
   runId: string;
   store: RunStore;
@@ -81,10 +85,33 @@ export interface RunAgentOptions {
 
 const TERMINAL: ToolCallStatus[] = ["succeeded", "failed", "denied", "unknown"];
 
+/** How long until this approved call's undo window ends; 0 when it may run now. */
+export function undoRemainingMs(call: Pick<ToolCallRecord, "executeAfter">, now = Date.now()) {
+  if (!call.executeAfter) return 0;
+  return Math.max(0, Date.parse(call.executeAfter) - now);
+}
+
+/**
+ * When `runAgent` returns "running", the run is parked on an undo window: this is how long
+ * until the earliest approved call may run. The caller re-queues the run for then.
+ */
+export function nextUndoWaitMs(calls: ToolCallRecord[], now = Date.now()): number {
+  let wait = 0;
+  for (const c of calls) {
+    if (c.status !== "approved") continue;
+    const ms = undoRemainingMs(c, now);
+    if (ms > 0 && (wait === 0 || ms < wait)) wait = ms;
+  }
+  return wait;
+}
+
 /**
  * Advances a run until it completes, fails, is cancelled, or pauses for approvals.
  * Safe to call again at any point (after a crash, an approval, or a new message):
  * all progress lives in the store, nothing is held in memory between calls.
+ *
+ * Returns "running" when an approved action is still inside its undo window: nothing more
+ * can happen until it ends, so the caller should come back after `nextUndoWaitMs`.
  */
 export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
   const limits = { ...DEFAULT_LIMITS, ...opts.limits };
@@ -127,6 +154,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunStatus> {
         if (stillAwaiting && !(await store.hasPendingInputs(run.chatId))) return "waiting";
         await setStatus("running");
         continue;
+      }
+      if (pending === "delayed") {
+        run = await store.getRun(runId);
+        if (run.cancelRequested === "now") return await cancel(opts, run, setStatus);
+        return "running";
       }
       if (run.cancelRequested === "after_step") return await cancel(opts, run, setStatus);
 
@@ -231,7 +263,7 @@ async function settleToolCalls(
   run: RunRecord,
   limits: RuntimeLimits,
   signal: AbortSignal,
-): Promise<"waiting" | "settled"> {
+): Promise<"waiting" | "delayed" | "settled"> {
   const calls = await opts.store.listToolCalls(run.id);
 
   // Crash recovery: a call left "executing" was interrupted. Reads are safe to repeat;
@@ -256,15 +288,18 @@ async function settleToolCalls(
   if (calls.some((c) => c.status === "awaiting_approval")) return "waiting";
 
   const approved = calls.filter((c) => c.status === "approved");
-  const reads = approved.filter((c) => c.effect === "read");
-  const writes = approved.filter((c) => c.effect !== "read");
+  const reads = approved.filter((c) => c.effect === "read" && undoRemainingMs(c) === 0);
+  const writes = approved.filter((c) => !reads.includes(c));
   await Promise.all(reads.map((c) => execute(opts, run, c, limits, signal)));
 
   // Writes proposed in the same step as an untrusted read were judged before the run was
-  // tainted. Re-judge them now; anything auto-allowed goes back to the user.
+  // tainted. Re-judge them now; anything auto-allowed goes back to the user. Steps of an
+  // approved plan stay allowed: the user signed off on that exact input.
   if (run.tainted && reads.length > 0) {
     let asked = false;
-    for (const c of writes.filter((w) => w.decision === "allow")) {
+    for (const c of writes.filter(
+      (w) => w.decision === "allow" && w.decisionReason !== PLAN_GRANT_REASON,
+    )) {
       const reason =
         "This step read untrusted content, so this action needs your approval before it runs.";
       if (
@@ -297,8 +332,19 @@ async function settleToolCalls(
     }
   }
 
+  // Writes run in the order the model proposed them. One still inside its undo window holds
+  // back the rest, so a later write never overtakes an earlier one.
   for (const c of writes) {
     if (signal.aborted) break;
+    if (undoRemainingMs(c) > 0) {
+      await opts.events.emit(run.id, {
+        type: "tool.status",
+        toolCallId: c.id,
+        status: "approved",
+        executeAfter: c.executeAfter ?? null,
+      });
+      return "delayed";
+    }
     await execute(opts, run, c, limits, signal);
   }
 
@@ -520,6 +566,8 @@ async function streamOneStep(
 
   const policy = await store.getPolicy(run.userId);
   const toolCalls: Omit<ToolCallRecord, "messageId" | "runId">[] = [];
+  const grants = run.planGrants.map((g) => ({ ...g }));
+  let grantsUsed = false;
   for (const part of content) {
     if (part.type !== "tool-call") continue;
     const def = opts.tools.get(part.toolName);
@@ -543,7 +591,7 @@ async function streamOneStep(
       });
       continue;
     }
-    const verdict = evaluatePolicy(
+    let verdict = evaluatePolicy(
       {
         tool: def.name,
         effect: def.effect,
@@ -554,6 +602,17 @@ async function streamOneStep(
       policy.rules,
       policy.defaults,
     );
+    // A call matching a step of an approved plan, exactly, was already signed off by the
+    // user: it runs without asking again, even in a tainted run. Block rules still win.
+    if (verdict.decision !== "block" && grants.some((g) => !g.usedBy && g.tool === def.name)) {
+      const hash = await hashInput(input);
+      const grant = grants.find((g) => !g.usedBy && g.tool === def.name && g.inputHash === hash);
+      if (grant) {
+        grant.usedBy = part.toolCallId;
+        grantsUsed = true;
+        verdict = { decision: "allow", reason: PLAN_GRANT_REASON, ruleId: null };
+      }
+    }
     const status: ToolCallStatus =
       verdict.decision === "allow"
         ? "approved"
@@ -573,6 +632,9 @@ async function streamOneStep(
     });
   }
 
+  // Spend grants before recording the calls: a crash in between costs a grant (the call
+  // asks instead), never lets one grant cover two calls.
+  if (grantsUsed) await store.updateRun(run.id, { planGrants: grants });
   const stored = await store.appendAssistantStep({
     id: messageId,
     chatId: run.chatId,

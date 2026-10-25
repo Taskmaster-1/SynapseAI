@@ -6,6 +6,7 @@ import { ChevronRight, ShieldAlert, User, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { approvalTitle } from "@/components/approval/approval-card";
 import { PayloadView } from "@/components/approval/payload";
+import { useTimeLeft } from "@/components/approval/undo-window";
 import { EffectPill, Monogram, StepStatusIcon, Tabs } from "@/components/ui";
 import type { TaskRun } from "@/lib/api";
 import {
@@ -18,7 +19,14 @@ import {
   prettyJson,
   splitToolName,
 } from "@/lib/format";
-import { denialReason, policySummary, type Step, stepsOf, taintStepId } from "@/lib/steps";
+import {
+  denialReason,
+  isUndone,
+  policySummary,
+  type Step,
+  stepsOf,
+  taintStepId,
+} from "@/lib/steps";
 
 export type PanelTab = "activity" | "details";
 
@@ -154,6 +162,19 @@ function ActivityTimeline({
   );
 }
 
+/** The step's status, with a live countdown while an approved send waits out its undo window. */
+function StepStatusText({ part: p }: { part: Step["part"] }) {
+  const left = useTimeLeft(p.status === "approved" ? p.executeAfter : null);
+  if (left > 0)
+    return (
+      <span className="tabular-nums">
+        {p.effect === "send" ? "Sending" : "Running"} in {Math.ceil(left / 1000)}s
+      </span>
+    );
+  if (isUndone(p.output)) return <>Undone</>;
+  return <>{STATUS_TEXT[p.status] ?? p.status}</>;
+}
+
 function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; focused: boolean }) {
   const p = step.part;
   const [open, setOpen] = useState(focused);
@@ -193,7 +214,7 @@ function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; fo
                     ["failed", "denied"].includes(p.status) && "text-danger",
                   )}
                 >
-                  {STATUS_TEXT[p.status] ?? p.status}
+                  <StepStatusText part={p} />
                 </span>
                 {p.decision === "ask" &&
                 p.status !== "awaiting_approval" &&

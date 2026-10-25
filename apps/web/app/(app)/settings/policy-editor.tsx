@@ -4,7 +4,7 @@ import type { ArgMatcher, Decision, Effect, PolicyDefaults, PolicyRule } from "@
 import { GripVertical, Plus, ShieldAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
-import { EffectPill, ErrorNote, Segmented, Skeleton } from "@/components/ui";
+import { EffectPill, ErrorNote, Pill, Segmented, Skeleton } from "@/components/ui";
 import { api, errorMessage, type Policy } from "@/lib/api";
 import { cx, humanToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -12,6 +12,7 @@ import { useApi } from "@/lib/use-api";
 const EFFECTS: Effect[] = ["read", "write", "send", "destructive"];
 const OPS: { op: ArgMatcher["op"]; label: string; hint: string }[] = [
   { op: "allEndWith", label: "ends with", hint: "@acme.com, @acme.io" },
+  { op: "emailsEndWith", label: "every email address ends with", hint: "@acme.com" },
   { op: "equals", label: "is", hint: "main" },
   { op: "in", label: "is one of", hint: "a, b, c" },
   { op: "matches", label: "matches", hint: "^release/" },
@@ -57,7 +58,7 @@ function toDraft(rule: PolicyRule): DraftRule {
       raw:
         m.op === "matches"
           ? m.value
-          : m.op === "allEndWith"
+          : m.op === "allEndWith" || m.op === "emailsEndWith"
             ? m.value.join(", ")
             : m.op === "in"
               ? m.value.map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ")
@@ -75,6 +76,11 @@ const splitList = (raw: string) =>
     .filter(Boolean);
 
 function toMatcher(m: DraftMatcher, where: string): ArgMatcher {
+  if (m.op === "emailsEndWith") {
+    const value = splitList(m.raw);
+    if (value.length === 0) throw new Error(`${where}: give at least one ending`);
+    return { path: "*", op: "emailsEndWith", value };
+  }
   const path = m.path.trim();
   if (!path) throw new Error(`${where}: say which field the condition checks`);
   switch (m.op) {
@@ -389,13 +395,15 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
                           className="inline-flex flex-wrap items-center gap-x-2 gap-y-2"
                         >
                           <span>and</span>
-                          <Token
-                            label="Field"
-                            mono
-                            value={m.path}
-                            placeholder="to"
-                            onChange={(v) => updateMatcher(i, k, { path: v })}
-                          />
+                          {m.op === "emailsEndWith" ? null : (
+                            <Token
+                              label="Field"
+                              mono
+                              value={m.path}
+                              placeholder="to"
+                              onChange={(v) => updateMatcher(i, k, { path: v })}
+                            />
+                          )}
                           <select
                             aria-label="Condition"
                             value={m.op}
@@ -436,6 +444,11 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
                       />
                     </div>
                     <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {r.note.startsWith("Learned:") ? (
+                        <Pill tone="ok" title="Added from your approvals. Remove it any time.">
+                          Learned
+                        </Pill>
+                      ) : null}
                       {r.tool && !/[*?]/.test(r.tool) ? (
                         <span className="text-12 text-fg-faint">{humanToolName(r.tool)}</span>
                       ) : r.tool ? (

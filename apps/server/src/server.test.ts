@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { SeqEvent } from "@synapse/core";
 import { type ScriptedStep, scriptedModel } from "@synapse/core/testing";
 import { schema } from "@synapse/db";
+import { eq } from "drizzle-orm";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { createServices, type Services } from "./services";
@@ -66,6 +67,8 @@ async function sse(cookie: string, runId: string, after = 0): Promise<SeqEvent[]
     headers: { cookie },
   });
   expect(res.headers.get("content-type")).toContain("text/event-stream");
+  // Compressing proxies must pass events through as they are written.
+  expect(res.headers.get("cache-control")).toContain("no-transform");
   const text = await res.text();
   return text
     .split("\n")
@@ -164,7 +167,7 @@ test("policy block, approvals inbox and decisions over HTTP", async () => {
         json: { approved: true, input: { note: "likes green tea" } },
       })
     ).status,
-  ).toBe(204);
+  ).toBe(200);
   expect((await grace(path, { method: "POST", json: { approved: true } })).status).toBe(409);
 
   await worker.processNow(runId);
@@ -342,6 +345,152 @@ test("edited approvals are re-checked against block rules; unsafe patterns are r
   expect(res.status).toBe(422);
 });
 
+const ASK_MEMORY = {
+  defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+  rules: [{ tool: "memory_save", decision: "ask" }],
+};
+const notes = (call: ReturnType<typeof api>) =>
+  call("/api/memories").then((r) =>
+    (r.json!.memories as { content: string }[]).map((m) => m.content).sort(),
+  );
+
+test("batch decisions: several calls in one step, decided atomically", async () => {
+  const cookie = await signUp("batch@example.com");
+  const me = api(cookie);
+  const other = api(await signUp("batch-eve@example.com"));
+  await me("/api/policy", { method: "PUT", json: ASK_MEMORY });
+  script([
+    {
+      toolCalls: [
+        { name: "memory_save", input: { note: "one" }, id: "b1" },
+        { name: "memory_save", input: { note: "two" }, id: "b2" },
+        { name: "memory_save", input: { note: "three" }, id: "b3" },
+      ],
+    },
+    { text: "Saved what you approved." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "save 3" } });
+  const runId = json!.runId;
+  await worker.processNow(runId);
+  expect((await me("/api/approvals")).json!.approvals).toHaveLength(3);
+
+  const path = `/api/runs/${runId}/tool-calls/decisions`;
+  const decisions = [
+    { toolCallId: "b1", approved: true },
+    { toolCallId: "b2", approved: true, input: { note: "two, edited" } },
+    { toolCallId: "b3", approved: false, reason: "not this one" },
+  ];
+  // Another user's run is invisible; duplicates and unknown ids change nothing.
+  expect((await other(path, { method: "POST", json: { decisions } })).status).toBe(404);
+  expect(
+    (
+      await me(path, {
+        method: "POST",
+        json: { decisions: [decisions[0], { toolCallId: "b1", approved: false }] },
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await me(path, {
+        method: "POST",
+        json: { decisions: [decisions[0], { toolCallId: "nope", approved: true }] },
+      })
+    ).status,
+  ).toBe(409);
+  expect((await me("/api/approvals")).json!.approvals).toHaveLength(3);
+
+  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(200);
+  expect((await me(`/api/runs/${runId}`)).json!.run.status).toBe("queued");
+  // A second submit (double click, replay) conflicts.
+  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(409);
+
+  await worker.processNow(runId);
+  const detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("completed");
+  expect(
+    detail.json!.toolCalls.map((c: { id: string; status: string }) => [c.id, c.status]),
+  ).toEqual([
+    ["b1", "succeeded"],
+    ["b2", "succeeded"],
+    ["b3", "denied"],
+  ]);
+  expect(await notes(me)).toEqual(["one", "two, edited"]);
+  // Re-queued once: one pause, then straight through to the end.
+  const statuses = (await sse(cookie, runId)).flatMap((e) =>
+    e.type === "run.status" ? [e.status] : [],
+  );
+  expect(statuses).toEqual(["running", "waiting", "running", "completed"]);
+});
+
+test("propose_plan: approve with a step removed; the kept call runs, the other asks", async () => {
+  const me = api(await signUp("plan@example.com"));
+  await me("/api/policy", { method: "PUT", json: ASK_MEMORY });
+  const keep = { tool: "memory_save", input: { note: "likes tea" }, why: "You said so." };
+  const drop = { tool: "memory_save", input: { note: "likes coffee" }, why: "A guess." };
+  script([
+    {
+      toolCalls: [
+        {
+          name: "propose_plan",
+          input: { summary: "Save two notes", steps: [keep, drop] },
+          id: "plan1",
+        },
+      ],
+    },
+    {
+      toolCalls: [
+        { name: "memory_save", input: { note: "likes tea" }, id: "k1" },
+        { name: "memory_save", input: { note: "likes coffee" }, id: "u1" },
+      ],
+    },
+    { text: "Saved the note you approved." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "save notes" } });
+  const runId = json!.runId;
+  await worker.processNow(runId);
+  const [asked] = (await me("/api/approvals")).json!.approvals;
+  expect(asked).toMatchObject({ toolCallId: "plan1", preview: "Save two notes" });
+
+  // Untick the second step: approve with an input holding only the kept one.
+  const res = await me(`/api/runs/${runId}/tool-calls/plan1/decision`, {
+    method: "POST",
+    json: { approved: true, input: { summary: "Save two notes", steps: [keep] } },
+  });
+  expect(res.status).toBe(200);
+  await worker.processNow(runId);
+
+  let detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("waiting");
+  expect(detail.json!.run.planGrants).toEqual([
+    { tool: "memory_save", inputHash: expect.any(String), usedBy: "k1" },
+  ]);
+  const byId = (id: string) =>
+    detail.json!.toolCalls.find((c: { id: string }) => c.id === id) as Record<string, unknown>;
+  expect(byId("plan1")).toMatchObject({ status: "succeeded", inputEdited: true });
+  expect(JSON.stringify(byId("plan1").output)).toContain("do not do them");
+  expect(byId("k1")).toMatchObject({
+    status: "approved",
+    decision: "allow",
+    decisionReason: "Part of the plan you approved",
+  });
+  expect(byId("u1")).toMatchObject({ status: "awaiting_approval", decision: "ask" });
+  expect((await me("/api/approvals")).json!.approvals).toEqual([
+    expect.objectContaining({ toolCallId: "u1" }),
+  ]);
+
+  await me(`/api/runs/${runId}/tool-calls/u1/decision`, {
+    method: "POST",
+    json: { approved: false },
+  });
+  await worker.processNow(runId);
+  detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("completed");
+  expect(byId("k1")!.status).toBe("succeeded");
+  expect(byId("u1")!.status).toBe("denied");
+  expect(await notes(me)).toEqual(["likes tea"]);
+});
+
 test("user budgets can only tighten the operator cap", async () => {
   const { capBudget } = await import("./worker");
   expect(capBudget(undefined, 2)).toBe(2);
@@ -436,4 +585,88 @@ test("model list covers the catalog, direct refs and the chain, with availabilit
   } finally {
     clearCatalog();
   }
+});
+
+test("approvals that learn: suggest, accept, dismiss", async () => {
+  const me = api(await signUp("learner@example.com"));
+  const other = api(await signUp("bystander@example.com"));
+  const askForNotes = {
+    defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+    rules: [{ tool: "memory_save", decision: "ask" }],
+  };
+  await me("/api/policy", { method: "PUT", json: askForNotes });
+  await other("/api/policy", { method: "PUT", json: askForNotes });
+
+  let n = 0;
+  async function startNote(who: typeof me, opts: { tainted?: boolean } = {}) {
+    const id = `learn${++n}`;
+    script([
+      { toolCalls: [{ name: "memory_save", input: { note: `fact ${n}` }, id }] },
+      { text: "Noted." },
+    ]);
+    const { json } = await who("/api/chats", { method: "POST", json: { content: "remember" } });
+    const runId = json!.runId as string;
+    if (opts.tainted)
+      await services.database.db
+        .update(schema.runs)
+        .set({ tainted: true })
+        .where(eq(schema.runs.id, runId));
+    await worker.processNow(runId);
+    return { runId, id };
+  }
+  async function approveNote(who: typeof me) {
+    const { runId, id } = await startNote(who);
+    const res = await who(`/api/runs/${runId}/tool-calls/${id}/decision`, {
+      method: "POST",
+      json: { approved: true },
+    });
+    expect(res.status).toBe(200);
+    await worker.processNow(runId);
+  }
+
+  for (let i = 0; i < 4; i++) await approveNote(me);
+  expect((await me("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  await approveNote(me);
+  const [s] = (await me("/api/policy/suggestions")).json!.suggestions;
+  expect(s).toMatchObject({ tool: "memory_save", effect: "write", count: 5, when: [] });
+  expect(s.sentence).toContain("You approved 5");
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+
+  // Someone else can neither accept nor dismiss it.
+  const accept = `/api/policy/suggestions/${s.id}/accept`;
+  const dismiss = `/api/policy/suggestions/${s.id}/dismiss`;
+  expect((await other(accept, { method: "POST" })).status).toBe(404);
+  expect((await other(dismiss, { method: "POST" })).status).toBe(404);
+
+  const accepted = await me(accept, { method: "POST" });
+  expect(accepted.status).toBe(200);
+  expect(accepted.json!.rules).toEqual([
+    expect.objectContaining({
+      tool: "memory_save",
+      decision: "allow",
+      note: "Learned: you approved 5 of these",
+    }),
+    expect.objectContaining({ tool: "memory_save", decision: "ask" }),
+  ]);
+  expect((await me("/api/policy")).json!.rules).toHaveLength(2);
+  expect((await me("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+
+  // Untainted: allowed without asking. Tainted: still asks.
+  const clean = await startNote(me);
+  expect((await me(`/api/runs/${clean.runId}`)).json!.run.status).toBe("completed");
+  const tainted = await startNote(me, { tainted: true });
+  expect((await me(`/api/runs/${tainted.runId}`)).json!.run.status).toBe("waiting");
+  expect((await me("/api/approvals")).json!.approvals).toEqual([
+    expect.objectContaining({ runId: tainted.runId, name: "memory_save" }),
+  ]);
+
+  // Dismissing hides it, also after more approvals.
+  for (let i = 0; i < 5; i++) await approveNote(other);
+  const [o] = (await other("/api/policy/suggestions")).json!.suggestions;
+  expect(o.id).toBe(s.id);
+  expect((await other(dismiss, { method: "POST" })).status).toBe(204);
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  await approveNote(other);
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  expect((await other("/api/policy")).json!.rules).toHaveLength(1);
 });

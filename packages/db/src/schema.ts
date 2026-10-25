@@ -2,6 +2,7 @@ import type {
   ArgMatcher,
   Decision,
   Effect,
+  PlanGrant,
   PolicyDefaults,
   RunStatus,
   ToolCallStatus,
@@ -113,6 +114,10 @@ export const userSettings = pgTable("user_settings", {
   /** Bring-your-own provider keys, encrypted with the server secret. */
   providerKeys: jsonb("provider_keys").$type<Record<string, string>>(),
   instructions: text("instructions"),
+  /** Learned-rule suggestions the user said "not now" to, by suggestion id. */
+  dismissedSuggestions: text("dismissed_suggestions").array().notNull().default([]),
+  /** Seconds an approved send or destructive action waits, with an Undo, before it runs. 0 disables. */
+  undoSeconds: integer("undo_seconds").notNull().default(10),
   updatedAt: updatedAt(),
 });
 
@@ -169,6 +174,11 @@ export const runs = pgTable(
     costUsd: doublePrecision("cost_usd").notNull().default(0),
     error: text("error"),
     cancelRequested: text("cancel_requested").$type<"now" | "after_step">(),
+    /**
+     * Steps of plans the user approved via `propose_plan` (tool + canonical input hash).
+     * A matching call runs once without asking; `usedBy` marks a spent grant.
+     */
+    planGrants: jsonb("plan_grants").$type<PlanGrant[]>().notNull().default([]),
     /** Worker lease. A run with an expired lease is picked up again by another worker. */
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
@@ -230,6 +240,8 @@ export const toolCalls = pgTable(
     preview: text("preview"),
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Undo window: an approved call does not run before this time. */
+    executeAfter: timestamp("execute_after", { withTimezone: true }),
     output: jsonb("output").$type<ToolOutput>(),
     fullOutput: jsonb("full_output").$type<ToolOutput>(),
     createdAt: createdAt(),
@@ -237,6 +249,8 @@ export const toolCalls = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.runId, t.id] }),
+    // Learned-rule suggestions read a user's recent decisions.
+    index("tool_calls_user_decided_idx").on(t.userId, t.decidedAt),
     index("tool_calls_awaiting_idx")
       .on(t.userId, t.createdAt)
       .where(sql`status = 'awaiting_approval'`),

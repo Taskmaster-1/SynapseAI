@@ -20,7 +20,9 @@ export interface RunStore {
   getRun(runId: string): Promise<RunRecord>;
   updateRun(
     runId: string,
-    patch: Partial<Pick<RunRecord, "status" | "tainted" | "model" | "error" | "steps">>,
+    patch: Partial<
+      Pick<RunRecord, "status" | "tainted" | "model" | "error" | "steps" | "planGrants">
+    >,
   ): Promise<void>;
   addUsage(
     runId: string,

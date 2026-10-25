@@ -10,6 +10,9 @@ import {
   approvalTitle,
   MiniStamp,
 } from "@/components/approval/approval-card";
+import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
+import { LearnPrompt, SuggestionStrip } from "@/components/approval/learned-rules";
+import { UndoCountdown, type UndoTarget, useTimeLeft } from "@/components/approval/undo-window";
 import { Markdown } from "@/components/markdown";
 import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
@@ -22,6 +25,52 @@ interface Decided {
   approved: boolean;
   reason?: string;
   edited: boolean;
+  /** Set when an approved send or delete waits out its undo window. */
+  executeAfter?: string | null;
+  /** Taken back inside the undo window. */
+  undone?: boolean;
+}
+
+function undoTarget(a: Approval, d: Decided): UndoTarget | null {
+  return d.executeAfter
+    ? { runId: a.runId, toolCallId: a.toolCallId, executeAfter: d.executeAfter }
+    : null;
+}
+
+/** A signed row whose send is still inside its undo window. */
+function rowUndo(a: Approval, d: Decided | undefined): UndoTarget | null {
+  return d?.approved && !d.undone ? undoTarget(a, d) : null;
+}
+
+/** The row's age, or nothing while its undo countdown sits in that corner. */
+function RowTime({ createdAt, undo }: { createdAt: string; undo: UndoTarget | null }) {
+  const left = useTimeLeft(undo?.executeAfter);
+  if (undo && left > 0) return null;
+  return (
+    <span className="ml-auto shrink-0" title={formatDateTime(createdAt)}>
+      {formatRelative(createdAt)}
+    </span>
+  );
+}
+
+/** "Sending in 9s · Undo" on the row itself, so it stays reachable after the pane moves on. */
+function RowUndo({
+  target,
+  effect,
+  onUndone,
+}: {
+  target: UndoTarget;
+  effect: Approval["effect"];
+  onUndone: () => void;
+}) {
+  return (
+    <UndoCountdown
+      target={target}
+      effect={effect}
+      onUndone={onUndone}
+      className="absolute right-3.5 bottom-3 text-12 text-fg-muted"
+    />
+  );
 }
 
 function isTyping(e: KeyboardEvent) {
@@ -68,6 +117,12 @@ export default function InboxPage() {
   }, [ordered, pending, selected]);
 
   const current = ordered.find((a) => a.toolCallId === selected) ?? null;
+  // Open asks from the same run sign off together as one checklist (plans keep their card).
+  const batch = useMemo(() => {
+    if (!current || decided[current.toolCallId] || current.name === PLAN_TOOL) return [];
+    const same = pending.filter((a) => a.runId === current.runId && a.name !== PLAN_TOOL);
+    return same.length >= 2 ? same.sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
+  }, [current, decided, pending]);
   const tainted = (chatId: string) => tasks?.find((t) => t.id === chatId)?.tainted ?? false;
 
   const move = useCallback(
@@ -103,10 +158,32 @@ export default function InboxPage() {
     return () => document.removeEventListener("keydown", onKey);
   }, [move, current, decided]);
 
+  function markUndone(id: string) {
+    setDecided((m) => (m[id] ? { ...m, [id]: { ...m[id], undone: true } } : m));
+    void reload();
+  }
+
   function onDecided(a: Approval, d: Decided) {
     setKept((k) => ({ ...k, [a.toolCallId]: a }));
     setDecided((m) => ({ ...m, [a.toolCallId]: d }));
     const next = pending.find((x) => x.toolCallId !== a.toolCallId);
+    if (next && desktop) setSelected(next.toolCallId);
+    void reload();
+  }
+
+  function onBatchDecided(list: Approval[], outcome: Record<string, boolean>) {
+    setKept((k) => ({ ...k, ...Object.fromEntries(list.map((a) => [a.toolCallId, a])) }));
+    setDecided((m) => ({
+      ...m,
+      ...Object.fromEntries(
+        list.map((a) => [
+          a.toolCallId,
+          { approved: outcome[a.toolCallId] ?? false, edited: false },
+        ]),
+      ),
+    }));
+    const done = new Set(list.map((a) => a.toolCallId));
+    const next = pending.find((x) => !done.has(x.toolCallId));
     if (next && desktop) setSelected(next.toolCallId);
     void reload();
   }
@@ -142,6 +219,7 @@ export default function InboxPage() {
           </p>
         </header>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-6">
+          <SuggestionStrip className="mx-2 mb-5" />
           {loading ? (
             <div className="space-y-2.5 px-2">
               {[0, 1, 2].map((i) => (
@@ -172,7 +250,7 @@ export default function InboxPage() {
                     const on = a.toolCallId === selected;
                     const { source } = splitToolName(a.name);
                     return (
-                      <li key={a.toolCallId}>
+                      <li key={a.toolCallId} className="relative">
                         <button
                           type="button"
                           aria-current={on ? "true" : undefined}
@@ -206,17 +284,22 @@ export default function InboxPage() {
                           <span className="flex min-w-0 items-center gap-2 text-12 text-fg-faint">
                             <Monogram name={source ?? "Synapse"} size={16} />
                             {d ? (
-                              <MiniStamp tone={d.approved ? "ok" : "danger"}>
-                                {d.approved ? "Approved" : "Denied"}
+                              <MiniStamp tone={d.approved && !d.undone ? "ok" : "danger"}>
+                                {d.undone ? "Undone" : d.approved ? "Approved" : "Denied"}
                               </MiniStamp>
                             ) : (
                               <EffectPill effect={a.effect} />
                             )}
-                            <span className="ml-auto shrink-0" title={formatDateTime(a.createdAt)}>
-                              {formatRelative(a.createdAt)}
-                            </span>
+                            <RowTime createdAt={a.createdAt} undo={rowUndo(a, d)} />
                           </span>
                         </button>
+                        {rowUndo(a, d) ? (
+                          <RowUndo
+                            target={rowUndo(a, d)!}
+                            effect={a.effect}
+                            onUndone={() => markUndone(a.toolCallId)}
+                          />
+                        ) : null}
                       </li>
                     );
                   })}
@@ -283,8 +366,14 @@ export default function InboxPage() {
                   approved={decided[current.toolCallId]!.approved}
                   reason={decided[current.toolCallId]!.reason}
                   edited={decided[current.toolCallId]!.edited}
+                  undo={undoTarget(current, decided[current.toolCallId]!)}
+                  undone={decided[current.toolCallId]!.undone}
+                  onUndone={() => markUndone(current.toolCallId)}
                   phase="continuing"
                 />
+                {decided[current.toolCallId]!.approved && !decided[current.toolCallId]!.edited ? (
+                  <LearnPrompt tool={current.name} />
+                ) : null}
                 {pending.length === 0 ? (
                   <div className="anim-fade-in pt-10 pb-4 text-center">
                     <p className="font-serif text-40 text-fg">
@@ -296,6 +385,16 @@ export default function InboxPage() {
                   </div>
                 ) : null}
               </div>
+            ) : batch.length > 0 ? (
+              <ApprovalBatch
+                key={batch.map((a) => a.toolCallId).join()}
+                handle={card}
+                runId={current.runId}
+                items={batch}
+                tainted={tainted(current.chatId)}
+                onDecided={(outcome) => onBatchDecided(batch, outcome)}
+                onConflict={() => void reload()}
+              />
             ) : (
               <ApprovalCard
                 key={current.toolCallId}

@@ -1,5 +1,5 @@
 import { unsafePatternReason } from "@synapse/core";
-import { schema } from "@synapse/db";
+import { DEFAULT_UNDO_SECONDS, MAX_UNDO_SECONDS, schema } from "@synapse/db";
 import { ingestDocument, searchKnowledge } from "@synapse/tools";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -12,6 +12,11 @@ const Matcher = z.discriminatedUnion("op", [
   z.object({ path: z.string().min(1), op: z.literal("in"), value: z.array(z.json()) }),
   z.object({ path: z.string().min(1), op: z.literal("allEndWith"), value: z.array(z.string()) }),
   z.object({ path: z.string().min(1), op: z.literal("matches"), value: z.string().max(500) }),
+  z.object({
+    path: z.string().default("*"),
+    op: z.literal("emailsEndWith"),
+    value: z.array(z.string().min(2)).min(1),
+  }),
 ]);
 const Defaults = z.object({
   read: Decision,
@@ -233,6 +238,7 @@ export const settings = new Hono<AppEnv>()
         providerKeys: z
           .partialRecord(z.enum(PROVIDERS), z.string().min(8).max(400).nullable())
           .optional(),
+        undoSeconds: z.number().int().min(0).max(MAX_UNDO_SECONDS).optional(),
       }),
     );
     const { db } = c.var.services.database;
@@ -250,6 +256,7 @@ export const settings = new Hono<AppEnv>()
       ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
       ...(input.models ? { models: input.models } : {}),
       ...(input.budgets ? { budgets: input.budgets } : {}),
+      ...(input.undoSeconds !== undefined ? { undoSeconds: input.undoSeconds } : {}),
       providerKeys: keys,
     };
     await db
@@ -273,6 +280,7 @@ async function loadSettings(c: { var: AppEnv["Variables"] }) {
       perDayUsd: config.DAY_MAX_COST_USD,
     },
     providerKeys: Object.fromEntries(PROVIDERS.map((p) => [p, Boolean(s?.providerKeys?.[p])])),
+    undoSeconds: s?.undoSeconds ?? DEFAULT_UNDO_SECONDS,
   };
 }
 

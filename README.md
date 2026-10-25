@@ -30,6 +30,10 @@ Agent products that act in your tools share three problems: approvals that live 
 - Automations triggered by a cron schedule, new Gmail messages matching a search, or a secret webhook URL
 - MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
 - Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
+- Approve a plan, not every step: the agent proposes the exact actions it will take, you untick what you don't want, and the kept actions run without asking again (even after the task read outside content, because you saw each one)
+- Several pending actions from one step can be ticked and signed off together
+- Approvals that learn: after you approve the same kind of action unchanged a few times, Synapse offers a visible, removable rule ("emails where every address is @acme.com"). Tasks that read outside content still ask
+- Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
