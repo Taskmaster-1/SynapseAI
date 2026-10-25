@@ -33,6 +33,7 @@ Agent products that act in your tools share three problems: approvals that live 
 - Approve a plan, not every step: the agent proposes the exact actions it will take, you untick what you don't want, and the kept actions run without asking again (even after the task read outside content, because you saw each one)
 - Several pending actions from one step can be ticked and signed off together
 - Approvals that learn: after you approve the same kind of action unchanged a few times, Synapse offers a visible, removable rule ("emails where every address is @acme.com"). Tasks that read outside content still ask
+- Approve from your phone: install Synapse as an app and get push notifications with Approve and Deny buttons (the undo window still applies), or opt in to email alerts ([setup](docs/notifications.md))
 - Approve from Slack: approvals arrive as a DM with Approve and Deny buttons, and the message updates wherever you decide ([setup](docs/slack.md))
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
