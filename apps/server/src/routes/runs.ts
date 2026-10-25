@@ -1,20 +1,10 @@
-import { evaluatePolicy, type RunEvent, UNDO_DENIAL } from "@synapse/core";
-import {
-  decideToolCall,
-  decideToolCalls,
-  PgRunStore,
-  readEvents,
-  requestCancel,
-  schema,
-  undoToolCall,
-} from "@synapse/db";
-import type { JSONValue } from "ai";
+import { readEvents, requestCancel, schema } from "@synapse/db";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { type Decision, DecisionInputError, decide, undo } from "../decisions";
 import { type AppEnv, apiError, body } from "../http";
-import type { Services } from "../services";
 
 const PAUSE_OR_END = new Set(["waiting", "completed", "failed", "cancelled"]);
 const EVENT_PAGE = 1000;
@@ -152,46 +142,17 @@ export const runs = new Hono<AppEnv>()
         input: z.json().optional(),
       }),
     );
-    const runId = c.req.param("id");
-    if (input.approved && input.input !== undefined)
-      await assertEditAllowed(c, runId, c.req.param("toolCallId"), input.input);
     const toolCallId = c.req.param("toolCallId");
-    const decided = await decideToolCall(c.var.services.database.db, {
-      userId: c.var.user.id,
-      runId,
-      toolCallId,
-      approved: input.approved,
-      ...(input.reason ? { reason: input.reason } : {}),
-      ...(input.input !== undefined ? { editedInput: input.input } : {}),
-    });
-    const { services } = c.var;
-    const { executeAfter } = decided;
-    if (executeAfter) {
-      // Live viewers (another tab, the run panel) get the countdown too.
-      await emitNow(services, runId, {
-        type: "tool.status",
-        toolCallId,
-        status: "approved",
-        executeAfter: executeAfter.toISOString(),
-      });
-    }
-    if (decided.requeued && decided.runnableAt) {
-      // Parked until the window ends: it is queued, not waiting on you.
-      await emitNow(services, runId, { type: "run.status", status: "queued" });
-      wakeAt(services, runId, decided.runnableAt);
-    } else await services.wake(runId);
-    return c.json({ executeAfter: executeAfter?.toISOString() ?? null });
+    const { executeAfter } = await decided(c, [{ toolCallId, ...input }]);
+    return c.json({ executeAfter: executeAfter[toolCallId] ?? null });
   })
 
   .post("/:id/tool-calls/:toolCallId/undo", async (c) => {
-    const runId = c.req.param("id");
-    const toolCallId = c.req.param("toolCallId");
-    const { services } = c.var;
-    await undoToolCall(services.database.db, { userId: c.var.user.id, runId, toolCallId });
-    const output = { type: "denied" as const, reason: UNDO_DENIAL };
-    await emitNow(services, runId, { type: "tool.status", toolCallId, status: "denied" });
-    await emitNow(services, runId, { type: "tool.result", toolCallId, output });
-    await services.wake(runId);
+    await undo(c.var.services, {
+      userId: c.var.user.id,
+      runId: c.req.param("id"),
+      toolCallId: c.req.param("toolCallId"),
+    });
     return c.body(null, 204);
   })
 
@@ -213,39 +174,7 @@ export const runs = new Hono<AppEnv>()
           .max(100),
       }),
     );
-    const runId = c.req.param("id");
-    if (new Set(decisions.map((d) => d.toolCallId)).size !== decisions.length)
-      apiError(400, "duplicate", "Each action can be decided once.");
-    for (const d of decisions)
-      if (d.approved && d.input !== undefined)
-        await assertEditAllowed(c, runId, d.toolCallId, d.input);
-    const { services } = c.var;
-    const decided = await decideToolCalls(services.database.db, {
-      userId: c.var.user.id,
-      runId,
-      decisions: decisions.map((d) => ({
-        toolCallId: d.toolCallId,
-        approved: d.approved,
-        ...(d.reason ? { reason: d.reason } : {}),
-        ...(d.approved && d.input !== undefined ? { editedInput: d.input } : {}),
-      })),
-    });
-    for (const [toolCallId, at] of Object.entries(decided.executeAfter))
-      await emitNow(services, runId, {
-        type: "tool.status",
-        toolCallId,
-        status: "approved",
-        executeAfter: at.toISOString(),
-      });
-    if (decided.requeued && decided.runnableAt) {
-      await emitNow(services, runId, { type: "run.status", status: "queued" });
-      wakeAt(services, runId, decided.runnableAt);
-    } else await services.wake(runId);
-    return c.json({
-      executeAfter: Object.fromEntries(
-        Object.entries(decided.executeAfter).map(([id, at]) => [id, at.toISOString()]),
-      ),
-    });
+    return c.json(await decided(c, decisions));
   })
 
   .post("/:id/cancel", async (c) => {
@@ -290,49 +219,23 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
  * Appends an event for a run no worker may be driving (it is parked). Forgets the cached
  * seq afterwards so a later writer on this instance re-reads the tail.
  */
-async function emitNow(services: Services, runId: string, event: RunEvent) {
-  await services.events.emit(runId, event);
-  services.events.forget(runId);
-}
-
-/** Wakes workers when a run parked on an undo window becomes claimable, not on the next poll. */
-function wakeAt(services: Services, runId: string, at: Date) {
-  const timer = setTimeout(
-    () => void services.wake(runId).catch(() => {}),
-    Math.max(0, at.getTime() - Date.now()) + 25,
-  );
-  timer.unref?.();
-}
-
-/** Edited arguments are re-checked against block rules: editing must not route around them. */
-async function assertEditAllowed(
-  c: { var: AppEnv["Variables"] },
-  runId: string,
-  toolCallId: string,
-  input: JSONValue,
+/** Applies decisions made in the web app, turning input problems into API errors. */
+async function decided(
+  c: { var: AppEnv["Variables"]; req: { param(name: "id"): string } },
+  decisions: Decision[],
 ) {
-  const { db } = c.var.services.database;
-  const [call] = await db
-    .select({ name: schema.toolCalls.name, effect: schema.toolCalls.effect })
-    .from(schema.toolCalls)
-    .where(
-      and(
-        eq(schema.toolCalls.runId, runId),
-        eq(schema.toolCalls.id, toolCallId),
-        eq(schema.toolCalls.userId, c.var.user.id),
-      ),
-    );
-  if (!call) apiError(404, "not_found", "Action not found.");
-  const policy = await new PgRunStore(db).getPolicy(c.var.user.id);
-  const verdict = evaluatePolicy(
-    { tool: call.name, effect: call.effect, input, tainted: true },
-    policy.rules,
-    policy.defaults,
-  );
-  if (verdict.decision === "block")
-    apiError(422, "blocked", `The edited action is blocked: ${verdict.reason}`);
+  try {
+    return await decide(c.var.services, {
+      userId: c.var.user.id,
+      runId: c.req.param("id"),
+      decisions,
+      via: "web",
+    });
+  } catch (error) {
+    if (error instanceof DecisionInputError) apiError(error.status, error.code, error.message);
+    throw error;
+  }
 }
-
 async function ownRun(c: { var: AppEnv["Variables"] }, id: string) {
   const [run] = await c.var.services.database.db
     .select()

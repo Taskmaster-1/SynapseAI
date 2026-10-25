@@ -240,6 +240,10 @@ export const toolCalls = pgTable(
     preview: text("preview"),
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Where the person decided: web, push, slack, email. */
+    decidedVia: text("decided_via"),
+    /** When notification channels were told this call needs a person. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
     /** Undo window: an approved call does not run before this time. */
     executeAfter: timestamp("execute_after", { withTimezone: true }),
     output: jsonb("output").$type<ToolOutput>(),

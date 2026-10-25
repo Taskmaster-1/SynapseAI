@@ -262,6 +262,11 @@ export class Worker {
         status === "running" ? nextUndoWaitMs(await new PgRunStore(db).listToolCalls(runId)) : 0;
       await releaseRun(db, runId, this.id, wait);
       if (wait > 0) this.wakeLater(runId, wait);
+      // New approvals: tell the person wherever they are (phone, Slack…).
+      if (status === "waiting")
+        await this.s.notifier.announce(runId).catch((error) => {
+          log.warn("announcing approvals failed", { runId, error: String(error) });
+        });
     } catch (error) {
       await events.flush(runId).catch(() => {});
       if (controller.signal.aborted) {

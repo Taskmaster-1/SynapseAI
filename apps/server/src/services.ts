@@ -2,6 +2,7 @@ import { createDatabase, type Database, EVENTS_CHANNEL, EventLog, SecretBox } fr
 import { createEmbedder, type ToolsetConfig } from "@synapse/tools";
 import { type Auth, createAuth } from "./auth";
 import type { Config } from "./config";
+import { Notifier } from "./notify/notifier";
 
 export const RUNS_CHANNEL = "synapse_runs";
 
@@ -44,6 +45,8 @@ export interface Services {
   events: EventLog;
   bus: EventBus;
   toolset: ToolsetConfig;
+  /** Tells people about approvals through push, Slack and other channels. */
+  notifier: Notifier;
   /** Wakes idle workers (on any instance) when a run becomes runnable. */
   wake: (runId: string) => Promise<void>;
   close: () => Promise<void>;
@@ -54,7 +57,7 @@ export async function createServices(config: Config): Promise<Services> {
   await database.migrate();
   const box = await SecretBox.fromSecret(config.secret);
   const { bus, stop } = await EventBus.create(database);
-  return {
+  const services: Services = {
     config,
     database,
     box,
@@ -69,10 +72,12 @@ export async function createServices(config: Config): Promise<Services> {
       embedder: config.embedding ? createEmbedder(config.embedding) : null,
       google: config.google,
     },
+    notifier: new Notifier(() => services),
     wake: (runId) => database.notify(RUNS_CHANNEL, runId),
     close: async () => {
       await stop();
       await database.close();
     },
   };
+  return services;
 }

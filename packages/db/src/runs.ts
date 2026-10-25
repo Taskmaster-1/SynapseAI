@@ -245,7 +245,13 @@ export async function decideToolCall(
  */
 export async function decideToolCalls(
   db: Db,
-  args: { userId: string; runId: string; decisions: ToolCallDecision[] },
+  args: {
+    userId: string;
+    runId: string;
+    decisions: ToolCallDecision[];
+    /** Where the person decided (web, push, slack…), for the audit log. */
+    via?: string;
+  },
 ): Promise<DecisionOutcome> {
   return db.transaction(async (tx) => {
     const [run] = await tx
@@ -268,6 +274,7 @@ export async function decideToolCalls(
           status: d.approved ? "approved" : "denied",
           decidedBy: args.userId,
           decidedAt: new Date(),
+          decidedVia: args.via ?? "web",
           ...(d.approved && d.editedInput !== undefined
             ? { input: d.editedInput, inputEdited: true }
             : {}),
