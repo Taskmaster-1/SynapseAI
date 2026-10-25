@@ -1,5 +1,5 @@
 import type { AssistantModelMessage, ModelMessage } from "ai";
-import type { PolicyDefaults, PolicyRule } from "./policy";
+import type { PolicyDefaults, PolicyRule, TeamPolicyRule } from "./policy";
 import type {
   RunEvent,
   RunRecord,
@@ -68,7 +68,10 @@ export interface RunStore {
   /** Moves user messages that arrived while the run was busy into the chat, in order. */
   drainPendingInputs(chatId: string, runId: string): Promise<number>;
 
-  getPolicy(userId: string): Promise<{ rules: PolicyRule[]; defaults: PolicyDefaults }>;
+  /** The person's own rules and defaults, plus their team workspace's rules (if any). */
+  getPolicy(
+    userId: string,
+  ): Promise<{ rules: PolicyRule[]; defaults: PolicyDefaults; teamRules?: TeamPolicyRule[] }>;
 }
 
 export interface EventSink {

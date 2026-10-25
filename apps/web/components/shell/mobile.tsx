@@ -100,11 +100,11 @@ export function MobileTopBar() {
 
 export function BottomTabs() {
   const pathname = usePathname();
-  const { approvals } = useWorkspace();
+  const { approvals, teamApprovals } = useWorkspace();
   const [more, setMore] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: close on navigation
   useEffect(() => setMore(false), [pathname]);
-  const count = approvals?.length ?? 0;
+  const count = (approvals?.length ?? 0) + teamApprovals.length;
   const tab = "flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium";
   const moreLinks = [...PRIMARY_NAV.slice(2), ...SECONDARY_NAV];
   const moreActive = moreLinks.some((l) => isActivePath(pathname, l.href));

@@ -9,6 +9,7 @@ import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
 import { approvals, runs } from "./routes/runs";
 import { suggestions } from "./routes/suggestions";
+import { workspace } from "./routes/workspace";
 import type { Services } from "./services";
 
 export function createApp(services: Services) {
@@ -74,6 +75,7 @@ export function createApp(services: Services) {
   api.route("/usage", usage);
   api.route("/models", models);
   api.route("/automations", automations);
+  api.route("/workspace", workspace);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);
 

@@ -1,11 +1,11 @@
 "use client";
 
-import type { ArgMatcher, Decision, Effect, PolicyDefaults, PolicyRule } from "@synapse/core";
+import type { ArgMatcher, Decision, Effect, PolicyDefaults } from "@synapse/core";
 import { GripVertical, Plus, ShieldAlert, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
 import { EffectPill, ErrorNote, Pill, Segmented, Skeleton } from "@/components/ui";
-import { api, errorMessage, type Policy } from "@/lib/api";
+import { api, errorMessage, type TeamRule } from "@/lib/api";
 import { cx, humanToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
@@ -38,6 +38,8 @@ interface DraftRule {
   when: DraftMatcher[];
   note: string;
   fresh?: boolean;
+  /** Team rules only: an Ask that a team admin, not the member, must decide. */
+  approver?: boolean;
 }
 
 const newKey = () =>
@@ -45,11 +47,12 @@ const newKey = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-function toDraft(rule: PolicyRule): DraftRule {
+function toDraft(rule: TeamRule): DraftRule {
   return {
     id: rule.id,
     tool: rule.tool,
     decision: rule.decision,
+    approver: rule.approver === "admin",
     note: rule.note ?? "",
     when: (rule.when ?? []).map((m) => ({
       key: newKey(),
@@ -121,15 +124,89 @@ function toMatcher(m: DraftMatcher, where: string): ArgMatcher {
   }
 }
 
-function fromDraft(rules: DraftRule[]): PolicyRule[] {
+function fromDraft(rules: DraftRule[]): TeamRule[] {
   return rules.map((r, i) => {
     const where = `Rule ${i + 1}`;
     if (!r.tool.trim()) throw new Error(`${where}: which tool does it apply to?`);
-    const rule: PolicyRule = { id: r.id, tool: r.tool.trim(), decision: r.decision };
+    const rule: TeamRule = { id: r.id, tool: r.tool.trim(), decision: r.decision };
     if (r.when.length) rule.when = r.when.map((m) => toMatcher(m, where));
     if (r.note.trim()) rule.note = r.note.trim();
+    if (r.decision === "ask" && r.approver) rule.approver = "admin";
     return rule;
   });
+}
+
+/** Draft rules as compared for "unsaved changes". */
+const comparable = (rules: DraftRule[]) =>
+  rules.map(({ when, fresh: _f, approver, ...r }) => ({
+    ...r,
+    approver: r.decision === "ask" && !!approver,
+    when: when.map(({ key: _k, ...m }) => m),
+  }));
+
+/** Rules as loaded by either scope: personal (with defaults) or the team's. */
+interface Loaded {
+  defaults: PolicyDefaults | null;
+  rules: TeamRule[];
+  canEdit: boolean;
+}
+
+function matcherText(m: ArgMatcher): string {
+  const label = OPS.find((o) => o.op === m.op)?.label ?? m.op;
+  const value = Array.isArray(m.value)
+    ? m.value.map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ")
+    : typeof m.value === "string"
+      ? m.value
+      : JSON.stringify(m.value);
+  return m.op === "emailsEndWith" ? `${label} ${value}` : `${m.path} ${label} ${value}`;
+}
+
+/**
+ * Team rules as sentences, for people who can't change them: members in the Team section,
+ * and everyone above their own rules.
+ */
+export function TeamRulesReadOnly({ rules, intro }: { rules: TeamRule[]; intro?: ReactNode }) {
+  return (
+    <section aria-label="Team rules">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h3 className="font-serif text-[24px] leading-tight text-fg">Team rules</h3>
+        <Pill tone="outline">Set by your team</Pill>
+      </div>
+      {intro ? <p className="mb-4 text-13 text-fg-muted">{intro}</p> : null}
+      {rules.length === 0 ? (
+        <p className="rounded-[16px] bg-sunken/70 px-5 py-4 text-13 text-fg-muted">
+          Your team hasn't set any rules yet.
+        </p>
+      ) : (
+        <ol className="divide-y divide-line rounded-[16px] border border-line bg-surface">
+          {rules.map((r) => (
+            <li
+              key={r.id}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-4 py-3 text-14 text-fg-muted"
+            >
+              <span>When</span>
+              <span className="rounded-[6px] border border-line-strong px-1.5 font-mono text-12 text-fg">
+                {r.tool}
+              </span>
+              {(r.when ?? []).map((m) => (
+                <span key={`${m.path}-${m.op}`} className="text-13">
+                  and {matcherText(m)}
+                </span>
+              ))}
+              <span aria-hidden="true">→</span>
+              <Pill
+                tone={r.decision === "allow" ? "ok" : r.decision === "ask" ? "attention" : "danger"}
+              >
+                {DECISION_OPTIONS.find((o) => o.value === r.decision)?.label}
+                {r.approver === "admin" ? " · an admin decides" : ""}
+              </Pill>
+              {r.note ? <span className="w-full text-12 text-fg-faint">{r.note}</span> : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
 }
 
 function move<T>(list: T[], from: number, to: number): T[] {
@@ -173,9 +250,29 @@ function Token({
   );
 }
 
-export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
+/**
+ * Approval rules editor. `scope="personal"` (default) edits your defaults and rules and
+ * shows your team's rules above them, read-only. `scope="team"` edits the team's rules
+ * (admins), with "an admin decides" on Ask rules; members see them read-only.
+ */
+export function PolicyEditor({
+  prefillTool,
+  scope = "personal",
+}: {
+  prefillTool?: string | null;
+  scope?: "personal" | "team";
+}) {
+  const team = scope === "team";
   const toast = useToast();
-  const policy = useApi(() => api.policy());
+  const policy = useApi<Loaded>(() =>
+    team
+      ? api.teamRules().then((r) => ({ defaults: null, rules: r.rules, canEdit: r.canEdit }))
+      : api.policy().then((p) => ({ ...p, canEdit: true })),
+  );
+  // Personal scope: the team's rules, shown above yours (404 when not in a team).
+  const teamAbove = useApi(() =>
+    team ? Promise.resolve(null) : api.teamRules().catch(() => null),
+  );
   const [defaults, setDefaults] = useState<PolicyDefaults | null>(null);
   const [rules, setRules] = useState<DraftRule[]>([]);
   const [saving, setSaving] = useState(false);
@@ -184,7 +281,7 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
   const [over, setOver] = useState<number | null>(null);
   const prefilled = useRef(false);
 
-  const load = useCallback((p: Policy) => {
+  const load = useCallback((p: Loaded) => {
     setDefaults(p.defaults);
     setRules(p.rules.map(toDraft));
   }, []);
@@ -202,26 +299,15 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
   }, [policy.data, load, prefillTool]);
 
   const saved = policy.data
-    ? JSON.stringify({
-        d: policy.data.defaults,
-        r: policy.data.rules
-          .map(toDraft)
-          .map(({ when, ...r }) => ({ ...r, when: when.map(({ key: _k, ...m }) => m) })),
-      })
+    ? JSON.stringify({ d: policy.data.defaults, r: comparable(policy.data.rules.map(toDraft)) })
     : "";
-  const current = JSON.stringify({
-    d: defaults,
-    r: rules.map(({ when, fresh: _f, ...r }) => ({
-      ...r,
-      when: when.map(({ key: _k, ...m }) => m),
-    })),
-  });
+  const current = JSON.stringify({ d: defaults, r: comparable(rules) });
   const dirty = policy.data !== undefined && saved !== current;
 
   async function save() {
-    if (!defaults) return;
+    if (!team && !defaults) return;
     setError(null);
-    let parsed: PolicyRule[];
+    let parsed: TeamRule[];
     try {
       parsed = fromDraft(rules);
     } catch (err) {
@@ -230,10 +316,14 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
     }
     setSaving(true);
     try {
-      const next = await api.savePolicy({ defaults, rules: parsed });
+      const next: Loaded = team
+        ? await api.saveTeamRules(parsed).then((r) => ({ defaults: null, ...r }))
+        : await api
+            .savePolicy({ defaults: defaults!, rules: parsed })
+            .then((p) => ({ ...p, canEdit: true }));
       policy.setData(next);
       load(next);
-      toast("Approval rules saved", "success");
+      toast(team ? "Team rules saved" : "Approval rules saved", "success");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -251,52 +341,73 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
     );
 
   if (policy.error) return <ErrorNote>{errorMessage(policy.error)}</ErrorNote>;
-  if (!defaults)
+  if (!policy.data || (!team && !defaults))
     return (
       <div className="space-y-3">
         <Skeleton className="h-40 rounded-card" />
         <Skeleton className="h-24 rounded-card" />
       </div>
     );
+  // Members see their team's rules; only owners and admins change them.
+  if (team && !policy.data.canEdit)
+    return (
+      <TeamRulesReadOnly
+        rules={policy.data.rules}
+        intro="These apply to every task you run, on top of your own rules. The strictest answer wins."
+      />
+    );
 
   return (
     <div className="space-y-10">
-      <section>
-        <h3 className="font-serif text-[24px] leading-tight text-fg">By default</h3>
-        <p className="mt-1 mb-4 text-13 text-fg-muted">What happens when no rule below matches.</p>
-        <ul className="divide-y divide-line rounded-[16px] border border-line bg-surface">
-          {EFFECTS.map((effect) => (
-            <li
-              key={effect}
-              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-            >
-              <span className="flex items-center gap-2.5 text-14 text-fg">
-                <EffectPill effect={effect} />
-                tools
-              </span>
-              <Segmented<Decision>
-                label={`Default for ${effect} tools`}
-                value={defaults[effect]}
-                onChange={(d) => setDefaults({ ...defaults, [effect]: d })}
-                options={DECISION_OPTIONS}
-              />
-            </li>
-          ))}
-        </ul>
-        <p className="mt-3 flex items-start gap-2 text-12 text-fg-muted">
-          <ShieldAlert className="mt-px size-3.5 shrink-0 text-attention" />
-          Once a task reads outside content — an email, a web page, a document — anything that
-          writes, sends or deletes asks you first, whatever these settings say.
-        </p>
-      </section>
+      {teamAbove.data ? (
+        <TeamRulesReadOnly
+          rules={teamAbove.data.rules}
+          intro="Your team's rules apply first. Your own rules can make things stricter, never looser: the strictest answer wins."
+        />
+      ) : null}
+      {defaults ? (
+        <section>
+          <h3 className="font-serif text-[24px] leading-tight text-fg">By default</h3>
+          <p className="mt-1 mb-4 text-13 text-fg-muted">
+            What happens when no rule below matches.
+          </p>
+          <ul className="divide-y divide-line rounded-[16px] border border-line bg-surface">
+            {EFFECTS.map((effect) => (
+              <li
+                key={effect}
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+              >
+                <span className="flex items-center gap-2.5 text-14 text-fg">
+                  <EffectPill effect={effect} />
+                  tools
+                </span>
+                <Segmented<Decision>
+                  label={`Default for ${effect} tools`}
+                  value={defaults[effect]}
+                  onChange={(d) => setDefaults({ ...defaults, [effect]: d })}
+                  options={DECISION_OPTIONS}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 flex items-start gap-2 text-12 text-fg-muted">
+            <ShieldAlert className="mt-px size-3.5 shrink-0 text-attention" />
+            Once a task reads outside content — an email, a web page, a document — anything that
+            writes, sends or deletes asks you first, whatever these settings say.
+          </p>
+        </section>
+      ) : null}
 
       <section>
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="font-serif text-[24px] leading-tight text-fg">Rules</h3>
+            <h3 className="font-serif text-[24px] leading-tight text-fg">
+              {team ? "Team rules" : teamAbove.data ? "Your rules" : "Rules"}
+            </h3>
             <p className="mt-1 text-13 text-fg-muted">
-              Checked top to bottom; the first match wins. A matching Block always wins. Drag to
-              reorder.
+              {team
+                ? "Apply to everyone in the team, on top of their own rules; the strictest answer wins and a team Block can't be overridden. An Ask can need an admin to decide."
+                : "Checked top to bottom; the first match wins. A matching Block always wins. Drag to reorder."}
             </p>
           </div>
           <button
@@ -316,7 +427,9 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
         {rules.length === 0 ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[16px] bg-sunken/70 px-5 py-4">
             <p className="min-w-0 flex-1 text-13 text-fg-muted">
-              No rules yet, so the defaults above apply to everything. A rule reads like a sentence:
+              {team
+                ? "No team rules yet, so everyone's own rules apply. A rule reads like a sentence:"
+                : "No rules yet, so the defaults above apply to everything. A rule reads like a sentence:"}
             </p>
             <p
               aria-hidden="true"
@@ -442,6 +555,17 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
                         onChange={(d) => update(i, { decision: d })}
                         options={DECISION_OPTIONS}
                       />
+                      {team && r.decision === "ask" ? (
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 text-13 text-fg-muted">
+                          <input
+                            type="checkbox"
+                            className="size-3.5 accent-[var(--attention)]"
+                            checked={!!r.approver}
+                            onChange={(e) => update(i, { approver: e.target.checked })}
+                          />
+                          needs an admin
+                        </label>
+                      ) : null}
                     </div>
                     <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       {r.note.startsWith("Learned:") ? (

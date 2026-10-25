@@ -247,3 +247,106 @@ export function getPath(value: JSONValue, path: string): JSONValue | undefined {
 function deepEqual(a: JSONValue | undefined, b: JSONValue | undefined): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
+
+// ── Team policy composition ─────────────────────────────────────────────────
+
+/** Who must decide an `ask`: `"admin"` means a workspace owner or admin, not the requester. */
+export type Approver = "admin";
+
+/** A rule set by a team workspace. Applies to every member, on top of their own rules. */
+export interface TeamPolicyRule extends PolicyRule {
+  /** Only meaningful on `ask` rules: a workspace admin must sign off, not the member. */
+  approver?: Approver | null;
+}
+
+export interface ComposedPolicyResult extends PolicyResult {
+  /** Set when a workspace admin (not the requester) must decide. */
+  approver: Approver | null;
+  /** Which rule set decided: the team's or the person's own (rules or defaults). */
+  source: "team" | "personal";
+}
+
+export const ADMIN_APPROVAL_REASON = "Your team requires an admin to approve this.";
+
+const TAINT_REASON =
+  "This task has read outside content (an email, web page or document), so anything that changes or sends data needs your approval.";
+
+/** Strictness order used to combine team and personal verdicts. */
+function strictness(v: { decision: Decision; approver: Approver | null }): number {
+  if (v.decision === "block") return 3;
+  if (v.decision === "ask") return v.approver === "admin" ? 2 : 1;
+  return 0;
+}
+
+/**
+ * Evaluates a call against a person's own policy and their team's rules, and takes the
+ * strictest: block > ask (an admin must decide) > ask > allow.
+ *
+ *  - Team rules have no defaults: a team rule that doesn't match has no opinion, and the
+ *    personal policy (rules, then defaults) decides. So a team `allow` never loosens a
+ *    personal `ask`, and a personal `allow` never loosens a team `ask` or `block`.
+ *  - Among team rules, the first matching `block` wins, else the first matching rule.
+ *  - Taint applies to the combined result: an `allow` of a non-read call in a tainted run
+ *    becomes an ordinary `ask`. Stricter results (block, admin ask) are left as they are.
+ *  - With no team rules this is exactly `evaluatePolicy`, plus `approver: null`.
+ */
+export function evaluateComposedPolicy(
+  call: PolicyInput,
+  personal: { rules: PolicyRule[]; defaults?: PolicyDefaults },
+  teamRules: TeamPolicyRule[] = [],
+): ComposedPolicyResult {
+  if (teamRules.length === 0) {
+    return {
+      ...evaluatePolicy(call, personal.rules, personal.defaults),
+      approver: null,
+      source: "personal",
+    };
+  }
+
+  const own: ComposedPolicyResult = {
+    ...evaluatePolicy({ ...call, tainted: false }, personal.rules, personal.defaults),
+    approver: null,
+    source: "personal",
+  };
+  const team = evaluateTeamRules(call, teamRules);
+  // Ties go to the personal verdict; only the team can be stricter than it.
+  const result = team && strictness(team) > strictness(own) ? team : own;
+
+  if (result.decision === "allow" && call.tainted && call.effect !== "read") {
+    return { ...result, decision: "ask", reason: TAINT_REASON, approver: null };
+  }
+  return result;
+}
+
+function evaluateTeamRules(
+  call: PolicyInput,
+  rules: TeamPolicyRule[],
+): ComposedPolicyResult | null {
+  const matching = rules.filter(
+    (r) => globMatch(r.tool, call.tool) && matchesAll(r.when, call.input),
+  );
+  const rule = matching.find((r) => r.decision === "block") ?? matching[0];
+  if (!rule) return null;
+  const approver = rule.decision === "ask" && rule.approver === "admin" ? "admin" : null;
+  let reason: string;
+  if (rule.decision === "block")
+    reason = rule.note ?? `Blocked by your team's rule for “${rule.tool}”.`;
+  else if (approver)
+    reason = rule.note ? `${ADMIN_APPROVAL_REASON} ${rule.note}` : ADMIN_APPROVAL_REASON;
+  else if (rule.decision === "ask")
+    reason = rule.note ?? `Your team asks for approval on “${rule.tool}”.`;
+  else reason = rule.note ?? `Allowed by your team's rule for “${rule.tool}”.`;
+  return { decision: rule.decision, reason, ruleId: rule.id, approver, source: "team" };
+}
+
+/**
+ * Whether an exact-input plan grant may turn this verdict into an allow. A grant stands in
+ * for the requester's own approval, so it satisfies an ordinary ask (theirs or their
+ * team's) but never a block, nor an ask that an admin must decide.
+ */
+export function planGrantMaySatisfy(verdict: {
+  decision: Decision;
+  approver: Approver | null;
+}): boolean {
+  return verdict.decision !== "block" && verdict.approver !== "admin";
+}

@@ -51,6 +51,7 @@ export const runs = new Hono<AppEnv>()
         inputEdited: schema.toolCalls.inputEdited,
         output: schema.toolCalls.output,
         decidedBy: schema.toolCalls.decidedBy,
+        approver: schema.toolCalls.approver,
         decidedAt: schema.toolCalls.decidedAt,
         executeAfter: schema.toolCalls.executeAfter,
         createdAt: schema.toolCalls.createdAt,
@@ -200,6 +201,8 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
       input: schema.toolCalls.input,
       reason: schema.toolCalls.decisionReason,
       preview: schema.toolCalls.preview,
+      /** "admin": the person's team requires an admin to decide; they only wait. */
+      approver: schema.toolCalls.approver,
       createdAt: schema.toolCalls.createdAt,
     })
     .from(schema.toolCalls)

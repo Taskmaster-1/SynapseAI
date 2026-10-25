@@ -22,8 +22,12 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Switching between sign in and sign up keeps where to go after (e.g. an invite link).
+  const [carry, setCarry] = useState("");
 
   useEffect(() => {
+    const next = nextPath();
+    setCarry(next === "/" ? "" : `?next=${encodeURIComponent(next)}`);
     api
       .config()
       .then(setConfig)
@@ -208,7 +212,10 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
               signupEnabled ? (
                 <>
                   New here?{" "}
-                  <Link href="/sign-up" className="font-medium text-accent hover:underline">
+                  <Link
+                    href={`/sign-up${carry}`}
+                    className="font-medium text-accent hover:underline"
+                  >
                     Create an account
                   </Link>
                 </>
@@ -216,7 +223,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
             ) : (
               <>
                 Already have an account?{" "}
-                <Link href="/sign-in" className="font-medium text-accent hover:underline">
+                <Link href={`/sign-in${carry}`} className="font-medium text-accent hover:underline">
                   Sign in
                 </Link>
               </>

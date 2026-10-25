@@ -17,6 +17,7 @@ import {
   toolCalls,
   userSettings,
 } from "./schema";
+import { teamRulesFor } from "./workspaces";
 
 type MessageRow = typeof messages.$inferSelect;
 type ToolCallRow = typeof toolCalls.$inferSelect;
@@ -48,6 +49,7 @@ function toRecord(r: ToolCallRow): ToolCallRecord {
     decisionReason: r.decisionReason,
     output: r.output,
     decidedBy: r.decidedBy,
+    approver: r.approver ?? null,
     preview: r.preview,
     executeAfter: r.executeAfter?.toISOString() ?? null,
   };
@@ -243,6 +245,8 @@ export class PgRunStore implements RunStore {
       .from(userSettings)
       .where(eq(userSettings.userId, userId));
     return {
+      // Rules of the person's team workspace, composed with theirs by the runtime.
+      teamRules: await teamRulesFor(this.db, userId),
       rules: rules.map(
         (r): PolicyRule => ({
           id: r.id,

@@ -183,7 +183,46 @@ export interface Approval {
   /** One-line human summary from the tool. */
   preview: string | null;
   createdAt: string;
+  /** "admin": the person's team requires a team admin to decide it. */
+  approver?: "admin" | null;
+  /** Team inbox only: the member whose task asked. */
+  requester?: { id: string; name: string; email: string };
 }
+
+// ---------- Team workspaces ----------
+
+export type WorkspaceRole = "owner" | "admin" | "member";
+
+export interface WorkspaceMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+  joinedAt: string;
+}
+
+export interface WorkspaceInfo {
+  workspace: { id: string; name: string; createdAt: string } | null;
+  role: WorkspaceRole | null;
+  members: WorkspaceMember[];
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  role: Exclude<WorkspaceRole, "owner">;
+  expiresAt: string;
+  createdAt: string;
+  usedAt?: string | null;
+  revokedAt?: string | null;
+  usedByEmail?: string | null;
+  status: "active" | "used" | "revoked" | "expired";
+}
+
+/** A team rule: a policy rule, plus who must decide an Ask. */
+export type TeamRule = PolicyRule & { approver?: "admin" | null };
+
+export const isTeamAdmin = (role: WorkspaceRole | null | undefined) =>
+  role === "owner" || role === "admin";
 
 export interface ConnectionTool {
   name: string;
@@ -434,4 +473,24 @@ export const api = {
   models: () => get<{ models: ModelInfo[]; updatedAt: string | null }>("/api/models"),
   saveSettings: (body: SettingsUpdate) => put<Settings>("/api/settings", body),
   usage: (days = 30) => get<{ days: UsageDay[] }>(`/api/usage?days=${days}`),
+
+  workspace: () => get<WorkspaceInfo>("/api/workspace"),
+  createWorkspace: (name: string) => post<WorkspaceInfo>("/api/workspace", { name }),
+  renameWorkspace: (name: string) => patch<WorkspaceInfo>("/api/workspace", { name }),
+  /** The link holds the token and is only returned here, once. */
+  createInvite: (role: "admin" | "member") =>
+    post<{ invite: WorkspaceInvite; link: string }>("/api/workspace/invites", { role }),
+  invites: () => get<{ invites: WorkspaceInvite[] }>("/api/workspace/invites"),
+  revokeInvite: (id: string) => del(`/api/workspace/invites/${enc(id)}`),
+  joinWorkspace: (token: string) => post<WorkspaceInfo>("/api/workspace/join", { token }),
+  setMemberRole: (userId: string, role: WorkspaceRole) =>
+    patch<WorkspaceInfo>(`/api/workspace/members/${enc(userId)}`, { role }),
+  removeMember: (userId: string) => del(`/api/workspace/members/${enc(userId)}`),
+  teamRules: () => get<{ rules: TeamRule[]; canEdit: boolean }>("/api/workspace/rules"),
+  saveTeamRules: (rules: TeamRule[]) =>
+    put<{ rules: TeamRule[]; canEdit: boolean }>("/api/workspace/rules", { rules }),
+  /** Team members' calls waiting for an admin (owners and admins only). */
+  teamApprovals: () => get<{ approvals: Approval[] }>("/api/workspace/approvals"),
+  auditCsvUrl: (from: string, to: string) =>
+    `/api/workspace/audit.csv?from=${enc(from)}&to=${enc(to)}`,
 };

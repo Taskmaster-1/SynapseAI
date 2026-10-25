@@ -1,4 +1,4 @@
-import { schema } from "@synapse/db";
+import { membershipOf, schema, workspaceAdminIds } from "@synapse/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { log } from "../log";
 import type { Services } from "../services";
@@ -52,6 +52,7 @@ export class Notifier {
         input: schema.toolCalls.input,
         reason: schema.toolCalls.decisionReason,
         tainted: schema.runs.tainted,
+        approver: schema.toolCalls.approver,
         createdAt: schema.toolCalls.createdAt,
       })
       .from(schema.toolCalls)
@@ -66,11 +67,26 @@ export class Notifier {
           ),
         ),
       );
-    const approvals: PendingApproval[] = rows.map((r) => ({
-      ...r,
-      recipients: [r.userId],
-      url: `${config.PUBLIC_URL}/t/${r.chatId}`,
-    }));
+    // Team workspaces: a call a team rule reserves for an admin goes to the requester's
+    // workspace owners and admins (the requester too, if they are one), not to the
+    // requester. Everything else goes to the requester. Admins open it from their inbox.
+    // If the requester has left the team since, its rules no longer govern them: theirs again.
+    const recipientsFor = async (userId: string, approver: "admin" | null): Promise<string[]> => {
+      if (approver !== "admin") return [userId];
+      const membership = await membershipOf(db, userId);
+      return membership ? workspaceAdminIds(db, membership.workspaceId) : [userId];
+    };
+    const approvals: PendingApproval[] = await Promise.all(
+      rows.map(async ({ approver, ...r }) => ({
+        ...r,
+        recipients: await recipientsFor(r.userId, approver),
+        // Admins can't open a member's task (tasks stay personal); they decide in the inbox.
+        url:
+          approver === "admin"
+            ? `${config.PUBLIC_URL}/inbox`
+            : `${config.PUBLIC_URL}/t/${r.chatId}`,
+      })),
+    );
     await this.each("notify", (c) => c.notify(approvals));
     return approvals;
   }

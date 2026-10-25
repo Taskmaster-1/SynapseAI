@@ -1,5 +1,5 @@
-import { evaluatePolicy, type RunEvent, UNDO_DENIAL } from "@synapse/core";
-import { decideToolCalls, PgRunStore, schema, undoToolCall } from "@synapse/db";
+import { evaluateComposedPolicy, type RunEvent, UNDO_DENIAL } from "@synapse/core";
+import { assertMayDecide, decideToolCalls, PgRunStore, schema, undoToolCall } from "@synapse/db";
 import type { JSONValue } from "ai";
 import { and, eq } from "drizzle-orm";
 import type { DecisionSource } from "./notify/types";
@@ -65,7 +65,9 @@ export async function decide(
 
   await services.notifier.resolved(
     decisions.map((d) => ({
-      userId,
+      // Whose task it is; a team admin may have decided it for them.
+      userId: decided.ownerId,
+      decidedBy: userId,
       runId,
       toolCallId: d.toolCallId,
       approved: d.approved,
@@ -96,7 +98,10 @@ export async function undo(
   await services.wake(args.runId);
 }
 
-/** An edited input must not turn an allowed action into one the user's rules block. */
+/**
+ * An edited input must not turn an allowed action into one the requester's rules (or their
+ * team's) block, nor slip past a team rule that needs an admin.
+ */
 async function assertEditAllowed(
   services: Services,
   userId: string,
@@ -105,25 +110,42 @@ async function assertEditAllowed(
   input: JSONValue,
 ) {
   const { db } = services.database;
+  const [run] = await db
+    .select({ id: schema.runs.id, userId: schema.runs.userId })
+    .from(schema.runs)
+    .where(eq(schema.runs.id, runId));
+  if (!run) throw new DecisionInputError(404, "not_found", "Run not found.");
+  // Same check as the decision itself, so nobody learns about calls they can't decide.
+  await assertMayDecide(db, run, { userId, decisions: [{ toolCallId, approved: true }] });
   const [call] = await db
-    .select({ name: schema.toolCalls.name, effect: schema.toolCalls.effect })
+    .select({
+      name: schema.toolCalls.name,
+      effect: schema.toolCalls.effect,
+      approver: schema.toolCalls.approver,
+    })
     .from(schema.toolCalls)
     .where(
       and(
         eq(schema.toolCalls.runId, runId),
         eq(schema.toolCalls.id, toolCallId),
-        eq(schema.toolCalls.userId, userId),
+        eq(schema.toolCalls.userId, run.userId),
       ),
     );
   if (!call) throw new DecisionInputError(404, "not_found", "Action not found.");
-  const policy = await new PgRunStore(db).getPolicy(userId);
-  const verdict = evaluatePolicy(
+  const policy = await new PgRunStore(db).getPolicy(run.userId);
+  const verdict = evaluateComposedPolicy(
     { tool: call.name, effect: call.effect, input, tainted: true },
-    policy.rules,
-    policy.defaults,
+    policy,
+    policy.teamRules,
   );
   if (verdict.decision === "block")
     throw new DecisionInputError(422, "blocked", `The edited action is blocked: ${verdict.reason}`);
+  if (verdict.approver === "admin" && call.approver !== "admin")
+    throw new DecisionInputError(
+      422,
+      "needs_admin",
+      "With that change, your team requires an admin to approve this.",
+    );
 }
 
 export async function emitNow(services: Services, runId: string, event: RunEvent) {

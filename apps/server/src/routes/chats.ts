@@ -72,6 +72,7 @@ export const chats = new Hono<AppEnv>()
           decisionReason: r.decisionReason,
           output: r.output,
           decidedBy: r.decidedBy,
+          approver: r.approver,
           preview: r.preview,
           executeAfter: r.executeAfter?.toISOString() ?? null,
         }))

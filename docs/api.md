@@ -4,7 +4,7 @@ All endpoints live under `/api`, return JSON, and require a session cookie (Bett
 mounted at `/api/auth/*`) unless noted. Every query is scoped to the signed-in user; ids
 belonging to someone else return `404`.
 
-Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/404/409/422/500.
+Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/403/404/409/422/500.
 
 Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`,
 `ToolOutput`, `PolicyRule`, `PolicyDefaults`) are exported from `@synapse/core` and
@@ -45,7 +45,12 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
 | GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, executeAfter, createdAt }[] }` (audit view) |
-| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user |
+| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, approver, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user. `approver: "admin"` means the user's team requires a team admin to decide it: unless the user is an owner or admin of their team, they can only wait (deciding returns `403`) |
+
+Tool calls carry `approver: "admin" | null` (in `GET /api/runs/:id`, in `UiPart`s and on the
+`approval.requested` event). A team owner or admin decides such a call of a team member with
+the same decision routes above; `decidedBy` records the admin. They can't decide a member's
+other calls (`404`), and can't undo for them.
 
 ### Event stream
 
@@ -108,6 +113,35 @@ decisions. Recipients that all share one (non-public) email domain become an `al
 condition; a single `repo`/`project`/`channel`/`team` becomes `equals`. Sending and
 destructive tools are only suggested with a condition. Learned rules are ordinary rules; a
 task that read outside content still asks.
+
+## Team workspace
+
+See [teams.md](teams.md) for how team rules combine with yours. One workspace per person.
+`Role` is `"owner" | "admin" | "member"`; "admin+" means owner or admin (`403` otherwise);
+endpoints other than create and join return `404 no_workspace` when you're not in one.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/workspace` | | `{ workspace: { id, name, createdAt } \| null, role: Role \| null, members: { userId, name, email, role, joinedAt }[] }` |
+| POST | `/api/workspace` | `{ name }` | `201`, same shape; you are the owner. `409 already_member` if you're in one |
+| PATCH | `/api/workspace` | `{ name }` | same shape (admin+) |
+| POST | `/api/workspace/invites` | `{ role?: "member" \| "admin", expiresInDays?: 1–30 }` (default member, 7) | `201 { invite: { id, role, expiresAt, createdAt, status }, link }` — `link` is `${PUBLIC_URL}/join/<token>`, returned only here; only a SHA-256 of the token is stored (admin+) |
+| GET | `/api/workspace/invites` | | `{ invites: { id, role, expiresAt, createdAt, usedAt, revokedAt, usedByEmail, status: "active" \| "used" \| "revoked" \| "expired" }[] }` (admin+) |
+| DELETE | `/api/workspace/invites/:id` | | `204` — revokes an unused invite (admin+) |
+| POST | `/api/workspace/join` | `{ token }` | same shape as GET. Single use. `404 invite_not_found`; `409 invite_used` / `invite_revoked` / `invite_expired` / `already_member` / `already_joined` |
+| PATCH | `/api/workspace/members/:userId` | `{ role: Role }` | same shape as GET (admin+). Only owners make or change owners; `409 last_owner` when it would leave no owner |
+| DELETE | `/api/workspace/members/:userId` | | `204`. Anyone may remove themselves (leave); admin+ remove others, only owners remove owners. `409 last_owner` for the last owner while others remain; the last person to leave deletes the workspace |
+| GET | `/api/workspace/rules` | | `{ rules: TeamRule[], canEdit: boolean }` — `TeamRule` is a `PolicyRule` plus `approver?: "admin"` |
+| PUT | `/api/workspace/rules` | `{ rules: TeamRule[] }` (priority order) | same (admin+). Validated like personal rules, incl. `422 invalid_pattern`. `approver` is kept only on `ask` rules |
+| GET | `/api/workspace/approvals` | | `{ approvals: { …same as /api/approvals, requester: { id, name, email } }[] }` — team members' calls (yours included) awaiting an admin (admin+) |
+| GET | `/api/workspace/audit.csv?from&to` | | `text/csv` attachment (admin+). `from`/`to` are `YYYY-MM-DD` (inclusive) or ISO times; default the last 30 days, at most a year, at most 50,000 rows (`422 too_many_rows`) |
+
+The audit CSV has a header row `time,member,task,tool,effect,decision,status,decided_by,decided_via,reason`:
+every tool call proposed in members' tasks while they were in the team, oldest first. `decision`
+is what the policy said (`allow`/`ask`/`block`), `decided_by` the email of the person who
+decided (empty when policy decided). Quoting follows RFC 4180 (CRLF lines); a cell starting
+with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'` so spreadsheets don't run it as a
+formula.
 
 ## Memory
 
