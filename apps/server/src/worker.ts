@@ -1,6 +1,7 @@
 import {
   createModel,
   type ModelSpec,
+  nextUndoWaitMs,
   type ProviderKeys,
   parseModelRef,
   runAgent,
@@ -80,6 +81,14 @@ export class Worker {
 
   private wakeOne() {
     this.wakers.shift()?.();
+  }
+
+  /** Nudges idle workers when a parked run becomes claimable, instead of waiting for a poll. */
+  private wakeLater(runId: string, ms: number) {
+    const timer = setTimeout(() => {
+      if (!this.stopped) void this.s.wake(runId).catch(() => {});
+    }, ms + 25);
+    timer.unref?.();
   }
 
   private idle(): Promise<void> {
@@ -246,8 +255,13 @@ export class Worker {
         },
       });
       await events.flush(runId);
-      if (status !== "running") await resetAttempts(db, runId);
-      await releaseRun(db, runId, this.id);
+      await resetAttempts(db, runId);
+      // "running" means parked on an undo window: come back exactly when it ends. Read
+      // fresh so an undo that landed meanwhile resumes the run now.
+      const wait =
+        status === "running" ? nextUndoWaitMs(await new PgRunStore(db).listToolCalls(runId)) : 0;
+      await releaseRun(db, runId, this.id, wait);
+      if (wait > 0) this.wakeLater(runId, wait);
     } catch (error) {
       await events.flush(runId).catch(() => {});
       if (controller.signal.aborted) {

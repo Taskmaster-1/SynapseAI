@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryEvents, MemoryStore } from "./memory-store";
-import { type RunAgentOptions, runAgent } from "./runtime";
+import { nextUndoWaitMs, type RunAgentOptions, runAgent, UNDO_DENIAL } from "./runtime";
 import { type ScriptedStep, scriptedModel } from "./testing";
 import { type ToolDefinition, ToolRegistry } from "./tools";
 
@@ -457,5 +457,94 @@ describe("review fixes", () => {
       signal: controller.signal,
     }).catch(() => {});
     expect(store.toolCalls.get("p")!.status).toBe("unknown");
+  });
+});
+
+describe("undo window", () => {
+  const past = () => new Date(Date.now() - 1).toISOString();
+
+  test("an approved send waits for its window, then runs exactly once", async () => {
+    const { store, events, run, m, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: { to: "a@b.com" }, id: "c1" }] },
+      { text: "Sent." },
+    ]);
+    expect(await runAgent(opts)).toBe("waiting");
+    store.decide("c1", true, undefined, 10_000);
+
+    expect(await runAgent(opts)).toBe("running");
+    expect(executed).toEqual([]);
+    expect(store.toolCalls.get("c1")!.status).toBe("approved");
+    expect(m.calls).toHaveLength(1);
+    const wait = nextUndoWaitMs(await store.listToolCalls(run.id));
+    expect(wait).toBeGreaterThan(9_000);
+    expect(wait).toBeLessThanOrEqual(10_000);
+    expect(events.events.at(-1)).toMatchObject({
+      type: "tool.status",
+      toolCallId: "c1",
+      status: "approved",
+      executeAfter: store.toolCalls.get("c1")!.executeAfter,
+    });
+
+    store.toolCalls.get("c1")!.executeAfter = past();
+    expect(await runAgent(opts)).toBe("completed");
+    expect(await runAgent(opts)).toBe("completed");
+    expect(executed).toEqual(['send_email:{"to":"a@b.com"}']);
+    expect(nextUndoWaitMs(await store.listToolCalls(run.id))).toBe(0);
+  });
+
+  test("undo inside the window denies the call and tells the model", async () => {
+    const { store, m, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: { to: "a@b.com" }, id: "c1" }] },
+      { text: "Okay, not sending." },
+    ]);
+    await runAgent(opts);
+    store.decide("c1", true, undefined, 10_000);
+    expect(await runAgent(opts)).toBe("running");
+    expect(store.undo("c1")).toBe(true);
+    expect(store.undo("c1")).toBe(false);
+    expect(await runAgent(opts)).toBe("completed");
+    expect(executed).toEqual([]);
+    expect(store.toolCalls.get("c1")).toMatchObject({ status: "denied" });
+    expect(JSON.stringify(m.calls[1]!.prompt)).toContain(UNDO_DENIAL);
+  });
+
+  test("reads in the same step run now; later writes wait behind the delayed one", async () => {
+    const { store, opts } = setup([
+      {
+        toolCalls: [
+          { name: "send_email", input: { to: "a@b.com" }, id: "s1" },
+          { name: "search", input: { q: "x" }, id: "r1" },
+          { name: "send_email", input: { to: "c@d.com" }, id: "s2" },
+        ],
+      },
+      { text: "done" },
+    ]);
+    expect(await runAgent(opts)).toBe("waiting");
+    store.decide("s1", true, undefined, 10_000);
+    store.decide("s2", true); // no window (e.g. undo turned off between decisions)
+    expect(await runAgent(opts)).toBe("running");
+    expect(executed).toEqual(["search"]);
+    expect(store.toolCalls.get("s2")!.status).toBe("approved");
+
+    store.toolCalls.get("s1")!.executeAfter = past();
+    expect(await runAgent(opts)).toBe("completed");
+    expect(executed).toEqual([
+      "search",
+      'send_email:{"to":"a@b.com"}',
+      'send_email:{"to":"c@d.com"}',
+    ]);
+  });
+
+  test("stopping the run inside the window denies the waiting call", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: { to: "a@b.com" }, id: "c1" }] },
+    ]);
+    await runAgent(opts);
+    store.decide("c1", true, undefined, 10_000);
+    expect(await runAgent(opts)).toBe("running");
+    store.runs.get(run.id)!.cancelRequested = "now";
+    expect(await runAgent(opts)).toBe("cancelled");
+    expect(executed).toEqual([]);
+    expect(store.toolCalls.get("c1")!.status).toBe("denied");
   });
 });

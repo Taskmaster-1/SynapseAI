@@ -34,6 +34,11 @@ export function denialReason(output: ToolOutput | null, fallback?: string | null
   return fallback ?? null;
 }
 
+/** Denied because the person pressed Undo inside the undo window. */
+export function isUndone(output: ToolOutput | null): boolean {
+  return output?.type === "denied" && /^the user undid this action/i.test(output.reason);
+}
+
 export function receiptPhase(p: ToolPart): "running" | "done" | "failed" | "unknown" {
   if (p.status === "succeeded") return "done";
   if (p.status === "failed") return "failed";

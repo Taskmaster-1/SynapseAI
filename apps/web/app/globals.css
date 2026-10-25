@@ -1090,3 +1090,19 @@ a:hover > .brand .brand-spark {
 .tour-progress {
   animation: tour-progress var(--dwell, 4800ms) linear both;
 }
+
+/* Undo window: a fuse that burns down while an approved send can still be taken back. */
+@keyframes undo-fuse {
+  to {
+    transform: scaleX(0);
+  }
+}
+.undo-fuse {
+  transform-origin: left;
+  animation: undo-fuse var(--fuse, 10s) linear both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .undo-fuse {
+    display: none;
+  }
+}

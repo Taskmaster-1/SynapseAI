@@ -164,7 +164,7 @@ test("policy block, approvals inbox and decisions over HTTP", async () => {
         json: { approved: true, input: { note: "likes green tea" } },
       })
     ).status,
-  ).toBe(204);
+  ).toBe(200);
   expect((await grace(path, { method: "POST", json: { approved: true } })).status).toBe(409);
 
   await worker.processNow(runId);

@@ -7,25 +7,46 @@ import { useToast } from "@/components/toast";
 import { EffectPill, Monogram } from "@/components/ui";
 import { ApiError, type Approval, api, errorMessage } from "@/lib/api";
 import { cx, formatDateTime, formatRelative, splitToolName } from "@/lib/format";
-import { approvalTitle } from "./approval-card";
+import { approvalTitle, MiniStamp } from "./approval-card";
+import { UndoCountdown, UndoFuse, type UndoTarget, useTimeLeft } from "./undo-window";
 
 /** How long the stamp sits on the slip before the row leaves. */
 const STAMP_MS = 800;
+/** How long "Undone" stays before the row leaves. */
+const UNDONE_MS = 1500;
 
 /** Home's "Needs you" row: enough to decide simple things, a link for the rest. */
 export function ApprovalCompact({
   approval: a,
   onDone,
+  onHold,
 }: {
   approval: Approval;
   onDone: () => void;
+  /** The approved action waits out an undo window: keep this row until `onDone`. */
+  onHold?: () => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [stamped, setStamped] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Undo window: shown after the stamp, until it ends or is undone. */
+  const [undo, setUndo] = useState<UndoTarget | null>(null);
+  const [undone, setUndone] = useState(false);
+  const left = useTimeLeft(undo?.executeAfter);
   const settle = useRef<(() => void) | null>(null);
   const { source } = splitToolName(a.name);
+
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
+  const over = !!undo && (undone || left <= 0);
+
+  // The window ended (or was undone): let the row leave.
+  useEffect(() => {
+    if (!over) return;
+    const timer = setTimeout(() => doneRef.current(), undone ? UNDONE_MS : 0);
+    return () => clearTimeout(timer);
+  }, [over, undone]);
 
   // If the row unmounts mid-stamp, still let the caller know.
   useEffect(
@@ -42,10 +63,14 @@ export function ApprovalCompact({
     setBusy(true);
     setError(null);
     try {
-      await api.decide(a.runId, a.toolCallId, { approved: true });
+      const { executeAfter } = (await api.decide(a.runId, a.toolCallId, { approved: true })) ?? {
+        executeAfter: null,
+      };
+      if (executeAfter) onHold?.();
       settle.current = () => {
         toast("Approved", "success");
-        onDone();
+        if (executeAfter) setUndo({ runId: a.runId, toolCallId: a.toolCallId, executeAfter });
+        else onDone();
       };
       setStamped(true);
       setTimeout(() => {
@@ -89,23 +114,42 @@ export function ApprovalCompact({
           {error ? <p className="mt-1 text-12 text-danger">{error}</p> : null}
         </div>
       </div>
-      <div
-        className={cx("flex shrink-0 items-center gap-2 pl-[34px] sm:pl-0", stamped && "invisible")}
-      >
-        <Link href={`/inbox?id=${encodeURIComponent(a.toolCallId)}`} className="btn btn-sm">
-          Review
-        </Link>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          disabled={busy || stamped}
-          onClick={() => void approve()}
+      {undo ? (
+        <div className="flex shrink-0 items-center gap-2.5 pl-[34px] text-13 text-fg-muted sm:pl-0">
+          <MiniStamp tone={undone ? "danger" : "ok"}>{undone ? "Undone" : "Approved"}</MiniStamp>
+          {undone ? (
+            <span role="status">{a.effect === "send" ? "Not sent" : "Didn't run"}</span>
+          ) : (
+            <UndoCountdown target={undo} effect={a.effect} onUndone={() => setUndone(true)} />
+          )}
+          {undone ? null : <UndoFuse executeAfter={undo.executeAfter} />}
+        </div>
+      ) : (
+        <div
+          className={cx(
+            "flex shrink-0 items-center gap-2 pl-[34px] sm:pl-0",
+            stamped && "invisible",
+          )}
         >
-          {busy ? <LoaderCircle className="anim-spin size-3.5" /> : <Check className="size-3.5" />}
-          {busy ? "Approving…" : "Approve"}
-        </button>
-      </div>
-      {stamped ? (
+          <Link href={`/inbox?id=${encodeURIComponent(a.toolCallId)}`} className="btn btn-sm">
+            Review
+          </Link>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={busy || stamped}
+            onClick={() => void approve()}
+          >
+            {busy ? (
+              <LoaderCircle className="anim-spin size-3.5" />
+            ) : (
+              <Check className="size-3.5" />
+            )}
+            {busy ? "Approving…" : "Approve"}
+          </button>
+        </div>
+      )}
+      {stamped && !undo ? (
         <span
           role="status"
           className="stamp stamp-in pointer-events-none absolute right-6 bottom-3 text-[18px] text-ok sm:top-1/2 sm:bottom-auto sm:-mt-[18px]"

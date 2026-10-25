@@ -10,6 +10,7 @@ import {
   approvalTitle,
   MiniStamp,
 } from "@/components/approval/approval-card";
+import { UndoCountdown, type UndoTarget, useTimeLeft } from "@/components/approval/undo-window";
 import { Markdown } from "@/components/markdown";
 import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
@@ -22,6 +23,52 @@ interface Decided {
   approved: boolean;
   reason?: string;
   edited: boolean;
+  /** Set when an approved send or delete waits out its undo window. */
+  executeAfter?: string | null;
+  /** Taken back inside the undo window. */
+  undone?: boolean;
+}
+
+function undoTarget(a: Approval, d: Decided): UndoTarget | null {
+  return d.executeAfter
+    ? { runId: a.runId, toolCallId: a.toolCallId, executeAfter: d.executeAfter }
+    : null;
+}
+
+/** A signed row whose send is still inside its undo window. */
+function rowUndo(a: Approval, d: Decided | undefined): UndoTarget | null {
+  return d?.approved && !d.undone ? undoTarget(a, d) : null;
+}
+
+/** The row's age, or nothing while its undo countdown sits in that corner. */
+function RowTime({ createdAt, undo }: { createdAt: string; undo: UndoTarget | null }) {
+  const left = useTimeLeft(undo?.executeAfter);
+  if (undo && left > 0) return null;
+  return (
+    <span className="ml-auto shrink-0" title={formatDateTime(createdAt)}>
+      {formatRelative(createdAt)}
+    </span>
+  );
+}
+
+/** "Sending in 9s · Undo" on the row itself, so it stays reachable after the pane moves on. */
+function RowUndo({
+  target,
+  effect,
+  onUndone,
+}: {
+  target: UndoTarget;
+  effect: Approval["effect"];
+  onUndone: () => void;
+}) {
+  return (
+    <UndoCountdown
+      target={target}
+      effect={effect}
+      onUndone={onUndone}
+      className="absolute right-3.5 bottom-3 text-12 text-fg-muted"
+    />
+  );
 }
 
 function isTyping(e: KeyboardEvent) {
@@ -103,6 +150,11 @@ export default function InboxPage() {
     return () => document.removeEventListener("keydown", onKey);
   }, [move, current, decided]);
 
+  function markUndone(id: string) {
+    setDecided((m) => (m[id] ? { ...m, [id]: { ...m[id], undone: true } } : m));
+    void reload();
+  }
+
   function onDecided(a: Approval, d: Decided) {
     setKept((k) => ({ ...k, [a.toolCallId]: a }));
     setDecided((m) => ({ ...m, [a.toolCallId]: d }));
@@ -172,7 +224,7 @@ export default function InboxPage() {
                     const on = a.toolCallId === selected;
                     const { source } = splitToolName(a.name);
                     return (
-                      <li key={a.toolCallId}>
+                      <li key={a.toolCallId} className="relative">
                         <button
                           type="button"
                           aria-current={on ? "true" : undefined}
@@ -206,17 +258,22 @@ export default function InboxPage() {
                           <span className="flex min-w-0 items-center gap-2 text-12 text-fg-faint">
                             <Monogram name={source ?? "Synapse"} size={16} />
                             {d ? (
-                              <MiniStamp tone={d.approved ? "ok" : "danger"}>
-                                {d.approved ? "Approved" : "Denied"}
+                              <MiniStamp tone={d.approved && !d.undone ? "ok" : "danger"}>
+                                {d.undone ? "Undone" : d.approved ? "Approved" : "Denied"}
                               </MiniStamp>
                             ) : (
                               <EffectPill effect={a.effect} />
                             )}
-                            <span className="ml-auto shrink-0" title={formatDateTime(a.createdAt)}>
-                              {formatRelative(a.createdAt)}
-                            </span>
+                            <RowTime createdAt={a.createdAt} undo={rowUndo(a, d)} />
                           </span>
                         </button>
+                        {rowUndo(a, d) ? (
+                          <RowUndo
+                            target={rowUndo(a, d)!}
+                            effect={a.effect}
+                            onUndone={() => markUndone(a.toolCallId)}
+                          />
+                        ) : null}
                       </li>
                     );
                   })}
@@ -283,6 +340,9 @@ export default function InboxPage() {
                   approved={decided[current.toolCallId]!.approved}
                   reason={decided[current.toolCallId]!.reason}
                   edited={decided[current.toolCallId]!.edited}
+                  undo={undoTarget(current, decided[current.toolCallId]!)}
+                  undone={decided[current.toolCallId]!.undone}
+                  onUndone={() => markUndone(current.toolCallId)}
                   phase="continuing"
                 />
                 {pending.length === 0 ? (

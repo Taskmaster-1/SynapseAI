@@ -29,6 +29,13 @@
       "when": 1792859791484,
       "tag": "0003_triggers_and_integrations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792889484602,
+      "tag": "0004_undo_window",
+      "breakpoints": true
     }
   ]
 }

@@ -73,6 +73,7 @@ export const chats = new Hono<AppEnv>()
           output: r.output,
           decidedBy: r.decidedBy,
           preview: r.preview,
+          executeAfter: r.executeAfter?.toISOString() ?? null,
         }))
       : [];
     const [run] = await db
