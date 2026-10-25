@@ -3,6 +3,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Bell,
   Check,
   Cpu,
   Monitor,
@@ -32,9 +33,10 @@ import { type ThemePref, useTheme } from "@/lib/theme";
 import { useApi } from "@/lib/use-api";
 import { useWorkspace } from "@/lib/workspace";
 import { MAX_CHAIN, ModelPicker, modelFromRef, priceLabel } from "./model-picker";
+import { Notifications } from "./notifications";
 import { PolicyEditor } from "./policy-editor";
 
-type Section = "general" | "models" | "budgets" | "rules" | "appearance";
+type Section = "general" | "notifications" | "models" | "budgets" | "rules" | "appearance";
 
 const SECTIONS: { id: Section; label: string; icon: ReactNode; blurb: string }[] = [
   {
@@ -42,6 +44,12 @@ const SECTIONS: { id: Section; label: string; icon: ReactNode; blurb: string }[]
     label: "General",
     icon: <User />,
     blurb: "Who you are and how you like to work.",
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    icon: <Bell />,
+    blurb: "Hear about approvals on your phone, or by email.",
   },
   {
     id: "models",
@@ -184,6 +192,12 @@ export default function SettingsPage() {
             </div>
           ) : section === "general" ? (
             <General settings={s} save={save} />
+          ) : section === "notifications" ? (
+            <Notifications
+              settings={s}
+              save={save}
+              emailConfigured={Boolean(config.data?.features.emailAlerts)}
+            />
           ) : section === "models" ? (
             <Models settings={s} save={save} known={config.data?.models ?? []} />
           ) : (

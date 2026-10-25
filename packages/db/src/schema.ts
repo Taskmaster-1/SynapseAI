@@ -118,6 +118,8 @@ export const userSettings = pgTable("user_settings", {
   dismissedSuggestions: text("dismissed_suggestions").array().notNull().default([]),
   /** Seconds an approved send or destructive action waits, with an Undo, before it runs. 0 disables. */
   undoSeconds: integer("undo_seconds").notNull().default(10),
+  /** Email the account address when something needs approval (needs SMTP configured). */
+  emailAlerts: boolean("email_alerts").notNull().default(false),
   updatedAt: updatedAt(),
 });
 
@@ -342,6 +344,30 @@ export const integrations = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("integrations_user_provider_idx").on(t.userId, t.provider)],
+);
+
+/**
+ * Web Push subscriptions: one per browser or installed app. The endpoint is the push
+ * service URL for that device; the keys encrypt payloads to it and are sealed at rest.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull().unique(),
+    /** Sealed. */
+    p256dh: text("p256dh").notNull(),
+    /** Sealed. */
+    auth: text("auth").notNull(),
+    /** A readable device name, e.g. "Safari on iPhone". */
+    userAgent: text("user_agent"),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [index("push_subscriptions_user_idx").on(t.userId)],
 );
 
 // ── Knowledge & memory ─────────────────────────────────────────────────────

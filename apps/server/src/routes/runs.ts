@@ -140,10 +140,13 @@ export const runs = new Hono<AppEnv>()
         approved: z.boolean(),
         reason: z.string().max(1000).optional(),
         input: z.json().optional(),
+        /** Where it was decided: the app, or a notification's Approve/Deny button. */
+        via: z.enum(["web", "push"]).default("web"),
       }),
     );
     const toolCallId = c.req.param("toolCallId");
-    const { executeAfter } = await decided(c, [{ toolCallId, ...input }]);
+    const { via, ...decision } = input;
+    const { executeAfter } = await decided(c, [{ toolCallId, ...decision }], via);
     return c.json({ executeAfter: executeAfter[toolCallId] ?? null });
   })
 
@@ -219,17 +222,18 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
  * Appends an event for a run no worker may be driving (it is parked). Forgets the cached
  * seq afterwards so a later writer on this instance re-reads the tail.
  */
-/** Applies decisions made in the web app, turning input problems into API errors. */
+/** Applies decisions made in the web app (or from its notifications), turning input problems into API errors. */
 async function decided(
   c: { var: AppEnv["Variables"]; req: { param(name: "id"): string } },
   decisions: Decision[],
+  via: "web" | "push" = "web",
 ) {
   try {
     return await decide(c.var.services, {
       userId: c.var.user.id,
       runId: c.req.param("id"),
       decisions,
-      via: "web",
+      via,
     });
   } catch (error) {
     if (error instanceof DecisionInputError) apiError(error.status, error.code, error.message);

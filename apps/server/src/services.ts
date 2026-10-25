@@ -2,7 +2,9 @@ import { createDatabase, type Database, EVENTS_CHANNEL, EventLog, SecretBox } fr
 import { createEmbedder, type ToolsetConfig } from "@synapse/tools";
 import { type Auth, createAuth } from "./auth";
 import type { Config } from "./config";
+import { EmailChannel, type MailTransport, smtpTransport } from "./notify/email";
 import { Notifier } from "./notify/notifier";
+import { PushChannel, type PushSender, webPushSender } from "./notify/push";
 
 export const RUNS_CHANNEL = "synapse_runs";
 
@@ -47,12 +49,25 @@ export interface Services {
   toolset: ToolsetConfig;
   /** Tells people about approvals through push, Slack and other channels. */
   notifier: Notifier;
+  /** Web Push, when VAPID keys are configured. */
+  push: PushChannel | null;
+  /** Email alerts, when SMTP is configured. */
+  email: EmailChannel | null;
   /** Wakes idle workers (on any instance) when a run becomes runnable. */
   wake: (runId: string) => Promise<void>;
   close: () => Promise<void>;
 }
 
-export async function createServices(config: Config): Promise<Services> {
+/** Swappable delivery, so tests never touch the network. */
+export interface ServiceOptions {
+  pushSender?: PushSender;
+  mailTransport?: MailTransport;
+}
+
+export async function createServices(
+  config: Config,
+  options: ServiceOptions = {},
+): Promise<Services> {
   const database = await createDatabase(config.DATABASE_URL);
   await database.migrate();
   const box = await SecretBox.fromSecret(config.secret);
@@ -73,11 +88,29 @@ export async function createServices(config: Config): Promise<Services> {
       google: config.google,
     },
     notifier: new Notifier(() => services),
+    push: null,
+    email: null,
     wake: (runId) => database.notify(RUNS_CHANNEL, runId),
     close: async () => {
       await stop();
       await database.close();
     },
   };
+  if (config.push) {
+    services.push = new PushChannel(
+      () => services,
+      config.push,
+      options.pushSender ?? webPushSender,
+    );
+    services.notifier.add(services.push);
+  }
+  if (config.email) {
+    services.email = new EmailChannel(
+      () => services,
+      config.email.from,
+      options.mailTransport ?? smtpTransport(config.email.smtpUrl),
+    );
+    services.notifier.add(services.email);
+  }
   return services;
 }

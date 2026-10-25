@@ -7,6 +7,7 @@ import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
 import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
+import { push } from "./routes/push";
 import { approvals, runs } from "./routes/runs";
 import { suggestions } from "./routes/suggestions";
 import type { Services } from "./services";
@@ -48,7 +49,12 @@ export function createApp(services: Services) {
         google: Boolean(config.GOOGLE_CLIENT_ID),
       },
       integrations: { google: Boolean(config.google) },
-      features: { webSearch: Boolean(config.webSearch), embeddings: Boolean(config.embedding) },
+      features: {
+        webSearch: Boolean(config.webSearch),
+        embeddings: Boolean(config.embedding),
+        push: Boolean(services.push),
+        emailAlerts: Boolean(services.email),
+      },
       models: config.SYNAPSE_MODELS,
     }),
   );
@@ -74,6 +80,7 @@ export function createApp(services: Services) {
   api.route("/usage", usage);
   api.route("/models", models);
   api.route("/automations", automations);
+  api.route("/push", push);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);
 
