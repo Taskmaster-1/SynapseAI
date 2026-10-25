@@ -4,7 +4,7 @@ All endpoints live under `/api`, return JSON, and require a session cookie (Bett
 mounted at `/api/auth/*`) unless noted. Every query is scoped to the signed-in user; ids
 belonging to someone else return `404`.
 
-Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/404/409/422/500.
+Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/404/409/422/500/503.
 
 Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`,
 `ToolOutput`, `PolicyRule`, `PolicyDefaults`) are exported from `@synapse/core` and
@@ -15,7 +15,7 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 | Method | Path | Response |
 |---|---|---|
 | GET | `/api/health` | `{ ok: true }` |
-| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
+| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean }, features: { webSearch: boolean, embeddings: boolean, push: boolean, emailAlerts: boolean }, models: string[] }` — `push`/`emailAlerts`: the server has VAPID keys / SMTP configured |
 | GET | `/oauth/client-metadata.json` | OAuth client metadata document for MCP servers |
 | POST | `/api/slack/interactions` | Slack's interactivity endpoint (button clicks). Authenticated by Slack's `X-Slack-Signature` over the raw body, rejected (`401`) when wrong or more than 5 minutes old. Answers `200` at once and decides in the background |
 | POST | `/api/hooks/:automationId/:token` | Starts a task for a webhook automation. Any body (JSON is pretty-printed for the agent, capped at 16 KB). `202 { ok, taskId }`; `404` for an unknown id or wrong token, `409` when paused, `413` over 256 KB, `429` over 60 per hour |
@@ -40,7 +40,7 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/runs/:id/events?after=<seq>` | | **SSE** stream (see below) |
-| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before |
+| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown, via?: "web" \| "push" }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before. `via` (default `"web"`; anything else is `422`) records where it was decided: the service worker sends `"push"` for a notification's Approve/Deny button |
 | POST | `/api/runs/:id/tool-calls/:toolCallId/undo` | | `204`; `409` once the window has ended ("Too late to undo: it already ran."). The call is denied and the agent is told the user undid it |
 | POST | `/api/runs/:id/tool-calls/decisions` | `{ decisions: { toolCallId, approved, reason?, input? }[] }` (`input`: approve with edited input, same as the single route) | `{ executeAfter: Record<toolCallId, string> }` for calls that opened an undo window; all or nothing in one transaction: `409` if any call is no longer awaiting approval, `400` on duplicate ids. The run is re-queued once when nothing is left awaiting |
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
@@ -139,7 +139,7 @@ task that read outside content still asks.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
 | GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |
@@ -151,6 +151,25 @@ Anthropic, OpenAI or Google (e.g. `openai:gpt-5.5`, `anthropic:claude-sonnet-5-5
 price table and the server's configured chain. `available` means the server or the user has a key
 for that provider. Available models come first, then newest. `updatedAt` is the last catalog sync
 (`null` if it never synced; built-in prices are used then).
+
+## Notifications
+
+Web Push for approvals (setup: [notifications.md](notifications.md)). Routes other than
+`GET /api/push/config` and the list/remove routes answer `503 push_not_configured` when the
+server has no VAPID keys.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/push/config` | | `{ enabled: boolean, publicKey: string \| null }` — the VAPID public key for `PushManager.subscribe` |
+| GET | `/api/push/subscriptions` | | `{ subscriptions: { id, endpoint, label: string \| null, createdAt, lastUsedAt: string \| null }[] }` — this user's devices |
+| POST | `/api/push/subscriptions` | the browser's `PushSubscription.toJSON()`: `{ endpoint, keys: { p256dh, auth } }`, plus optional `label` (default: derived from the User-Agent, e.g. "Safari on iPhone") | `201 { subscription }`. Upserts by endpoint (a device signed in to another account moves to it). Keys are sealed at rest. `422 invalid_endpoint` unless the endpoint is an https URL on a known push service (FCM, Mozilla, Apple, WNS) |
+| DELETE | `/api/push/subscriptions/:id` | | `204` |
+| POST | `/api/push/test` | | `{ sent: number, removed: number }` — a test notification to every device; `removed` counts devices the push service no longer knows (404/410), which are deleted |
+
+Each approval is pushed once (to every device of each of its recipients) when a run starts
+waiting: `{ title, body, tag: toolCallId, data: { url, runId, toolCallId, effect }, actions: [approve, deny] }`;
+several at once for one person become one summary without buttons. Email alerts are a user
+setting (`emailAlerts` in `/api/settings`).
 
 ## Automations
 

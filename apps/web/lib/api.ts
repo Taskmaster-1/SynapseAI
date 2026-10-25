@@ -99,7 +99,7 @@ const enc = encodeURIComponent;
 
 export interface AppConfig {
   auth: { emailPassword: boolean; github: boolean; google: boolean; signup?: boolean };
-  features: { webSearch: boolean; embeddings: boolean };
+  features: { webSearch: boolean; embeddings: boolean; push?: boolean; emailAlerts?: boolean };
   models: string[];
 }
 
@@ -245,6 +245,8 @@ export interface Settings {
   providerKeys: Record<ProviderName, boolean>;
   /** Seconds an approved send or delete waits, with an Undo, before it runs. 0 is off. */
   undoSeconds: number;
+  /** Email the account address when something needs approval. */
+  emailAlerts: boolean;
 }
 
 export interface SettingsUpdate {
@@ -253,6 +255,22 @@ export interface SettingsUpdate {
   budgets?: { perRunUsd: number | null; perDayUsd: number | null };
   providerKeys?: Partial<Record<ProviderName, string | null>>;
   undoSeconds?: number;
+  emailAlerts?: boolean;
+}
+
+export interface PushConfig {
+  enabled: boolean;
+  /** VAPID public key (base64url), for PushManager.subscribe. */
+  publicKey: string | null;
+}
+
+export interface PushDevice {
+  id: string;
+  endpoint: string;
+  /** e.g. "Safari on iPhone". */
+  label: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
 }
 
 export interface ModelInfo {
@@ -450,4 +468,12 @@ export const api = {
   models: () => get<{ models: ModelInfo[]; updatedAt: string | null }>("/api/models"),
   saveSettings: (body: SettingsUpdate) => put<Settings>("/api/settings", body),
   usage: (days = 30) => get<{ days: UsageDay[] }>(`/api/usage?days=${days}`),
+
+  pushConfig: () => get<PushConfig>("/api/push/config"),
+  pushDevices: () => get<{ subscriptions: PushDevice[] }>("/api/push/subscriptions"),
+  /** Body is the browser's PushSubscription.toJSON(); re-subscribing a device is an upsert. */
+  addPushDevice: (subscription: PushSubscriptionJSON) =>
+    post<{ subscription: PushDevice }>("/api/push/subscriptions", subscription),
+  removePushDevice: (id: string) => del(`/api/push/subscriptions/${enc(id)}`),
+  testPush: () => post<{ sent: number; removed: number }>("/api/push/test"),
 };

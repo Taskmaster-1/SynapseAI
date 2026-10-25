@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseModelRef } from "@synapse/core";
 import type { GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
+import webpush from "web-push";
 import { z } from "zod";
 import type { SlackAppConfig } from "./notify/slack-api";
 
@@ -11,6 +12,10 @@ const csv = z.string().transform((s) =>
     .map((x) => x.trim())
     .filter(Boolean),
 );
+
+/** An empty value (`KEY=` in a .env file) counts as unset. */
+const optional = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === "" ? undefined : v), schema.optional());
 
 const Env = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -64,6 +69,18 @@ const Env = z.object({
   SLACK_SIGNING_SECRET: z.string().optional(),
   /** How often email triggers check for new mail. */
   TRIGGER_POLL_SECONDS: z.coerce.number().int().min(30).default(120),
+
+  /** Web Push (VAPID). Generate with `bunx web-push generate-vapid-keys`; dev makes its own. */
+  VAPID_PUBLIC_KEY: optional(z.string().min(40)),
+  VAPID_PRIVATE_KEY: optional(z.string().min(20)),
+  /** Who push services can contact about this sender: "mailto:you@example.com" or an https URL. */
+  VAPID_SUBJECT: optional(
+    z.string().regex(/^(mailto:.+@.+|https:\/\/.+)$/, "must be mailto:… or https://…"),
+  ),
+  /** Email alerts over SMTP, e.g. smtps://user:pass@smtp.example.com:465. */
+  SMTP_URL: optional(z.string().url()),
+  /** Sender for email alerts, e.g. "Synapse <synapse@example.com>". */
+  EMAIL_FROM: optional(z.string().min(3)),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -113,6 +130,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...parsed,
     google,
     slack,
+    push: pushConfig(parsed),
+    email:
+      parsed.SMTP_URL && parsed.EMAIL_FROM
+        ? { smtpUrl: parsed.SMTP_URL, from: parsed.EMAIL_FROM }
+        : null,
     SYNAPSE_MODELS: models,
     SYNAPSE_SUMMARY_MODEL: summaryModel,
     secret,
@@ -165,4 +187,40 @@ function devSecret(parsed: z.infer<typeof Env>): string {
   const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
   writeFileSync(path, secret, { mode: 0o600 });
   return secret;
+}
+
+export interface PushConfig {
+  publicKey: string;
+  privateKey: string;
+  subject: string;
+}
+
+/**
+ * VAPID keys from the environment. In development, unset keys are generated once and kept
+ * in .data/vapid.json (like the dev secret) so subscriptions survive restarts; production
+ * and tests never generate them, so push stays off until configured.
+ */
+function pushConfig(parsed: z.infer<typeof Env>): PushConfig | null {
+  const { VAPID_PUBLIC_KEY: publicKey, VAPID_PRIVATE_KEY: privateKey } = parsed;
+  if (Boolean(publicKey) !== Boolean(privateKey))
+    throw new Error("Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY, or neither");
+  const fallbackSubject = parsed.PUBLIC_URL.startsWith("https://")
+    ? parsed.PUBLIC_URL
+    : "mailto:synapse@localhost.localdomain";
+  if (publicKey && privateKey) {
+    if (parsed.NODE_ENV === "production" && !parsed.VAPID_SUBJECT)
+      throw new Error("VAPID_SUBJECT (mailto:you@example.com) is required with VAPID keys");
+    return { publicKey, privateKey, subject: parsed.VAPID_SUBJECT ?? fallbackSubject };
+  }
+  if (parsed.NODE_ENV !== "development") return null;
+  return { ...devVapidKeys(), subject: parsed.VAPID_SUBJECT ?? fallbackSubject };
+}
+
+function devVapidKeys(): { publicKey: string; privateKey: string } {
+  const path = ".data/vapid.json";
+  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  mkdirSync(dirname(path), { recursive: true });
+  const keys = webpush.generateVAPIDKeys();
+  writeFileSync(path, JSON.stringify(keys), { mode: 0o600 });
+  return keys;
 }
