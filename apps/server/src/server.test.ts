@@ -375,7 +375,7 @@ test("batch decisions: several calls in one step, decided atomically", async () 
   const path = `/api/runs/${runId}/tool-calls/decisions`;
   const decisions = [
     { toolCallId: "b1", approved: true },
-    { toolCallId: "b2", approved: true, editedInput: { note: "two, edited" } },
+    { toolCallId: "b2", approved: true, input: { note: "two, edited" } },
     { toolCallId: "b3", approved: false, reason: "not this one" },
   ];
   // Another user's run is invisible; duplicates and unknown ids change nothing.

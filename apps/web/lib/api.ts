@@ -357,7 +357,7 @@ export const api = {
   /** Decides several calls of one run at once; all or nothing (409 if any moved on). */
   decideMany: (
     runId: string,
-    decisions: { toolCallId: string; approved: boolean; reason?: string; editedInput?: unknown }[],
+    decisions: { toolCallId: string; approved: boolean; reason?: string; input?: unknown }[],
   ) => post(`/api/runs/${enc(runId)}/tool-calls/decisions`, { decisions }),
   cancel: (runId: string, mode: "now" | "after_step" = "now") =>
     post(`/api/runs/${enc(runId)}/cancel`, { mode }),

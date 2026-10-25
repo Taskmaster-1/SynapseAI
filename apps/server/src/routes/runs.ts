@@ -171,7 +171,7 @@ export const runs = new Hono<AppEnv>()
               toolCallId: z.string().min(1),
               approved: z.boolean(),
               reason: z.string().max(1000).optional(),
-              editedInput: z.json().optional(),
+              input: z.json().optional(),
             }),
           )
           .min(1)
@@ -182,8 +182,8 @@ export const runs = new Hono<AppEnv>()
     if (new Set(decisions.map((d) => d.toolCallId)).size !== decisions.length)
       apiError(400, "duplicate", "Each action can be decided once.");
     for (const d of decisions)
-      if (d.approved && d.editedInput !== undefined)
-        await assertEditAllowed(c, runId, d.toolCallId, d.editedInput);
+      if (d.approved && d.input !== undefined)
+        await assertEditAllowed(c, runId, d.toolCallId, d.input);
     await decideToolCalls(c.var.services.database.db, {
       userId: c.var.user.id,
       runId,
@@ -191,7 +191,7 @@ export const runs = new Hono<AppEnv>()
         toolCallId: d.toolCallId,
         approved: d.approved,
         ...(d.reason ? { reason: d.reason } : {}),
-        ...(d.approved && d.editedInput !== undefined ? { editedInput: d.editedInput } : {}),
+        ...(d.approved && d.input !== undefined ? { editedInput: d.input } : {}),
       })),
     });
     await c.var.services.wake(runId);
