@@ -68,6 +68,7 @@ export class Notifier {
       );
     const approvals: PendingApproval[] = rows.map((r) => ({
       ...r,
+      recipients: [r.userId],
       url: `${config.PUBLIC_URL}/t/${r.chatId}`,
     }));
     await this.each("notify", (c) => c.notify(approvals));

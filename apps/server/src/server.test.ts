@@ -706,6 +706,7 @@ test("new approvals are announced once to notification channels, and decisions r
     name: "memory_save",
     chatTitle: "remember tea",
   });
+  expect(seen[0]!.recipients).toEqual([seen[0]!.userId]);
   expect(seen[0]!.url).toBe(`${ORIGIN}/t/${seen[0]!.chatId}`);
   // Announcing again finds nothing new.
   expect(await services.notifier.announce(runId)).toEqual([]);

@@ -3,7 +3,13 @@ import type { JSONValue } from "ai";
 
 /** One action waiting for a person, as notification channels see it. */
 export interface PendingApproval {
+  /** Whose task it is. */
   userId: string;
+  /**
+   * Who should hear about it: the requester today; team admins when a team rule says an
+   * admin must sign off. Channels deliver to these people, not to `userId`.
+   */
+  recipients: string[];
   runId: string;
   chatId: string;
   chatTitle: string | null;
