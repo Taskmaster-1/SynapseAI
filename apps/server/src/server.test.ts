@@ -67,6 +67,8 @@ async function sse(cookie: string, runId: string, after = 0): Promise<SeqEvent[]
     headers: { cookie },
   });
   expect(res.headers.get("content-type")).toContain("text/event-stream");
+  // Compressing proxies must pass events through as they are written.
+  expect(res.headers.get("cache-control")).toContain("no-transform");
   const text = await res.text();
   return text
     .split("\n")
