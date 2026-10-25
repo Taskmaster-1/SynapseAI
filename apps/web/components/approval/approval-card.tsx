@@ -16,7 +16,7 @@ import { useToast } from "@/components/toast";
 import { EffectPill, Monogram, Pill, TAINT_SENTENCE } from "@/components/ui";
 import { ApiError, api, errorMessage } from "@/lib/api";
 import { cx, humanize, humanToolName, prettyJson, splitToolName } from "@/lib/format";
-import { asPlan, PlanSteps } from "./checklist";
+import { asPlan, PLAN_TOOL, PlanSteps } from "./checklist";
 import {
   type Drafts,
   fromDrafts,
@@ -267,7 +267,13 @@ export function ApprovalCard(props: ApprovalCardProps) {
                 {TAINT_SENTENCE}
               </p>
             ) : null}
-            {reason ? <p className="text-13 text-fg-muted">{reason}</p> : null}
+            {reason ? (
+              <p className="text-13 text-fg-muted">
+                {name === PLAN_TOOL
+                  ? "Approve once: the steps you keep then run without asking again."
+                  : reason}
+              </p>
+            ) : null}
           </div>
         ) : null}
 

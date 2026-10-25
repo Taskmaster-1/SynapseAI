@@ -208,6 +208,9 @@ export function ApprovalBatch({
   const settle = useRef<(() => void) | null>(null);
   const isTicked = (tid: string) => ticked[tid] ?? true;
   const count = items.filter((a) => isTicked(a.toolCallId)).length;
+  // One reason for every row (the usual case) is said once, not repeated on each line.
+  const reasons = new Set(items.map((a) => a.reason ?? ""));
+  const sharedReason = reasons.size === 1 ? [...reasons][0] || null : null;
   const locked = busy !== null || stamped !== null;
 
   useEffect(
@@ -299,7 +302,8 @@ export function ApprovalBatch({
           </p>
         ) : null}
         <p className="mt-2 text-13 text-fg-muted">
-          Untick anything you don't want. Open a row to see exactly what it sends.
+          {sharedReason ? `${sharedReason} ` : ""}Untick anything you don't want. Open a row to see
+          exactly what it sends.
         </p>
 
         <ul className="mt-4 divide-y divide-line border-y border-line">
@@ -309,7 +313,7 @@ export function ApprovalBatch({
               checked={isTicked(a.toolCallId)}
               onCheck={(v) => setTicked((t) => ({ ...t, [a.toolCallId]: v }))}
               title={approvalTitle(a.preview, a.name)}
-              why={a.reason ?? undefined}
+              why={sharedReason ? undefined : (a.reason ?? undefined)}
               meta={
                 <span className="hidden items-center gap-2 sm:flex">
                   <ToolSource name={a.name} size={16} />

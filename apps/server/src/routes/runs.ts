@@ -85,7 +85,7 @@ export const runs = new Hono<AppEnv>()
           : 0;
 
     c.header("x-accel-buffering", "no");
-    return streamSSE(c, async (stream) => {
+    const response = streamSSE(c, async (stream) => {
       let wake: (() => void) | null = null;
       let pending = true; // read once immediately
       const unsubscribe = bus.subscribe(run.id, () => {
@@ -137,6 +137,10 @@ export const runs = new Hono<AppEnv>()
         clearInterval(ping);
       }
     });
+    // A compressing proxy (Next's rewrites gzip by default) buffers small writes, so a
+    // single status change could sit unsent until more output came. no-transform opts out.
+    response.headers.set("cache-control", "no-cache, no-transform");
+    return response;
   })
 
   .post("/:id/tool-calls/:toolCallId/decision", async (c) => {
