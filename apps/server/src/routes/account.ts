@@ -12,6 +12,11 @@ const Matcher = z.discriminatedUnion("op", [
   z.object({ path: z.string().min(1), op: z.literal("in"), value: z.array(z.json()) }),
   z.object({ path: z.string().min(1), op: z.literal("allEndWith"), value: z.array(z.string()) }),
   z.object({ path: z.string().min(1), op: z.literal("matches"), value: z.string().max(500) }),
+  z.object({
+    path: z.string().default("*"),
+    op: z.literal("emailsEndWith"),
+    value: z.array(z.string().min(2)).min(1),
+  }),
 ]);
 const Defaults = z.object({
   read: Decision,

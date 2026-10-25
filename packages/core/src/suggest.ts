@@ -1,5 +1,5 @@
 import type { JSONValue } from "ai";
-import { type ArgMatcher, getPath, globMatch, type PolicyRule } from "./policy";
+import { type ArgMatcher, emailsIn, getPath, globMatch, type PolicyRule } from "./policy";
 import type { Effect } from "./types";
 
 /**
@@ -97,6 +97,8 @@ export function suggestRules(
     const id = suggestionId(tool, when);
     if (dismissed.includes(id)) continue;
     if (alreadyAllowed(tool, when, rules)) continue;
+    // The user said "ask" for this tool on purpose; a suggestion would quietly override it.
+    if (rules.some((r) => r.decision === "ask" && globMatch(r.tool, tool))) continue;
 
     const label = describe(tool, when);
     out.push({
@@ -119,28 +121,23 @@ export function suggestRules(
 
 /** Matchers that cover every input, or [] when nothing safe generalizes. */
 export function generalize(inputs: JSONValue[]): ArgMatcher[] {
-  const when: ArgMatcher[] = [];
-
-  for (const path of RECIPIENT_FIELDS) {
-    const present = inputs.map((i) => getPath(i, path)).filter((v) => !isEmpty(v));
-    if (present.length === 0) continue;
-    // Seen on some calls but not others: a matcher would not fit, and dropping it would
-    // leave the field unconstrained. Give up on recipients entirely.
-    if (present.length !== inputs.length) return scopeOnly(inputs);
-    const domains = new Set<string>();
-    for (const v of present) {
-      for (const item of Array.isArray(v) ? v : [v]) {
-        const domain = typeof item === "string" ? emailDomain(item) : null;
-        if (!domain) return scopeOnly(inputs);
-        domains.add(domain);
-      }
-    }
-    const [domain] = domains;
-    if (domains.size !== 1 || !domain || PUBLIC_DOMAINS.has(domain)) return scopeOnly(inputs);
-    when.push({ path, op: "allEndWith", value: [`@${domain}`] });
+  const scope = scopeOnly(inputs);
+  // Only calls that address people get a recipient condition.
+  const addressed = inputs.every((i) =>
+    RECIPIENT_FIELDS.some((path) => !isEmpty(getPath(i, path))),
+  );
+  if (!addressed) return scope;
+  // One domain across every address anywhere in every approved call (to, cc, bcc, even the
+  // body). The rule checks the same way, so an added bcc to someone else still asks.
+  const domains = new Set<string>();
+  for (const input of inputs) {
+    const emails = emailsIn(input);
+    if (emails.length === 0) return scope;
+    for (const e of emails) domains.add(e.slice(e.lastIndexOf("@") + 1));
   }
-
-  return [...when, ...scopeOnly(inputs)];
+  const [domain] = domains;
+  if (domains.size !== 1 || !domain || PUBLIC_DOMAINS.has(domain)) return scope;
+  return [{ path: "*", op: "emailsEndWith", value: [`@${domain}`] }, ...scope];
 }
 
 function scopeOnly(inputs: JSONValue[]): ArgMatcher[] {
@@ -153,11 +150,6 @@ function scopeOnly(inputs: JSONValue[]): ArgMatcher[] {
     }
   }
   return when;
-}
-
-function emailDomain(address: string): string | null {
-  const m = /^[^@\s<>]+@([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i.exec(address.trim());
-  return m ? m[1]!.toLowerCase() : null;
 }
 
 function isEmpty(v: JSONValue | undefined): boolean {
@@ -180,7 +172,9 @@ function alreadyAllowed(tool: string, when: ArgMatcher[], rules: PolicyRule[]): 
 
 function matcherKey(m: ArgMatcher): string {
   const value =
-    m.op === "allEndWith" ? [...m.value].map((s) => s.toLowerCase()).sort() : (m.value as unknown);
+    m.op === "allEndWith" || m.op === "emailsEndWith"
+      ? [...m.value].map((s) => s.toLowerCase()).sort()
+      : (m.value as unknown);
   return JSON.stringify([m.path, m.op, value]);
 }
 
@@ -208,7 +202,7 @@ const NOUNS: Record<string, string> = {
 function describe(tool: string, when: ArgMatcher[]): string {
   const noun = NOUNS[tool] ?? `${tool} actions`;
   const parts = when.map((m) => {
-    if (m.op === "allEndWith") return `to ${m.value.join(", ")}`;
+    if (m.op === "allEndWith" || m.op === "emailsEndWith") return `to ${m.value.join(", ")}`;
     if (m.op === "equals") return `in ${String(m.value)}`;
     return `with ${m.path}`;
   });

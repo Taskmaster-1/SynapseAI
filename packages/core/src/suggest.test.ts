@@ -40,7 +40,7 @@ describe("suggestRules", () => {
       tool: "gmail_send",
       effect: "send",
       count: 5,
-      when: [{ path: "to", op: "allEndWith", value: ["@acme.com"] }],
+      when: [{ path: "*", op: "emailsEndWith", value: ["@acme.com"] }],
       label: "emails to @acme.com",
       sentence: "You approved 5 emails to @acme.com without changes.",
       note: "Learned: you approved 5 of these",
@@ -73,7 +73,7 @@ describe("suggestRules", () => {
     expect(suggestRules(list, [])).toEqual([]);
   });
 
-  test("public mail domains and optional recipient fields don't generalize", () => {
+  test("public mail domains don't generalize; an optional cc on the same domain does", () => {
     expect(
       suggestRules(
         times(6, (i) => email(`f${i}@gmail.com`)),
@@ -86,17 +86,24 @@ describe("suggestRules", () => {
         ...(i % 2 ? { cc: ["b@acme.com"] } : {}),
       }),
     );
-    expect(suggestRules(someCc, [])).toEqual([]);
+    expect(suggestRules(someCc, [])[0]!.when).toEqual([
+      { path: "*", op: "emailsEndWith", value: ["@acme.com"] },
+    ]);
   });
 
-  test("every recipient field is constrained", () => {
+  test("the learned rule checks every address, so an added bcc to an outsider still asks", () => {
     const list = times(5, () =>
       decision("gmail_send", "send", { to: "a@acme.com", cc: ["b@acme.com", "c@ACME.com"] }),
     );
-    expect(suggestRules(list, [])[0]!.when).toEqual([
-      { path: "to", op: "allEndWith", value: ["@acme.com"] },
-      { path: "cc", op: "allEndWith", value: ["@acme.com"] },
-    ]);
+    const [s] = suggestRules(list, []);
+    const rule: PolicyRule = { id: "l", tool: s!.tool, decision: "allow", when: s!.when };
+    const send = (input: JSONValue) =>
+      evaluatePolicy({ tool: "gmail_send", effect: "send", input, tainted: false }, [rule])
+        .decision;
+    expect(send({ to: "z@acme.com" })).toBe("allow");
+    expect(send({ to: "z@acme.com", bcc: ["spy@evil.test"] })).toBe("ask");
+    expect(send({ to: ["z@acme.com"], attendees: [{ email: "x@evil.test" }] })).toBe("ask");
+    expect(send({ subject: "no recipients" })).toBe("ask");
   });
 
   test("a single repo or channel becomes an equals matcher", () => {
@@ -135,7 +142,7 @@ describe("suggestRules", () => {
     ).toEqual([]);
   });
 
-  test("an existing equal or broader allow rule suppresses it; narrower or ask does not", () => {
+  test("an existing equal or broader allow rule suppresses it; a narrower one does not", () => {
     const list = times(6, () => email("a@acme.com"));
     const rule = (r: Partial<PolicyRule>): PolicyRule => ({
       id: "r",
@@ -147,20 +154,25 @@ describe("suggestRules", () => {
     expect(suggestRules(list, [rule({ tool: "gmail_*" })])).toEqual([]);
     expect(
       suggestRules(list, [
-        rule({ when: [{ path: "to", op: "allEndWith", value: ["@ACME.com"] }] }),
+        rule({ when: [{ path: "*", op: "emailsEndWith", value: ["@ACME.com"] }] }),
       ]),
     ).toEqual([]);
     expect(
       suggestRules(list, [
         rule({
           when: [
-            { path: "to", op: "allEndWith", value: ["@acme.com"] },
+            { path: "*", op: "emailsEndWith", value: ["@acme.com"] },
             { path: "subject", op: "equals", value: "Hi" },
           ],
         }),
       ]),
     ).toHaveLength(1);
-    expect(suggestRules(list, [rule({ decision: "ask" })])).toHaveLength(1);
+  });
+
+  test("an explicit ask rule for the tool means no suggestion", () => {
+    const list = times(6, () => email("a@acme.com"));
+    expect(suggestRules(list, [{ id: "r", tool: "gmail_*", decision: "ask" }])).toEqual([]);
+    expect(suggestRules(list, [{ id: "r", tool: "slack_*", decision: "ask" }])).toHaveLength(1);
   });
 
   test("dismissed suggestions stay hidden", () => {

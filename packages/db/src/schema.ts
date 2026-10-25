@@ -245,6 +245,8 @@ export const toolCalls = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.runId, t.id] }),
+    // Learned-rule suggestions read a user's recent decisions.
+    index("tool_calls_user_decided_idx").on(t.userId, t.decidedAt),
     index("tool_calls_awaiting_idx")
       .on(t.userId, t.createdAt)
       .where(sql`status = 'awaiting_approval'`),
