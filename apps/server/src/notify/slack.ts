@@ -1,5 +1,5 @@
 import type { Effect } from "@synapse/core";
-import { ConflictError, NotFoundError, schema } from "@synapse/db";
+import { ConflictError, ForbiddenError, NotFoundError, schema } from "@synapse/db";
 import type { JSONValue } from "ai";
 import { and, eq, inArray } from "drizzle-orm";
 import { DecisionInputError, decide } from "../decisions";
@@ -235,6 +235,8 @@ export class SlackChannel implements NotificationChannel {
       // e.g. sent to someone who may see it but not decide it here (not the task's owner).
       if (error instanceof NotFoundError)
         return refuse("This one can't be decided from Slack. Open it in Synapse.");
+      if (error instanceof ForbiddenError)
+        return refuse("Your team needs an admin to decide this one.");
       if (error instanceof DecisionInputError) return refuse(error.message);
       throw error;
     }

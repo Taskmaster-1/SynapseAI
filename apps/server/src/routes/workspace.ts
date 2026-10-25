@@ -1,4 +1,4 @@
-import { isAdminRole, loadTeamRules, membershipOf, schema } from "@synapse/db";
+import { type Db, isAdminRole, loadTeamRules, membershipOf, schema } from "@synapse/db";
 import { and, asc, count, desc, eq, gt, gte, isNull, lt, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Hono } from "hono";
@@ -285,6 +285,7 @@ export const workspace = new Hono<AppEnv>()
     if (!self && !isAdminRole(m.role))
       apiError(403, "forbidden", "Only team owners and admins can remove people.");
     const { db } = c.var.services.database;
+    let withdrawn: string[] = [];
     await db.transaction(async (tx) => {
       const members = await tx
         .select({ userId: schema.workspaceMembers.userId, role: schema.workspaceMembers.role })
@@ -314,7 +315,9 @@ export const workspace = new Hono<AppEnv>()
             eq(schema.workspaceMembers.userId, targetId),
           ),
         );
+      withdrawn = await withdrawAdminRequests(tx as unknown as Db, targetId);
     });
+    for (const runId of withdrawn) await c.var.services.wake(runId);
     return c.body(null, 204);
   })
 
@@ -508,4 +511,51 @@ export function toCsv(header: string[], rows: (string | null | undefined)[][]): 
     return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
   };
   return `${[header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n")}\r\n`;
+}
+
+/**
+ * Someone leaving (or being removed from) a team must not be able to approve, on their own,
+ * an action the team said needs an admin. Their pending admin-required calls are denied, and
+ * runs left with nothing to wait for are re-queued so the agent can respond. Returns them.
+ */
+async function withdrawAdminRequests(tx: Db, userId: string): Promise<string[]> {
+  const denied = await tx
+    .update(schema.toolCalls)
+    .set({
+      status: "denied",
+      decidedAt: new Date(),
+      decisionReason: "Left the team before an admin decided.",
+      output: {
+        type: "denied",
+        reason:
+          "This needed a team admin's approval, and the user left the team before an admin decided. Don't retry it; ask the user what they want to do instead.",
+      },
+    })
+    .where(
+      and(
+        eq(schema.toolCalls.userId, userId),
+        eq(schema.toolCalls.approver, "admin"),
+        eq(schema.toolCalls.status, "awaiting_approval"),
+      ),
+    )
+    .returning({ runId: schema.toolCalls.runId });
+  const runIds = [...new Set(denied.map((d) => d.runId))];
+  const requeued: string[] = [];
+  for (const runId of runIds) {
+    const [left] = await tx
+      .select({ id: schema.toolCalls.id })
+      .from(schema.toolCalls)
+      .where(
+        and(eq(schema.toolCalls.runId, runId), eq(schema.toolCalls.status, "awaiting_approval")),
+      )
+      .limit(1);
+    if (left) continue;
+    const updated = await tx
+      .update(schema.runs)
+      .set({ status: "queued", leaseExpiresAt: null })
+      .where(and(eq(schema.runs.id, runId), eq(schema.runs.status, "waiting")))
+      .returning({ id: schema.runs.id });
+    if (updated.length) requeued.push(runId);
+  }
+  return requeued;
 }

@@ -501,7 +501,7 @@ describe("workspaces", () => {
     ).toBe(200);
   });
 
-  test("after leaving the team, a member decides their own waiting call", async () => {
+  test("leaving the team withdraws calls that were waiting for an admin", async () => {
     const owner = await signUp("o@left.com");
     const member = await signUp("m@left.com");
     await owner.call("/api/workspace", { method: "POST", json: { name: "Left" } });
@@ -523,11 +523,16 @@ describe("workspaces", () => {
     expect(
       (await member.call(`/api/workspace/members/${member.id}`, { method: "DELETE" })).status,
     ).toBe(204);
-    // The team's admins can no longer decide it; the member can.
+    // Leaving is not a way around the admin: the call is withdrawn, and nobody can approve it.
     expect((await owner.call(path, { method: "POST", json: { approved: true } })).status).toBe(404);
     expect((await member.call(path, { method: "POST", json: { approved: true } })).status).toBe(
-      200,
+      409,
     );
+    const detail = await member.call(`/api/runs/${json.runId}`);
+    expect(detail.json.toolCalls[0]).toMatchObject({ id: "l1", status: "denied" });
+    // The run was re-queued so the agent can tell the member what happened.
+    await worker.processNow(json.runId);
+    expect((await member.call(`/api/runs/${json.runId}`)).json.run.status).toBe("completed");
   });
 });
 

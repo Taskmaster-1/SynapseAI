@@ -308,3 +308,41 @@ test("rendering: email inputs, key fields, outcome lines, signatures", () => {
   );
   expect(verifySlackSignature("s", { timestamp: undefined, signature: "x", body: "" })).toBe(false);
 });
+
+test("a team admin gets the member's admin-only request in Slack and approves it there", async () => {
+  const admin = await signUp("boss@team.com");
+  const member = await signUp("dev@team.com");
+  await connectSlack(admin, "U-boss");
+  await admin("/api/workspace", { method: "POST", json: { name: "Team" } });
+  const { json: inv } = await admin("/api/workspace/invites", {
+    method: "POST",
+    json: { role: "member" },
+  });
+  const token = new URL(inv.link).pathname.split("/").pop();
+  expect((await member("/api/workspace/join", { method: "POST", json: { token } })).status).toBe(
+    200,
+  );
+  await admin("/api/workspace/rules", {
+    method: "PUT",
+    json: { rules: [{ tool: "memory_save", decision: "ask", approver: "admin" }] },
+  });
+  script([
+    { toolCalls: [{ name: "memory_save", input: { note: "x" }, id: "n1" }] },
+    { text: "ok" },
+  ]);
+  const { json } = await member("/api/chats", { method: "POST", json: { content: "remember x" } });
+  const runId = json.runId as string;
+  await worker.processNow(runId);
+  await services.slack!.settled();
+
+  const [msg] = slack.dms("U-boss");
+  expect(msg).toBeTruthy();
+  const res = await click(slack.click(msg!, "approve", { signingSecret: SIGNING, user: "U-boss" }));
+  expect(res.status).toBe(200);
+  const decided = await call(runId);
+  const [boss] = await services.database.db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.email, "boss@team.com"));
+  expect(decided).toMatchObject({ status: "approved", decidedVia: "slack", decidedBy: boss!.id });
+});
