@@ -97,8 +97,6 @@ export function suggestRules(
     const id = suggestionId(tool, when);
     if (dismissed.includes(id)) continue;
     if (alreadyAllowed(tool, when, rules)) continue;
-    // The user said "ask" for this tool on purpose; a suggestion would quietly override it.
-    if (rules.some((r) => r.decision === "ask" && globMatch(r.tool, tool))) continue;
 
     const label = describe(tool, when);
     out.push({

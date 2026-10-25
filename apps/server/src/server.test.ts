@@ -165,7 +165,7 @@ test("policy block, approvals inbox and decisions over HTTP", async () => {
         json: { approved: true, input: { note: "likes green tea" } },
       })
     ).status,
-  ).toBe(204);
+  ).toBe(200);
   expect((await grace(path, { method: "POST", json: { approved: true } })).status).toBe(409);
 
   await worker.processNow(runId);
@@ -398,7 +398,7 @@ test("batch decisions: several calls in one step, decided atomically", async () 
   ).toBe(409);
   expect((await me("/api/approvals")).json!.approvals).toHaveLength(3);
 
-  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(204);
+  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(200);
   expect((await me(`/api/runs/${runId}`)).json!.run.status).toBe("queued");
   // A second submit (double click, replay) conflicts.
   expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(409);
@@ -455,7 +455,7 @@ test("propose_plan: approve with a step removed; the kept call runs, the other a
     method: "POST",
     json: { approved: true, input: { summary: "Save two notes", steps: [keep] } },
   });
-  expect(res.status).toBe(204);
+  expect(res.status).toBe(200);
   await worker.processNow(runId);
 
   let detail = await me(`/api/runs/${runId}`);
@@ -618,7 +618,7 @@ test("approvals that learn: suggest, accept, dismiss", async () => {
       method: "POST",
       json: { approved: true },
     });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     await worker.processNow(runId);
   }
 

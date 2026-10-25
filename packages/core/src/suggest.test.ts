@@ -142,7 +142,7 @@ describe("suggestRules", () => {
     ).toEqual([]);
   });
 
-  test("an existing equal or broader allow rule suppresses it; a narrower one does not", () => {
+  test("an existing equal or broader allow rule suppresses it; narrower or ask does not", () => {
     const list = times(6, () => email("a@acme.com"));
     const rule = (r: Partial<PolicyRule>): PolicyRule => ({
       id: "r",
@@ -167,12 +167,8 @@ describe("suggestRules", () => {
         }),
       ]),
     ).toHaveLength(1);
-  });
-
-  test("an explicit ask rule for the tool means no suggestion", () => {
-    const list = times(6, () => email("a@acme.com"));
-    expect(suggestRules(list, [{ id: "r", tool: "gmail_*", decision: "ask" }])).toEqual([]);
-    expect(suggestRules(list, [{ id: "r", tool: "slack_*", decision: "ask" }])).toHaveLength(1);
+    // Accepting is the person's explicit choice, so an ask rule doesn't hide the offer.
+    expect(suggestRules(list, [rule({ decision: "ask" })])).toHaveLength(1);
   });
 
   test("dismissed suggestions stay hidden", () => {

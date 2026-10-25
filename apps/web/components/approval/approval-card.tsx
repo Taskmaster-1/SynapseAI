@@ -26,6 +26,7 @@ import {
   sameJson,
   toDrafts,
 } from "./payload";
+import { UndoCountdown, UndoFuse, type UndoTarget, useTimeLeft } from "./undo-window";
 
 export interface ApprovalHandle {
   approve: () => void;
@@ -45,7 +46,10 @@ export interface ApprovalCardProps {
   /** One gentle amber glow when the card first appears. */
   glow?: boolean;
   /** Called after the server accepted the decision (204). */
-  onDecided: (approved: boolean, info: { reason?: string; edited: boolean }) => void;
+  onDecided: (
+    approved: boolean,
+    info: { reason?: string; edited: boolean; executeAfter: string | null },
+  ) => void;
   /** Called on 409 (already decided / run moved on) so the caller can refetch. */
   onConflict: () => void;
   handle?: Ref<ApprovalHandle>;
@@ -172,8 +176,12 @@ export function ApprovalCard(props: ApprovalCardProps) {
     if (!approved && denyReason.trim()) body.reason = denyReason.trim();
     setBusy(approved ? "approve" : "deny");
     try {
-      await api.decide(runId, toolCallId, body);
-      const info = { reason: body.reason, edited: approved && isEdited };
+      const res = await api.decide(runId, toolCallId, body);
+      const info = {
+        reason: body.reason,
+        edited: approved && isEdited,
+        executeAfter: res?.executeAfter ?? null,
+      };
       const onDecided = props.onDecided;
       settle.current = () => onDecided(approved, info);
       setStamped(approved ? "approved" : "denied");
@@ -470,6 +478,9 @@ export function ApprovalReceipt({
   reason,
   phase,
   edited,
+  undo,
+  undone: undoneBefore,
+  onUndone,
   className,
 }: {
   name: string;
@@ -480,8 +491,56 @@ export function ApprovalReceipt({
   /** For approved calls: what happened after. */
   phase?: "running" | "done" | "failed" | "unknown" | "continuing";
   edited?: boolean;
+  /** Set while an approved send or delete waits out its undo window. */
+  undo?: UndoTarget | null;
+  /** The person took it back inside the window. */
+  undone?: boolean;
+  onUndone?: () => void;
   className?: string;
 }) {
+  const [undoneHere, setUndoneHere] = useState(false);
+  const left = useTimeLeft(undo?.executeAfter);
+  const undone = undoneBefore || undoneHere;
+  const waiting = approved && !undone && !!undo && left > 0 && phase !== "done";
+  if (undone) {
+    return (
+      <div
+        className={cx(
+          "anim-fade-in flex min-w-0 items-center gap-3 rounded-[8px] bg-surface px-3 py-2.5 text-13 shadow-[0_0_0_1px_var(--line)]",
+          className,
+        )}
+      >
+        <MiniStamp tone="danger">Undone</MiniStamp>
+        <span className="min-w-0 flex-1 truncate text-fg">{approvalTitle(preview, name)}</span>
+        <span role="status" className="shrink-0 text-fg-muted">
+          {effect === "send" ? "Not sent" : "Didn't run"}
+        </span>
+      </div>
+    );
+  }
+  if (waiting && undo) {
+    return (
+      <div
+        className={cx(
+          "anim-fade-in relative flex min-w-0 items-center gap-3 rounded-[8px] bg-surface px-3 py-2.5 text-13 shadow-[0_0_0_1px_var(--line)]",
+          className,
+        )}
+      >
+        <MiniStamp tone="ok">Approved</MiniStamp>
+        <span className="min-w-0 flex-1 truncate text-fg">{approvalTitle(preview, name)}</span>
+        <UndoCountdown
+          target={undo}
+          effect={effect}
+          onUndone={() => {
+            setUndoneHere(true);
+            onUndone?.();
+          }}
+          className="shrink-0 text-fg-muted"
+        />
+        <UndoFuse executeAfter={undo.executeAfter} />
+      </div>
+    );
+  }
   const outcome = approved
     ? phase === "failed"
       ? "failed"

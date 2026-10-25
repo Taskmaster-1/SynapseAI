@@ -28,6 +28,8 @@ export type UiPart =
       reason: string | null;
       output: ToolOutput | null;
       preview: string | null;
+      /** Undo window: an approved call waits until this time (ISO) before it runs. */
+      executeAfter?: string | null;
     };
 
 export interface UiMessage {
@@ -99,6 +101,7 @@ export function toUiMessages(rows: StoredMessage[], calls: ToolCallRecord[]): Ui
             reason: rec?.decisionReason ?? null,
             output: rec?.output ?? null,
             preview: rec?.preview ?? null,
+            ...(rec?.executeAfter ? { executeAfter: rec.executeAfter } : {}),
           });
         }
       }
@@ -236,6 +239,7 @@ export function applyEvent(state: ChatState, e: SeqEvent): ChatState {
         status: e.status,
         ...(e.decision ? { decision: e.decision } : {}),
         ...(e.reason !== undefined ? { reason: e.reason } : {}),
+        ...(e.executeAfter !== undefined ? { executeAfter: e.executeAfter } : {}),
       });
     case "approval.requested":
       return updateTool(next, e.toolCallId, {

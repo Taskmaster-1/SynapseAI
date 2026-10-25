@@ -1,5 +1,6 @@
 import type { PolicyDefaults, PolicyRule } from "./policy";
 import { SAFE_DEFAULTS } from "./policy";
+import { UNDO_DENIAL } from "./runtime";
 import type { EventSink, RunStore } from "./store";
 import type { RunEvent, RunRecord, StoredMessage, ToolCallRecord } from "./types";
 
@@ -125,13 +126,27 @@ export class MemoryStore implements RunStore {
     return { rules: this.rules, defaults: this.defaults };
   }
 
-  /** Test helper mirroring the decision endpoint: approve or deny one awaiting call. */
-  decide(id: string, approved: boolean, reason?: string) {
+  /**
+   * Test helper mirroring the decision endpoint: approve or deny one awaiting call.
+   * `undoMs` opens an undo window on an approval.
+   */
+  decide(id: string, approved: boolean, reason?: string, undoMs = 0) {
     const call = this.toolCalls.get(id);
     if (call?.status !== "awaiting_approval") return false;
     call.status = approved ? "approved" : "denied";
+    if (approved && undoMs > 0) call.executeAfter = new Date(Date.now() + undoMs).toISOString();
     if (!approved)
       call.output = { type: "denied", reason: reason ?? "The user denied this action." };
+    return true;
+  }
+
+  /** Test helper mirroring the undo endpoint: approved → denied while the window is open. */
+  undo(id: string) {
+    const call = this.toolCalls.get(id);
+    if (call?.status !== "approved" || !call.executeAfter) return false;
+    if (Date.parse(call.executeAfter) <= Date.now()) return false;
+    call.status = "denied";
+    call.output = { type: "denied", reason: UNDO_DENIAL };
     return true;
   }
 }

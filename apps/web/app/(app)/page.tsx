@@ -17,7 +17,14 @@ import {
   TaintShield,
   taskStatus,
 } from "@/components/ui";
-import { type Automation, api, type ChatSummary, type Connection, errorMessage } from "@/lib/api";
+import {
+  type Approval,
+  type Automation,
+  api,
+  type ChatSummary,
+  type Connection,
+  errorMessage,
+} from "@/lib/api";
 import { describeCron } from "@/lib/cron";
 import {
   cx,
@@ -130,6 +137,15 @@ export default function HomePage() {
 
   const running = (tasks ?? []).filter((t) => taskStatus(t.status) === "running").length;
   const needs = approvals?.length ?? 0;
+  // Rows approved here stay while their undo window runs, even after a reload drops them.
+  const [held, setHeld] = useState<Record<string, Approval>>({});
+  const rows = useMemo(() => {
+    if (!approvals) return approvals;
+    const live = new Set(approvals.map((a) => a.toolCallId));
+    const kept = Object.values(held).filter((a) => !live.has(a.toolCallId));
+    return [...kept, ...approvals].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [approvals, held]);
+  const listed = rows?.length ?? 0;
   const name = firstName(user?.name);
   const suggestions = useMemo(() => suggestionsFor(conns.data?.connections), [conns.data]);
 
@@ -226,7 +242,7 @@ export default function HomePage() {
         />
       ) : null}
 
-      {needs > 0 || !showGuide ? (
+      {listed > 0 || !showGuide ? (
         <section className="mt-14" aria-labelledby="needs-you">
           <SectionTitle
             action={
@@ -251,7 +267,7 @@ export default function HomePage() {
           </SectionTitle>
           {approvals === null ? (
             <Skeleton className="h-16 rounded-card" />
-          ) : needs === 0 ? (
+          ) : listed === 0 ? (
             <p className="flex items-center gap-2.5 text-14 text-fg-muted">
               <span className="grid size-5 place-items-center rounded-full bg-ok-soft text-ok">
                 <Check className="size-3" strokeWidth={2.5} />
@@ -260,15 +276,25 @@ export default function HomePage() {
             </p>
           ) : (
             <ul className="space-y-2.5">
-              {approvals!.slice(0, 3).map((a) => (
+              {rows!.slice(0, 3).map((a) => (
                 <li key={a.toolCallId}>
-                  <ApprovalCompact approval={a} onDone={() => void reload()} />
+                  <ApprovalCompact
+                    approval={a}
+                    onHold={() => setHeld((h) => ({ ...h, [a.toolCallId]: a }))}
+                    onDone={() => {
+                      setHeld((h) => {
+                        const { [a.toolCallId]: _gone, ...rest } = h;
+                        return rest;
+                      });
+                      void reload();
+                    }}
+                  />
                 </li>
               ))}
-              {needs > 3 ? (
+              {listed > 3 ? (
                 <li>
                   <Link href="/inbox" className="text-13 text-fg-muted hover:text-fg">
-                    and {plural(needs - 3, "more")} in the inbox
+                    and {plural(listed - 3, "more")} in the inbox
                   </Link>
                 </li>
               ) : null}

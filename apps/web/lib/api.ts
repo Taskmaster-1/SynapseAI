@@ -165,6 +165,8 @@ export interface AuditToolCall {
   inputEdited?: boolean;
   decidedBy: string | null;
   decidedAt: string | null;
+  /** Undo window: when an approved call runs (ISO), if it had to wait. */
+  executeAfter?: string | null;
   createdAt: string;
 }
 
@@ -241,6 +243,8 @@ export interface Settings {
   models: { chain: string[]; defaultChain?: string[] };
   budgets: { perRunUsd: number | null; perDayUsd: number | null };
   providerKeys: Record<ProviderName, boolean>;
+  /** Seconds an approved send or delete waits, with an Undo, before it runs. 0 is off. */
+  undoSeconds: number;
 }
 
 export interface SettingsUpdate {
@@ -248,6 +252,7 @@ export interface SettingsUpdate {
   models?: { chain: string[] };
   budgets?: { perRunUsd: number | null; perDayUsd: number | null };
   providerKeys?: Partial<Record<ProviderName, string | null>>;
+  undoSeconds?: number;
 }
 
 export interface ModelInfo {
@@ -353,12 +358,22 @@ export const api = {
     runId: string,
     toolCallId: string,
     body: { approved: boolean; reason?: string; input?: unknown },
-  ) => post(`/api/runs/${enc(runId)}/tool-calls/${enc(toolCallId)}/decision`, body),
+  ) =>
+    post<{ executeAfter: string | null }>(
+      `/api/runs/${enc(runId)}/tool-calls/${enc(toolCallId)}/decision`,
+      body,
+    ),
   /** Decides several calls of one run at once; all or nothing (409 if any moved on). */
   decideMany: (
     runId: string,
     decisions: { toolCallId: string; approved: boolean; reason?: string; input?: unknown }[],
-  ) => post(`/api/runs/${enc(runId)}/tool-calls/decisions`, { decisions }),
+  ) =>
+    post<{ executeAfter: Record<string, string> }>(`/api/runs/${enc(runId)}/tool-calls/decisions`, {
+      decisions,
+    }),
+  /** Takes back an approved send or delete while its undo window is open (409 once it ran). */
+  undo: (runId: string, toolCallId: string) =>
+    post(`/api/runs/${enc(runId)}/tool-calls/${enc(toolCallId)}/undo`),
   cancel: (runId: string, mode: "now" | "after_step" = "now") =>
     post(`/api/runs/${enc(runId)}/cancel`, { mode }),
   runs: (limit = 50) => get<{ runs: RunRow[] }>(`/api/runs?limit=${limit}`),

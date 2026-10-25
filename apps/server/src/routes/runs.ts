@@ -1,4 +1,4 @@
-import { evaluatePolicy } from "@synapse/core";
+import { evaluatePolicy, type RunEvent, UNDO_DENIAL } from "@synapse/core";
 import {
   decideToolCall,
   decideToolCalls,
@@ -6,6 +6,7 @@ import {
   readEvents,
   requestCancel,
   schema,
+  undoToolCall,
 } from "@synapse/db";
 import type { JSONValue } from "ai";
 import { and, asc, desc, eq } from "drizzle-orm";
@@ -13,6 +14,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { type AppEnv, apiError, body } from "../http";
+import type { Services } from "../services";
 
 const PAUSE_OR_END = new Set(["waiting", "completed", "failed", "cancelled"]);
 const EVENT_PAGE = 1000;
@@ -60,6 +62,7 @@ export const runs = new Hono<AppEnv>()
         output: schema.toolCalls.output,
         decidedBy: schema.toolCalls.decidedBy,
         decidedAt: schema.toolCalls.decidedAt,
+        executeAfter: schema.toolCalls.executeAfter,
         createdAt: schema.toolCalls.createdAt,
       })
       .from(schema.toolCalls)
@@ -148,15 +151,43 @@ export const runs = new Hono<AppEnv>()
     const runId = c.req.param("id");
     if (input.approved && input.input !== undefined)
       await assertEditAllowed(c, runId, c.req.param("toolCallId"), input.input);
-    await decideToolCall(c.var.services.database.db, {
+    const toolCallId = c.req.param("toolCallId");
+    const decided = await decideToolCall(c.var.services.database.db, {
       userId: c.var.user.id,
       runId,
-      toolCallId: c.req.param("toolCallId"),
+      toolCallId,
       approved: input.approved,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.input !== undefined ? { editedInput: input.input } : {}),
     });
-    await c.var.services.wake(runId);
+    const { services } = c.var;
+    const { executeAfter } = decided;
+    if (executeAfter) {
+      // Live viewers (another tab, the run panel) get the countdown too.
+      await emitNow(services, runId, {
+        type: "tool.status",
+        toolCallId,
+        status: "approved",
+        executeAfter: executeAfter.toISOString(),
+      });
+    }
+    if (decided.requeued && decided.runnableAt) {
+      // Parked until the window ends: it is queued, not waiting on you.
+      await emitNow(services, runId, { type: "run.status", status: "queued" });
+      wakeAt(services, runId, decided.runnableAt);
+    } else await services.wake(runId);
+    return c.json({ executeAfter: executeAfter?.toISOString() ?? null });
+  })
+
+  .post("/:id/tool-calls/:toolCallId/undo", async (c) => {
+    const runId = c.req.param("id");
+    const toolCallId = c.req.param("toolCallId");
+    const { services } = c.var;
+    await undoToolCall(services.database.db, { userId: c.var.user.id, runId, toolCallId });
+    const output = { type: "denied" as const, reason: UNDO_DENIAL };
+    await emitNow(services, runId, { type: "tool.status", toolCallId, status: "denied" });
+    await emitNow(services, runId, { type: "tool.result", toolCallId, output });
+    await services.wake(runId);
     return c.body(null, 204);
   })
 
@@ -184,7 +215,8 @@ export const runs = new Hono<AppEnv>()
     for (const d of decisions)
       if (d.approved && d.input !== undefined)
         await assertEditAllowed(c, runId, d.toolCallId, d.input);
-    await decideToolCalls(c.var.services.database.db, {
+    const { services } = c.var;
+    const decided = await decideToolCalls(services.database.db, {
       userId: c.var.user.id,
       runId,
       decisions: decisions.map((d) => ({
@@ -194,8 +226,22 @@ export const runs = new Hono<AppEnv>()
         ...(d.approved && d.input !== undefined ? { editedInput: d.input } : {}),
       })),
     });
-    await c.var.services.wake(runId);
-    return c.body(null, 204);
+    for (const [toolCallId, at] of Object.entries(decided.executeAfter))
+      await emitNow(services, runId, {
+        type: "tool.status",
+        toolCallId,
+        status: "approved",
+        executeAfter: at.toISOString(),
+      });
+    if (decided.requeued && decided.runnableAt) {
+      await emitNow(services, runId, { type: "run.status", status: "queued" });
+      wakeAt(services, runId, decided.runnableAt);
+    } else await services.wake(runId);
+    return c.json({
+      executeAfter: Object.fromEntries(
+        Object.entries(decided.executeAfter).map(([id, at]) => [id, at.toISOString()]),
+      ),
+    });
   })
 
   .post("/:id/cancel", async (c) => {
@@ -235,6 +281,24 @@ export const approvals = new Hono<AppEnv>().get("/", async (c) => {
     .orderBy(desc(schema.toolCalls.createdAt));
   return c.json({ approvals: rows });
 });
+
+/**
+ * Appends an event for a run no worker may be driving (it is parked). Forgets the cached
+ * seq afterwards so a later writer on this instance re-reads the tail.
+ */
+async function emitNow(services: Services, runId: string, event: RunEvent) {
+  await services.events.emit(runId, event);
+  services.events.forget(runId);
+}
+
+/** Wakes workers when a run parked on an undo window becomes claimable, not on the next poll. */
+function wakeAt(services: Services, runId: string, at: Date) {
+  const timer = setTimeout(
+    () => void services.wake(runId).catch(() => {}),
+    Math.max(0, at.getTime() - Date.now()) + 25,
+  );
+  timer.unref?.();
+}
 
 /** Edited arguments are re-checked against block rules: editing must not route around them. */
 async function assertEditAllowed(

@@ -116,6 +116,8 @@ export const userSettings = pgTable("user_settings", {
   instructions: text("instructions"),
   /** Learned-rule suggestions the user said "not now" to, by suggestion id. */
   dismissedSuggestions: text("dismissed_suggestions").array().notNull().default([]),
+  /** Seconds an approved send or destructive action waits, with an Undo, before it runs. 0 disables. */
+  undoSeconds: integer("undo_seconds").notNull().default(10),
   updatedAt: updatedAt(),
 });
 
@@ -238,6 +240,8 @@ export const toolCalls = pgTable(
     preview: text("preview"),
     decidedBy: text("decided_by"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Undo window: an approved call does not run before this time. */
+    executeAfter: timestamp("execute_after", { withTimezone: true }),
     output: jsonb("output").$type<ToolOutput>(),
     fullOutput: jsonb("full_output").$type<ToolOutput>(),
     createdAt: createdAt(),
