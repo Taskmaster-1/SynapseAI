@@ -96,6 +96,16 @@ Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 |---|---|---|---|
 | GET | `/api/policy` | | `{ defaults: PolicyDefaults, rules: PolicyRule[] }` |
 | PUT | `/api/policy` | `{ defaults, rules }` (rules in priority order) | same |
+| GET | `/api/policy/suggestions` | | `{ suggestions: RuleSuggestion[] }` |
+| POST | `/api/policy/suggestions/:id/accept` | | `{ defaults, rules }` — adds the allow rule first; `404` if not a current suggestion |
+| POST | `/api/policy/suggestions/:id/dismiss` | | `204` — hidden for good |
+
+Suggestions ("approvals that learn") come from your own decisions on non-read actions over the
+last 60 days: at least 5 unedited approvals of a tool, and no denial or edit among its last 10
+decisions. Recipients that all share one (non-public) email domain become an `allEndWith`
+condition; a single `repo`/`project`/`channel`/`team` becomes `equals`. Sending and
+destructive tools are only suggested with a condition. Learned rules are ordinary rules; a
+task that read outside content still asks.
 
 ## Memory
 

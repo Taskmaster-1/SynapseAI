@@ -4,7 +4,7 @@ import type { ArgMatcher, Decision, Effect, PolicyDefaults, PolicyRule } from "@
 import { GripVertical, Plus, ShieldAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
-import { EffectPill, ErrorNote, Segmented, Skeleton } from "@/components/ui";
+import { EffectPill, ErrorNote, Pill, Segmented, Skeleton } from "@/components/ui";
 import { api, errorMessage, type Policy } from "@/lib/api";
 import { cx, humanToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -436,6 +436,11 @@ export function PolicyEditor({ prefillTool }: { prefillTool?: string | null }) {
                       />
                     </div>
                     <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {r.note.startsWith("Learned:") ? (
+                        <Pill tone="ok" title="Added from your approvals. Remove it any time.">
+                          Learned
+                        </Pill>
+                      ) : null}
                       {r.tool && !/[*?]/.test(r.tool) ? (
                         <span className="text-12 text-fg-faint">{humanToolName(r.tool)}</span>
                       ) : r.tool ? (

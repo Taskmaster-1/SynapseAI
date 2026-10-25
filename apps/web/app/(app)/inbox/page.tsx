@@ -10,6 +10,7 @@ import {
   approvalTitle,
   MiniStamp,
 } from "@/components/approval/approval-card";
+import { LearnPrompt, SuggestionStrip } from "@/components/approval/learned-rules";
 import { Markdown } from "@/components/markdown";
 import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
@@ -142,6 +143,7 @@ export default function InboxPage() {
           </p>
         </header>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-6">
+          <SuggestionStrip className="mx-2 mb-5" />
           {loading ? (
             <div className="space-y-2.5 px-2">
               {[0, 1, 2].map((i) => (
@@ -285,6 +287,9 @@ export default function InboxPage() {
                   edited={decided[current.toolCallId]!.edited}
                   phase="continuing"
                 />
+                {decided[current.toolCallId]!.approved && !decided[current.toolCallId]!.edited ? (
+                  <LearnPrompt tool={current.name} />
+                ) : null}
                 {pending.length === 0 ? (
                   <div className="anim-fade-in pt-10 pb-4 text-center">
                     <p className="font-serif text-40 text-fg">

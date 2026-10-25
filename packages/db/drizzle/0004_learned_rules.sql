@@ -1,0 +1,1 @@
+ALTER TABLE "user_settings" ADD COLUMN "dismissed_suggestions" text[] DEFAULT '{}' NOT NULL;

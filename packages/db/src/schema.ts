@@ -113,6 +113,8 @@ export const userSettings = pgTable("user_settings", {
   /** Bring-your-own provider keys, encrypted with the server secret. */
   providerKeys: jsonb("provider_keys").$type<Record<string, string>>(),
   instructions: text("instructions"),
+  /** Learned-rule suggestions the user said "not now" to, by suggestion id. */
+  dismissedSuggestions: text("dismissed_suggestions").array().notNull().default([]),
   updatedAt: updatedAt(),
 });
 
