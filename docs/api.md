@@ -40,6 +40,7 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 |---|---|---|---|
 | GET | `/api/runs/:id/events?after=<seq>` | | **SSE** stream (see below) |
 | POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown }` | `204`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card) |
+| POST | `/api/runs/:id/tool-calls/decisions` | `{ decisions: { toolCallId, approved, reason?, editedInput? }[] }` | `204`; all or nothing in one transaction: `409` if any call is no longer awaiting approval, `400` on duplicate ids. The run is re-queued once when nothing is left awaiting |
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
 | GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, createdAt }[] }` (audit view) |

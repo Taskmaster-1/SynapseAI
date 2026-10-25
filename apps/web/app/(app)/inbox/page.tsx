@@ -10,6 +10,7 @@ import {
   approvalTitle,
   MiniStamp,
 } from "@/components/approval/approval-card";
+import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
 import { Markdown } from "@/components/markdown";
 import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
@@ -68,6 +69,12 @@ export default function InboxPage() {
   }, [ordered, pending, selected]);
 
   const current = ordered.find((a) => a.toolCallId === selected) ?? null;
+  // Open asks from the same run sign off together as one checklist (plans keep their card).
+  const batch = useMemo(() => {
+    if (!current || decided[current.toolCallId] || current.name === PLAN_TOOL) return [];
+    const same = pending.filter((a) => a.runId === current.runId && a.name !== PLAN_TOOL);
+    return same.length >= 2 ? same.sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
+  }, [current, decided, pending]);
   const tainted = (chatId: string) => tasks?.find((t) => t.id === chatId)?.tainted ?? false;
 
   const move = useCallback(
@@ -107,6 +114,23 @@ export default function InboxPage() {
     setKept((k) => ({ ...k, [a.toolCallId]: a }));
     setDecided((m) => ({ ...m, [a.toolCallId]: d }));
     const next = pending.find((x) => x.toolCallId !== a.toolCallId);
+    if (next && desktop) setSelected(next.toolCallId);
+    void reload();
+  }
+
+  function onBatchDecided(list: Approval[], outcome: Record<string, boolean>) {
+    setKept((k) => ({ ...k, ...Object.fromEntries(list.map((a) => [a.toolCallId, a])) }));
+    setDecided((m) => ({
+      ...m,
+      ...Object.fromEntries(
+        list.map((a) => [
+          a.toolCallId,
+          { approved: outcome[a.toolCallId] ?? false, edited: false },
+        ]),
+      ),
+    }));
+    const done = new Set(list.map((a) => a.toolCallId));
+    const next = pending.find((x) => !done.has(x.toolCallId));
     if (next && desktop) setSelected(next.toolCallId);
     void reload();
   }
@@ -296,6 +320,16 @@ export default function InboxPage() {
                   </div>
                 ) : null}
               </div>
+            ) : batch.length > 0 ? (
+              <ApprovalBatch
+                key={batch.map((a) => a.toolCallId).join()}
+                handle={card}
+                runId={current.runId}
+                items={batch}
+                tainted={tainted(current.chatId)}
+                onDecided={(outcome) => onBatchDecided(batch, outcome)}
+                onConflict={() => void reload()}
+              />
             ) : (
               <ApprovalCard
                 key={current.toolCallId}

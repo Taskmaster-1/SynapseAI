@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { JSONValue } from "ai";
 import { MemoryEvents, MemoryStore } from "./memory-store";
+import { canonicalJson, hashInput, PLAN_GRANT_REASON } from "./plan";
 import { type RunAgentOptions, runAgent } from "./runtime";
 import { type ScriptedStep, scriptedModel } from "./testing";
 import { type ToolDefinition, ToolRegistry } from "./tools";
@@ -457,5 +459,81 @@ describe("review fixes", () => {
       signal: controller.signal,
     }).catch(() => {});
     expect(store.toolCalls.get("p")!.status).toBe("unknown");
+  });
+});
+
+describe("plan grants", () => {
+  const email = { to: "a@b.com", body: "hi" };
+  async function grant(store: MemoryStore, runId: string, tool: string, input: JSONValue) {
+    store.runs.get(runId)!.planGrants.push({ tool, inputHash: await hashInput(input) });
+  }
+
+  test("canonical hashing ignores key order", async () => {
+    expect(canonicalJson({ b: 1, a: { d: [1, { y: 2, x: 1 }], c: null } })).toBe(
+      '{"a":{"c":null,"d":[1,{"x":1,"y":2}]},"b":1}',
+    );
+    expect(await hashInput({ to: "a", body: "b" })).toBe(await hashInput({ body: "b", to: "a" }));
+    expect(await hashInput({ to: "a" })).not.toBe(await hashInput({ to: "b" }));
+  });
+
+  test("an exactly matching call runs without asking, and the grant is spent", async () => {
+    const { store, run, opts } = setup([
+      // Same input, keys in another order.
+      { toolCalls: [{ name: "send_email", input: { body: "hi", to: "a@b.com" }, id: "g1" }] },
+      { toolCalls: [{ name: "send_email", input: email, id: "g2" }] },
+    ]);
+    await grant(store, run.id, "send_email", email);
+    expect(await runAgent(opts)).toBe("waiting");
+    expect(store.toolCalls.get("g1")).toMatchObject({
+      status: "succeeded",
+      decision: "allow",
+      decisionReason: PLAN_GRANT_REASON,
+    });
+    // The same call again is not covered: each grant is used once.
+    expect(store.toolCalls.get("g2")!.status).toBe("awaiting_approval");
+    expect((await store.getRun(run.id)).planGrants).toEqual([
+      expect.objectContaining({ tool: "send_email", usedBy: "g1" }),
+    ]);
+    expect(executed).toEqual(['send_email:{"body":"hi","to":"a@b.com"}']);
+  });
+
+  test("a call with a different input still asks", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: { ...email, body: "hi!" }, id: "g1" }] },
+    ]);
+    await grant(store, run.id, "send_email", email);
+    expect(await runAgent(opts)).toBe("waiting");
+    expect(store.toolCalls.get("g1")!.status).toBe("awaiting_approval");
+    expect((await store.getRun(run.id)).planGrants[0]!.usedBy).toBeUndefined();
+  });
+
+  test("a block rule beats a grant", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: email, id: "g1" }] },
+      { text: "blocked" },
+    ]);
+    store.rules = [{ id: "no-email", tool: "send_*", decision: "block" }];
+    await grant(store, run.id, "send_email", email);
+    expect(await runAgent(opts)).toBe("completed");
+    expect(store.toolCalls.get("g1")).toMatchObject({ status: "denied", decision: "block" });
+    expect(executed).toEqual([]);
+  });
+
+  test("a grant holds in a tainted run, even next to an untrusted read", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "read_inbox", input: {} }] },
+      {
+        toolCalls: [
+          { name: "read_inbox", input: { q: "again" } },
+          { name: "send_email", input: email, id: "g1" },
+        ],
+      },
+      { toolCalls: [{ name: "send_email", input: { to: "x@evil.com" }, id: "x1" }] },
+    ]);
+    await grant(store, run.id, "send_email", email);
+    expect(await runAgent(opts)).toBe("waiting");
+    expect((await store.getRun(run.id)).tainted).toBe(true);
+    expect(store.toolCalls.get("g1")).toMatchObject({ status: "succeeded", decision: "allow" });
+    expect(store.toolCalls.get("x1")!.status).toBe("awaiting_approval");
   });
 });

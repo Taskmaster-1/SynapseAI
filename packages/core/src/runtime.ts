@@ -21,6 +21,7 @@ import {
   toModelOutput,
 } from "./context";
 import { costUsd, isRetryable, type ModelSpec } from "./models";
+import { hashInput, PLAN_GRANT_REASON } from "./plan";
 import { evaluatePolicy } from "./policy";
 import type { EventSink, RunStore } from "./store";
 import type { ToolDefinition, ToolRegistry } from "./tools";
@@ -261,10 +262,13 @@ async function settleToolCalls(
   await Promise.all(reads.map((c) => execute(opts, run, c, limits, signal)));
 
   // Writes proposed in the same step as an untrusted read were judged before the run was
-  // tainted. Re-judge them now; anything auto-allowed goes back to the user.
+  // tainted. Re-judge them now; anything auto-allowed goes back to the user. Steps of an
+  // approved plan stay allowed: the user signed off on that exact input.
   if (run.tainted && reads.length > 0) {
     let asked = false;
-    for (const c of writes.filter((w) => w.decision === "allow")) {
+    for (const c of writes.filter(
+      (w) => w.decision === "allow" && w.decisionReason !== PLAN_GRANT_REASON,
+    )) {
       const reason =
         "This step read untrusted content, so this action needs your approval before it runs.";
       if (
@@ -520,6 +524,8 @@ async function streamOneStep(
 
   const policy = await store.getPolicy(run.userId);
   const toolCalls: Omit<ToolCallRecord, "messageId" | "runId">[] = [];
+  const grants = run.planGrants.map((g) => ({ ...g }));
+  let grantsUsed = false;
   for (const part of content) {
     if (part.type !== "tool-call") continue;
     const def = opts.tools.get(part.toolName);
@@ -543,7 +549,7 @@ async function streamOneStep(
       });
       continue;
     }
-    const verdict = evaluatePolicy(
+    let verdict = evaluatePolicy(
       {
         tool: def.name,
         effect: def.effect,
@@ -554,6 +560,17 @@ async function streamOneStep(
       policy.rules,
       policy.defaults,
     );
+    // A call matching a step of an approved plan, exactly, was already signed off by the
+    // user: it runs without asking again, even in a tainted run. Block rules still win.
+    if (verdict.decision !== "block" && grants.some((g) => !g.usedBy && g.tool === def.name)) {
+      const hash = await hashInput(input);
+      const grant = grants.find((g) => !g.usedBy && g.tool === def.name && g.inputHash === hash);
+      if (grant) {
+        grant.usedBy = part.toolCallId;
+        grantsUsed = true;
+        verdict = { decision: "allow", reason: PLAN_GRANT_REASON, ruleId: null };
+      }
+    }
     const status: ToolCallStatus =
       verdict.decision === "allow"
         ? "approved"
@@ -573,6 +590,9 @@ async function streamOneStep(
     });
   }
 
+  // Spend grants before recording the calls: a crash in between costs a grant (the call
+  // asks instead), never lets one grant cover two calls.
+  if (grantsUsed) await store.updateRun(run.id, { planGrants: grants });
   const stored = await store.appendAssistantStep({
     id: messageId,
     chatId: run.chatId,

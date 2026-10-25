@@ -1,6 +1,7 @@
 export * from "./context";
 export * from "./memory-store";
 export * from "./models";
+export * from "./plan";
 export * from "./policy";
 export * from "./prices";
 export * from "./runtime";

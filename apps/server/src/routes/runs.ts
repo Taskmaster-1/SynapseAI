@@ -1,5 +1,12 @@
 import { evaluatePolicy } from "@synapse/core";
-import { decideToolCall, PgRunStore, readEvents, requestCancel, schema } from "@synapse/db";
+import {
+  decideToolCall,
+  decideToolCalls,
+  PgRunStore,
+  readEvents,
+  requestCancel,
+  schema,
+} from "@synapse/db";
 import type { JSONValue } from "ai";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
@@ -148,6 +155,44 @@ export const runs = new Hono<AppEnv>()
       approved: input.approved,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.input !== undefined ? { editedInput: input.input } : {}),
+    });
+    await c.var.services.wake(runId);
+    return c.body(null, 204);
+  })
+
+  // Several calls from one run decided at once (the grouped checklist). All or nothing.
+  .post("/:id/tool-calls/decisions", async (c) => {
+    const { decisions } = await body(
+      c,
+      z.object({
+        decisions: z
+          .array(
+            z.object({
+              toolCallId: z.string().min(1),
+              approved: z.boolean(),
+              reason: z.string().max(1000).optional(),
+              editedInput: z.json().optional(),
+            }),
+          )
+          .min(1)
+          .max(100),
+      }),
+    );
+    const runId = c.req.param("id");
+    if (new Set(decisions.map((d) => d.toolCallId)).size !== decisions.length)
+      apiError(400, "duplicate", "Each action can be decided once.");
+    for (const d of decisions)
+      if (d.approved && d.editedInput !== undefined)
+        await assertEditAllowed(c, runId, d.toolCallId, d.editedInput);
+    await decideToolCalls(c.var.services.database.db, {
+      userId: c.var.user.id,
+      runId,
+      decisions: decisions.map((d) => ({
+        toolCallId: d.toolCallId,
+        approved: d.approved,
+        ...(d.reason ? { reason: d.reason } : {}),
+        ...(d.approved && d.editedInput !== undefined ? { editedInput: d.editedInput } : {}),
+      })),
     });
     await c.var.services.wake(runId);
     return c.body(null, 204);

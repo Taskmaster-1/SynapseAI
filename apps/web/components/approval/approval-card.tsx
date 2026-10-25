@@ -16,6 +16,7 @@ import { useToast } from "@/components/toast";
 import { EffectPill, Monogram, Pill, TAINT_SENTENCE } from "@/components/ui";
 import { ApiError, api, errorMessage } from "@/lib/api";
 import { cx, humanize, humanToolName, prettyJson, splitToolName } from "@/lib/format";
+import { asPlan, PlanSteps } from "./checklist";
 import {
   type Drafts,
   fromDrafts,
@@ -90,9 +91,18 @@ export function ApprovalCard(props: ApprovalCardProps) {
   const settle = useRef<(() => void) | null>(null);
   const root = useRef<HTMLElement>(null);
   const denyInput = useRef<HTMLInputElement>(null);
+  /** A `propose_plan` call shows its steps as a checklist; unticked steps are left out. */
+  const plan = asPlan(name, input);
+  const [kept, setKept] = useState<boolean[]>(() => plan?.steps.map(() => true) ?? []);
+  const keptCount = kept.filter(Boolean).length;
 
   /** The input as currently edited, or an error. */
   function edited(): { value: unknown } | { error: string } {
+    if (plan && mode === "view") {
+      if (keptCount === plan.steps.length) return { value: input };
+      if (keptCount === 0) return { error: "Tick at least one step, or deny the plan." };
+      return { value: { ...(input as object), steps: plan.steps.filter((_, i) => kept[i]) } };
+    }
     if (mode !== "edit") return { value: input };
     if (raw || !objectInput) {
       try {
@@ -104,7 +114,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
     return fromDrafts(drafts);
   }
   const current = edited();
-  const isEdited = mode === "edit" && "value" in current && !sameJson(current.value, input);
+  const isEdited = "value" in current && !sameJson(current.value, input);
 
   function startEdit() {
     setMode("edit");
@@ -193,7 +203,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   useImperativeHandle(props.handle, () => ({
     approve: () => void decide(true),
     deny: openDeny,
-    edit: () => (mode === "edit" || stamped ? undefined : startEdit()),
+    edit: () => (mode === "edit" || stamped || plan ? undefined : startEdit()),
   }));
 
   const title = approvalTitle(preview, name);
@@ -255,8 +265,14 @@ export function ApprovalCard(props: ApprovalCardProps) {
 
         <div className="mt-5 mb-3 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="eyebrow truncate">{mode === "edit" ? "Editing" : humanize(tool)}</span>
-            {isEdited ? <Pill tone="accent">Edited</Pill> : null}
+            <span className="eyebrow truncate">
+              {mode === "edit"
+                ? "Editing"
+                : plan
+                  ? `Plan · ${keptCount} of ${plan.steps.length} steps`
+                  : humanize(tool)}
+            </span>
+            {isEdited && !plan ? <Pill tone="accent">Edited</Pill> : null}
           </div>
           {objectInput || mode === "view" ? (
             <button
@@ -294,6 +310,8 @@ export function ApprovalCard(props: ApprovalCardProps) {
           )
         ) : raw ? (
           <pre className="code max-h-80">{prettyJson(input) || "(no input)"}</pre>
+        ) : plan ? (
+          <PlanSteps steps={plan.steps} kept={kept} onKept={setKept} locked={locked} />
         ) : (
           <PayloadView input={input} />
         )}
@@ -342,7 +360,15 @@ export function ApprovalCard(props: ApprovalCardProps) {
             aria-keyshortcuts="Meta+Enter Control+Enter"
           >
             {busy === "approve" ? <LoaderCircle className="anim-spin" /> : <Check />}
-            {busy === "approve" ? "Approving…" : isEdited ? "Approve edited" : "Approve"}
+            {busy === "approve"
+              ? "Approving…"
+              : plan
+                ? isEdited
+                  ? `Approve ${keptCount} of ${plan.steps.length} steps`
+                  : "Approve plan"
+                : isEdited
+                  ? "Approve edited"
+                  : "Approve"}
             <span
               aria-hidden="true"
               className="ml-1 hidden font-mono text-[11px] opacity-60 sm:inline"
@@ -350,7 +376,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
               ⌘↵
             </span>
           </button>
-          {denying ? null : mode === "edit" ? (
+          {denying || plan ? null : mode === "edit" ? (
             <button type="button" className="btn h-10" onClick={resetEdit} disabled={locked}>
               <Undo2 className="size-4" />
               Discard edits
@@ -405,6 +431,8 @@ export function ApprovalCard(props: ApprovalCardProps) {
             className={cx(
               "ml-auto text-12 text-fg-muted underline-offset-2 transition-opacity hover:text-fg hover:underline",
               stamped && "opacity-0",
+              // A plan only means something when a person signs it.
+              plan && "hidden",
             )}
           >
             Always allow…

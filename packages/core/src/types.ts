@@ -63,6 +63,16 @@ export interface RunRecord {
   costUsd: number;
   error: string | null;
   cancelRequested: "now" | "after_step" | null;
+  /** Exact calls the user approved through `propose_plan`; each runs once without asking. */
+  planGrants: PlanGrant[];
+}
+
+/** One approved plan step: a tool name and the hash of its canonical input. */
+export interface PlanGrant {
+  tool: string;
+  inputHash: string;
+  /** Id of the tool call that used this grant. Unset while the grant is still open. */
+  usedBy?: string;
 }
 
 export interface StoredMessage {

@@ -1,3 +1,4 @@
+import type { PlanGrant } from "@synapse/core";
 import type { JSONValue } from "ai";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
@@ -147,6 +148,13 @@ export async function sendMessage(
   });
 }
 
+export interface ToolCallDecision {
+  toolCallId: string;
+  approved: boolean;
+  reason?: string;
+  editedInput?: JSONValue;
+}
+
 /**
  * Approves or denies one awaiting tool call. Compare-and-set on status and owner, so a
  * double click, a replayed request or another user's id is a no-op (ConflictError).
@@ -154,14 +162,20 @@ export async function sendMessage(
  */
 export async function decideToolCall(
   db: Db,
-  args: {
-    userId: string;
-    runId: string;
-    toolCallId: string;
-    approved: boolean;
-    reason?: string;
-    editedInput?: JSONValue;
-  },
+  args: { userId: string; runId: string } & ToolCallDecision,
+): Promise<void> {
+  const { userId, runId, ...decision } = args;
+  await decideToolCalls(db, { userId, runId, decisions: [decision] });
+}
+
+/**
+ * Decides several awaiting calls of one run at once, all or nothing: if any call is not
+ * awaiting approval (already decided, someone else's, unknown), nothing changes and a
+ * ConflictError is thrown. The run is re-queued once, when none remain awaiting.
+ */
+export async function decideToolCalls(
+  db: Db,
+  args: { userId: string; runId: string; decisions: ToolCallDecision[] },
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const [run] = await tx
@@ -171,36 +185,39 @@ export async function decideToolCall(
       .for("update");
     if (!run) throw new NotFoundError("run not found");
 
-    const updated = await tx
-      .update(toolCalls)
-      .set({
-        status: args.approved ? "approved" : "denied",
-        decidedBy: args.userId,
-        decidedAt: new Date(),
-        ...(args.approved && args.editedInput !== undefined
-          ? { input: args.editedInput, inputEdited: true }
-          : {}),
-        ...(args.approved
-          ? {}
-          : {
-              output: {
-                type: "denied" as const,
-                reason: args.reason
-                  ? `The user denied this action: ${args.reason}`
-                  : "The user denied this action.",
-              },
-            }),
-      })
-      .where(
-        and(
-          eq(toolCalls.runId, run.id),
-          eq(toolCalls.id, args.toolCallId),
-          eq(toolCalls.userId, args.userId),
-          eq(toolCalls.status, "awaiting_approval"),
-        ),
-      )
-      .returning({ id: toolCalls.id });
-    if (updated.length === 0) throw new ConflictError("this action is no longer awaiting approval");
+    for (const d of args.decisions) {
+      const updated = await tx
+        .update(toolCalls)
+        .set({
+          status: d.approved ? "approved" : "denied",
+          decidedBy: args.userId,
+          decidedAt: new Date(),
+          ...(d.approved && d.editedInput !== undefined
+            ? { input: d.editedInput, inputEdited: true }
+            : {}),
+          ...(d.approved
+            ? {}
+            : {
+                output: {
+                  type: "denied" as const,
+                  reason: d.reason
+                    ? `The user denied this action: ${d.reason}`
+                    : "The user denied this action.",
+                },
+              }),
+        })
+        .where(
+          and(
+            eq(toolCalls.runId, run.id),
+            eq(toolCalls.id, d.toolCallId),
+            eq(toolCalls.userId, args.userId),
+            eq(toolCalls.status, "awaiting_approval"),
+          ),
+        )
+        .returning({ id: toolCalls.id });
+      if (updated.length === 0)
+        throw new ConflictError("this action is no longer awaiting approval");
+    }
 
     const [{ remaining } = { remaining: 0 }] = await tx
       .select({ remaining: sql<number>`count(*)::int` })
@@ -213,6 +230,15 @@ export async function decideToolCall(
         .where(eq(runs.id, run.id));
     }
   });
+}
+
+/** Adds grants from an approved plan to the run; `propose_plan` calls this when it runs. */
+export async function addPlanGrants(db: Db, runId: string, grants: PlanGrant[]): Promise<void> {
+  if (grants.length === 0) return;
+  await db
+    .update(runs)
+    .set({ planGrants: sql`${runs.planGrants} || ${JSON.stringify(grants)}::jsonb` })
+    .where(eq(runs.id, runId));
 }
 
 export async function requestCancel(

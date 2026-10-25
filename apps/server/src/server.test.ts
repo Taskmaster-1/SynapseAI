@@ -342,6 +342,152 @@ test("edited approvals are re-checked against block rules; unsafe patterns are r
   expect(res.status).toBe(422);
 });
 
+const ASK_MEMORY = {
+  defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+  rules: [{ tool: "memory_save", decision: "ask" }],
+};
+const notes = (call: ReturnType<typeof api>) =>
+  call("/api/memories").then((r) =>
+    (r.json!.memories as { content: string }[]).map((m) => m.content).sort(),
+  );
+
+test("batch decisions: several calls in one step, decided atomically", async () => {
+  const cookie = await signUp("batch@example.com");
+  const me = api(cookie);
+  const other = api(await signUp("batch-eve@example.com"));
+  await me("/api/policy", { method: "PUT", json: ASK_MEMORY });
+  script([
+    {
+      toolCalls: [
+        { name: "memory_save", input: { note: "one" }, id: "b1" },
+        { name: "memory_save", input: { note: "two" }, id: "b2" },
+        { name: "memory_save", input: { note: "three" }, id: "b3" },
+      ],
+    },
+    { text: "Saved what you approved." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "save 3" } });
+  const runId = json!.runId;
+  await worker.processNow(runId);
+  expect((await me("/api/approvals")).json!.approvals).toHaveLength(3);
+
+  const path = `/api/runs/${runId}/tool-calls/decisions`;
+  const decisions = [
+    { toolCallId: "b1", approved: true },
+    { toolCallId: "b2", approved: true, editedInput: { note: "two, edited" } },
+    { toolCallId: "b3", approved: false, reason: "not this one" },
+  ];
+  // Another user's run is invisible; duplicates and unknown ids change nothing.
+  expect((await other(path, { method: "POST", json: { decisions } })).status).toBe(404);
+  expect(
+    (
+      await me(path, {
+        method: "POST",
+        json: { decisions: [decisions[0], { toolCallId: "b1", approved: false }] },
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await me(path, {
+        method: "POST",
+        json: { decisions: [decisions[0], { toolCallId: "nope", approved: true }] },
+      })
+    ).status,
+  ).toBe(409);
+  expect((await me("/api/approvals")).json!.approvals).toHaveLength(3);
+
+  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(204);
+  expect((await me(`/api/runs/${runId}`)).json!.run.status).toBe("queued");
+  // A second submit (double click, replay) conflicts.
+  expect((await me(path, { method: "POST", json: { decisions } })).status).toBe(409);
+
+  await worker.processNow(runId);
+  const detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("completed");
+  expect(
+    detail.json!.toolCalls.map((c: { id: string; status: string }) => [c.id, c.status]),
+  ).toEqual([
+    ["b1", "succeeded"],
+    ["b2", "succeeded"],
+    ["b3", "denied"],
+  ]);
+  expect(await notes(me)).toEqual(["one", "two, edited"]);
+  // Re-queued once: one pause, then straight through to the end.
+  const statuses = (await sse(cookie, runId)).flatMap((e) =>
+    e.type === "run.status" ? [e.status] : [],
+  );
+  expect(statuses).toEqual(["running", "waiting", "running", "completed"]);
+});
+
+test("propose_plan: approve with a step removed; the kept call runs, the other asks", async () => {
+  const me = api(await signUp("plan@example.com"));
+  await me("/api/policy", { method: "PUT", json: ASK_MEMORY });
+  const keep = { tool: "memory_save", input: { note: "likes tea" }, why: "You said so." };
+  const drop = { tool: "memory_save", input: { note: "likes coffee" }, why: "A guess." };
+  script([
+    {
+      toolCalls: [
+        {
+          name: "propose_plan",
+          input: { summary: "Save two notes", steps: [keep, drop] },
+          id: "plan1",
+        },
+      ],
+    },
+    {
+      toolCalls: [
+        { name: "memory_save", input: { note: "likes tea" }, id: "k1" },
+        { name: "memory_save", input: { note: "likes coffee" }, id: "u1" },
+      ],
+    },
+    { text: "Saved the note you approved." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "save notes" } });
+  const runId = json!.runId;
+  await worker.processNow(runId);
+  const [asked] = (await me("/api/approvals")).json!.approvals;
+  expect(asked).toMatchObject({ toolCallId: "plan1", preview: "Save two notes" });
+
+  // Untick the second step: approve with an input holding only the kept one.
+  const res = await me(`/api/runs/${runId}/tool-calls/plan1/decision`, {
+    method: "POST",
+    json: { approved: true, input: { summary: "Save two notes", steps: [keep] } },
+  });
+  expect(res.status).toBe(204);
+  await worker.processNow(runId);
+
+  let detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("waiting");
+  expect(detail.json!.run.planGrants).toEqual([
+    { tool: "memory_save", inputHash: expect.any(String), usedBy: "k1" },
+  ]);
+  const byId = (id: string) =>
+    detail.json!.toolCalls.find((c: { id: string }) => c.id === id) as Record<string, unknown>;
+  expect(byId("plan1")).toMatchObject({ status: "succeeded", inputEdited: true });
+  expect(JSON.stringify(byId("plan1").output)).toContain("do not do them");
+  expect(byId("k1")).toMatchObject({
+    status: "approved",
+    decision: "allow",
+    decisionReason: "Part of the plan you approved",
+  });
+  expect(byId("u1")).toMatchObject({ status: "awaiting_approval", decision: "ask" });
+  expect((await me("/api/approvals")).json!.approvals).toEqual([
+    expect.objectContaining({ toolCallId: "u1" }),
+  ]);
+
+  await me(`/api/runs/${runId}/tool-calls/u1/decision`, {
+    method: "POST",
+    json: { approved: false },
+  });
+  await worker.processNow(runId);
+  detail = await me(`/api/runs/${runId}`);
+  expect(detail.json!.run.status).toBe("completed");
+  expect(byId("k1")!.status).toBe("succeeded");
+  expect(byId("u1")!.status).toBe("denied");
+  expect(await notes(me)).toEqual(["likes tea"]);
+});
+
 test("user budgets can only tighten the operator cap", async () => {
   const { capBudget } = await import("./worker");
   expect(capBudget(undefined, 2)).toBe(2);

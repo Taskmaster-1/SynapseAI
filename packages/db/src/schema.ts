@@ -2,6 +2,7 @@ import type {
   ArgMatcher,
   Decision,
   Effect,
+  PlanGrant,
   PolicyDefaults,
   RunStatus,
   ToolCallStatus,
@@ -169,6 +170,11 @@ export const runs = pgTable(
     costUsd: doublePrecision("cost_usd").notNull().default(0),
     error: text("error"),
     cancelRequested: text("cancel_requested").$type<"now" | "after_step">(),
+    /**
+     * Steps of plans the user approved via `propose_plan` (tool + canonical input hash).
+     * A matching call runs once without asking; `usedBy` marks a spent grant.
+     */
+    planGrants: jsonb("plan_grants").$type<PlanGrant[]>().notNull().default([]),
     /** Worker lease. A run with an expired lease is picked up again by another worker. */
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),

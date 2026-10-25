@@ -62,6 +62,15 @@ A run becomes tainted the first time a tool with `untrustedOutput` returns: web 
 and fetch, knowledge search, every MCP tool. This is a pragmatic form of the "Rule of Two":
 an agent that has seen untrusted input and can act externally must have a human in the loop.
 
+**Plans.** For multi-step jobs the agent calls the built-in `propose_plan` with the exact
+calls it intends to make. The plan always asks; the person can untick steps, which approves
+it with an edited input holding only the kept steps. When it runs (and only if a person
+decided it), each kept step becomes a grant on the run (`runs.plan_grants`: tool name plus
+SHA-256 of the canonical, key-sorted input JSON). A later call whose tool and input hash
+match an unused grant is allowed with "Part of the plan you approved", even in a tainted
+run, because the person signed off on that exact payload. Each grant is used once, block
+rules still win, and anything that differs goes through normal policy.
+
 ## Streaming
 
 Every runtime event is appended to `run_events` with a dense per-run `seq` (text deltas are

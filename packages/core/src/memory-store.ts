@@ -27,6 +27,7 @@ export class MemoryStore implements RunStore {
       costUsd: 0,
       error: null,
       cancelRequested: null,
+      planGrants: [],
     };
     this.runs.set(run.id, run);
     if (init.text) this.pushUser(init.chatId, run.id, init.text);
@@ -40,7 +41,7 @@ export class MemoryStore implements RunStore {
   async getRun(runId: string) {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`run ${runId} not found`);
-    return { ...run };
+    return { ...run, planGrants: run.planGrants.map((g) => ({ ...g })) };
   }
 
   async updateRun(runId: string, patch: Partial<RunRecord>) {

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard, ApprovalReceipt } from "@/components/approval/approval-card";
+import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
 import { Menu } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { EmptyState, Skeleton, StatusPill, TaintShield, taskStatus } from "@/components/ui";
@@ -237,6 +238,43 @@ export function TaskView({ taskId }: { taskId: string }) {
           reason={d.reason}
           edited={d.edited}
           phase={part.status === "awaiting_approval" ? "running" : receiptPhase(part)}
+        />
+      );
+    }
+    // Two or more open asks from one step sign off together, as one checklist shown in
+    // place of the first. Plans keep their own card (they are a checklist already).
+    const group = runId
+      ? message.parts.filter(
+          (p): p is ToolPart =>
+            p.type === "tool" &&
+            p.status === "awaiting_approval" &&
+            p.name !== PLAN_TOOL &&
+            !decided[p.toolCallId],
+        )
+      : [];
+    if (runId && group.length >= 2 && group.some((p) => p.toolCallId === part.toolCallId)) {
+      if (group[0]!.toolCallId !== part.toolCallId) return null;
+      return (
+        <ApprovalBatch
+          key={group.map((p) => p.toolCallId).join()}
+          runId={runId}
+          items={group}
+          tainted={tainted}
+          glow={initialAwaiting !== null && group.some((p) => !initialAwaiting.has(p.toolCallId))}
+          onDecided={(outcome) => {
+            setDecided((m) => ({
+              ...m,
+              ...Object.fromEntries(
+                Object.entries(outcome).map(([id, approved]) => [id, { approved, edited: false }]),
+              ),
+            }));
+            follow(runId);
+            void reloadWorkspace();
+          }}
+          onConflict={() => {
+            void snapshot();
+            void reloadWorkspace();
+          }}
         />
       );
     }

@@ -85,6 +85,7 @@ export class PgRunStore implements RunStore {
       costUsd: r.costUsd,
       error: r.error,
       cancelRequested: r.cancelRequested,
+      planGrants: r.planGrants,
     };
   }
 
