@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCard, ApprovalReceipt } from "@/components/approval/approval-card";
 import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
+import { LearnPrompt } from "@/components/approval/learned-rules";
 import { Menu } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { EmptyState, Skeleton, StatusPill, TaintShield, taskStatus } from "@/components/ui";
@@ -230,15 +231,18 @@ export function TaskView({ taskId }: { taskId: string }) {
     const d = decided[part.toolCallId];
     if (d) {
       return (
-        <ApprovalReceipt
-          name={part.name}
-          preview={part.preview}
-          effect={part.effect}
-          approved={d.approved}
-          reason={d.reason}
-          edited={d.edited}
-          phase={part.status === "awaiting_approval" ? "running" : receiptPhase(part)}
-        />
+        <>
+          <ApprovalReceipt
+            name={part.name}
+            preview={part.preview}
+            effect={part.effect}
+            approved={d.approved}
+            reason={d.reason}
+            edited={d.edited}
+            phase={part.status === "awaiting_approval" ? "running" : receiptPhase(part)}
+          />
+          {d.approved && !d.edited ? <LearnPrompt tool={part.name} className="mt-2" /> : null}
+        </>
       );
     }
     // Two or more open asks from one step sign off together, as one checklist shown in

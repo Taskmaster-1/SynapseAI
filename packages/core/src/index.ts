@@ -6,5 +6,6 @@ export * from "./policy";
 export * from "./prices";
 export * from "./runtime";
 export type * from "./store";
+export * from "./suggest";
 export * from "./tools";
 export type * from "./types";

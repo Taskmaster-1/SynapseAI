@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { SeqEvent } from "@synapse/core";
 import { type ScriptedStep, scriptedModel } from "@synapse/core/testing";
 import { schema } from "@synapse/db";
+import { eq } from "drizzle-orm";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { createServices, type Services } from "./services";
@@ -582,4 +583,88 @@ test("model list covers the catalog, direct refs and the chain, with availabilit
   } finally {
     clearCatalog();
   }
+});
+
+test("approvals that learn: suggest, accept, dismiss", async () => {
+  const me = api(await signUp("learner@example.com"));
+  const other = api(await signUp("bystander@example.com"));
+  const askForNotes = {
+    defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+    rules: [{ tool: "memory_save", decision: "ask" }],
+  };
+  await me("/api/policy", { method: "PUT", json: askForNotes });
+  await other("/api/policy", { method: "PUT", json: askForNotes });
+
+  let n = 0;
+  async function startNote(who: typeof me, opts: { tainted?: boolean } = {}) {
+    const id = `learn${++n}`;
+    script([
+      { toolCalls: [{ name: "memory_save", input: { note: `fact ${n}` }, id }] },
+      { text: "Noted." },
+    ]);
+    const { json } = await who("/api/chats", { method: "POST", json: { content: "remember" } });
+    const runId = json!.runId as string;
+    if (opts.tainted)
+      await services.database.db
+        .update(schema.runs)
+        .set({ tainted: true })
+        .where(eq(schema.runs.id, runId));
+    await worker.processNow(runId);
+    return { runId, id };
+  }
+  async function approveNote(who: typeof me) {
+    const { runId, id } = await startNote(who);
+    const res = await who(`/api/runs/${runId}/tool-calls/${id}/decision`, {
+      method: "POST",
+      json: { approved: true },
+    });
+    expect(res.status).toBe(204);
+    await worker.processNow(runId);
+  }
+
+  for (let i = 0; i < 4; i++) await approveNote(me);
+  expect((await me("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  await approveNote(me);
+  const [s] = (await me("/api/policy/suggestions")).json!.suggestions;
+  expect(s).toMatchObject({ tool: "memory_save", effect: "write", count: 5, when: [] });
+  expect(s.sentence).toContain("You approved 5");
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+
+  // Someone else can neither accept nor dismiss it.
+  const accept = `/api/policy/suggestions/${s.id}/accept`;
+  const dismiss = `/api/policy/suggestions/${s.id}/dismiss`;
+  expect((await other(accept, { method: "POST" })).status).toBe(404);
+  expect((await other(dismiss, { method: "POST" })).status).toBe(404);
+
+  const accepted = await me(accept, { method: "POST" });
+  expect(accepted.status).toBe(200);
+  expect(accepted.json!.rules).toEqual([
+    expect.objectContaining({
+      tool: "memory_save",
+      decision: "allow",
+      note: "Learned: you approved 5 of these",
+    }),
+    expect.objectContaining({ tool: "memory_save", decision: "ask" }),
+  ]);
+  expect((await me("/api/policy")).json!.rules).toHaveLength(2);
+  expect((await me("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+
+  // Untainted: allowed without asking. Tainted: still asks.
+  const clean = await startNote(me);
+  expect((await me(`/api/runs/${clean.runId}`)).json!.run.status).toBe("completed");
+  const tainted = await startNote(me, { tainted: true });
+  expect((await me(`/api/runs/${tainted.runId}`)).json!.run.status).toBe("waiting");
+  expect((await me("/api/approvals")).json!.approvals).toEqual([
+    expect.objectContaining({ runId: tainted.runId, name: "memory_save" }),
+  ]);
+
+  // Dismissing hides it, also after more approvals.
+  for (let i = 0; i < 5; i++) await approveNote(other);
+  const [o] = (await other("/api/policy/suggestions")).json!.suggestions;
+  expect(o.id).toBe(s.id);
+  expect((await other(dismiss, { method: "POST" })).status).toBe(204);
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  await approveNote(other);
+  expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
+  expect((await other("/api/policy")).json!.rules).toHaveLength(1);
 });

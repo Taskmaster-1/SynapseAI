@@ -7,6 +7,7 @@ import type {
   Effect,
   PolicyDefaults,
   PolicyRule,
+  RuleSuggestion,
   RunStatus,
   ToolCallStatus,
   ToolOutput,
@@ -380,6 +381,9 @@ export const api = {
 
   policy: () => get<Policy>("/api/policy"),
   savePolicy: (body: Policy) => put<Policy>("/api/policy", body),
+  suggestions: () => get<{ suggestions: RuleSuggestion[] }>("/api/policy/suggestions"),
+  acceptSuggestion: (id: string) => post<Policy>(`/api/policy/suggestions/${enc(id)}/accept`),
+  dismissSuggestion: (id: string) => post(`/api/policy/suggestions/${enc(id)}/dismiss`),
 
   memories: () => get<{ memories: Memory[] }>("/api/memories"),
   addMemory: (content: string) => post<{ memory: Memory }>("/api/memories", { content }),

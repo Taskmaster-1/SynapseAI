@@ -8,6 +8,7 @@ import { clientMetadataDocument, connections, oauthCallback } from "./routes/con
 import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
 import { approvals, runs } from "./routes/runs";
+import { suggestions } from "./routes/suggestions";
 import type { Services } from "./services";
 
 export function createApp(services: Services) {
@@ -65,6 +66,7 @@ export function createApp(services: Services) {
   api.route("/connections", connections);
   api.route("/integrations/google/callback", googleCallback);
   api.route("/integrations", integrations);
+  api.route("/policy/suggestions", suggestions);
   api.route("/policy", policy);
   api.route("/memories", memories);
   api.route("/documents", documents);

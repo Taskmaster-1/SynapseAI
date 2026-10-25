@@ -1,1 +1,0 @@
-ALTER TABLE "runs" ADD COLUMN "plan_grants" jsonb DEFAULT '[]'::jsonb NOT NULL;
