@@ -54,6 +54,13 @@ export interface ApprovalCardProps {
   onConflict: () => void;
   handle?: Ref<ApprovalHandle>;
   className?: string;
+  /**
+   * The person's team requires an admin to decide this, and they aren't one: the slip is
+   * shown for information, with no way to sign it.
+   */
+  waitingForAdmin?: boolean;
+  /** A team admin is deciding a member's call: whose task asked. */
+  requester?: { name: string; email: string } | null;
 }
 
 /** How long the stamp sits on the slip before the card resolves into a receipt. */
@@ -167,7 +174,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   );
 
   async function decide(approved: boolean) {
-    if (busy || stamped) return;
+    if (busy || stamped || props.waitingForAdmin) return;
     setError(null);
     const body: { approved: boolean; reason?: string; input?: unknown } = { approved };
     const invalid = "error" in current ? String(current.error) : null;
@@ -203,7 +210,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   }
 
   function openDeny() {
-    if (stamped) return;
+    if (stamped || props.waitingForAdmin) return;
     setDenying(true);
     setTimeout(() => denyInput.current?.focus(), 0);
   }
@@ -211,7 +218,8 @@ export function ApprovalCard(props: ApprovalCardProps) {
   useImperativeHandle(props.handle, () => ({
     approve: () => void decide(true),
     deny: openDeny,
-    edit: () => (mode === "edit" || stamped || plan ? undefined : startEdit()),
+    edit: () =>
+      mode === "edit" || stamped || plan || props.waitingForAdmin ? undefined : startEdit(),
   }));
 
   const title = approvalTitle(preview, name);
@@ -239,13 +247,22 @@ export function ApprovalCard(props: ApprovalCardProps) {
 
       {/* The slip's header: what kind of paper this is and where it goes. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-dashed border-line-strong px-4 py-3 sm:px-6">
-        <span className="flex items-center gap-2 text-13 font-medium text-attention">
-          <span aria-hidden="true" className="relative grid size-2 place-items-center">
-            {stamped ? null : <span className="m-ring absolute size-2 rounded-full bg-attention" />}
-            <span className="size-2 rounded-full bg-attention" />
+        {props.waitingForAdmin ? (
+          <span className="flex items-center gap-2 text-13 font-medium text-fg-muted">
+            <span aria-hidden="true" className="size-2 rounded-full bg-fg-faint" />
+            Waiting for an admin
           </span>
-          Needs your sign-off
-        </span>
+        ) : (
+          <span className="flex items-center gap-2 text-13 font-medium text-attention">
+            <span aria-hidden="true" className="relative grid size-2 place-items-center">
+              {stamped ? null : (
+                <span className="m-ring absolute size-2 rounded-full bg-attention" />
+              )}
+              <span className="size-2 rounded-full bg-attention" />
+            </span>
+            {props.requester ? `Needs an admin · ${props.requester.name}` : "Needs your sign-off"}
+          </span>
+        )}
         <span className="ml-auto flex min-w-0 items-center gap-2">
           <ToolSource name={name} />
           <EffectPill effect={effect} />
@@ -363,107 +380,124 @@ export function ApprovalCard(props: ApprovalCardProps) {
         ) : null}
       </div>
 
-      {/* The signature line: the buttons sit on it like a pen on paper. */}
-      <div className="relative px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
-        <div className={cx("flex flex-wrap items-center gap-2", stamped && "opacity-40")}>
-          <button
-            type="button"
-            className="btn btn-primary h-10 px-5"
-            disabled={locked}
-            onClick={() => void decide(true)}
-            aria-keyshortcuts="Meta+Enter Control+Enter"
-          >
-            {busy === "approve" ? <LoaderCircle className="anim-spin" /> : <Check />}
-            {busy === "approve"
-              ? "Approving…"
-              : plan
-                ? isEdited
-                  ? `Approve ${keptCount} of ${plan.steps.length} steps`
-                  : "Approve plan"
-                : isEdited
-                  ? "Approve edited"
-                  : "Approve"}
-            <span
-              aria-hidden="true"
-              className="ml-1 hidden font-mono text-[11px] opacity-60 sm:inline"
-            >
-              ⌘↵
+      {props.waitingForAdmin ? (
+        <div className="px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
+          <p className="text-13 text-fg-muted">
+            Your team requires an admin to approve this. It's in their inbox; the task picks up as
+            soon as they decide.
+          </p>
+          <div className="mt-3 border-t border-fg/25 pt-1.5">
+            <span className="font-mono text-[10.5px] tracking-[0.14em] text-fg-faint uppercase">
+              An admin's signature
             </span>
-          </button>
-          {denying || plan ? null : mode === "edit" ? (
-            <button type="button" className="btn h-10" onClick={resetEdit} disabled={locked}>
-              <Undo2 className="size-4" />
-              Discard edits
-            </button>
-          ) : (
-            <button type="button" className="btn h-10" onClick={startEdit} disabled={locked}>
-              <Pencil className="size-4" />
-              Edit
-            </button>
-          )}
-          {denying ? (
-            <>
-              <button
-                type="button"
-                className="btn btn-danger h-10"
-                disabled={locked}
-                onClick={() => void decide(false)}
-              >
-                {busy === "deny" ? <LoaderCircle className="anim-spin" /> : <CircleSlash />}
-                {busy === "deny" ? "Denying…" : "Deny"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost h-10"
-                disabled={locked}
-                onClick={() => setDenying(false)}
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
+          </div>
+        </div>
+      ) : (
+        /* The signature line: the buttons sit on it like a pen on paper. */
+        <div className="relative px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
+          <div className={cx("flex flex-wrap items-center gap-2", stamped && "opacity-40")}>
             <button
               type="button"
-              className="btn btn-ghost h-10 text-danger"
+              className="btn btn-primary h-10 px-5"
               disabled={locked}
-              onClick={openDeny}
+              onClick={() => void decide(true)}
+              aria-keyshortcuts="Meta+Enter Control+Enter"
             >
-              Deny…
+              {busy === "approve" ? <LoaderCircle className="anim-spin" /> : <Check />}
+              {busy === "approve"
+                ? "Approving…"
+                : plan
+                  ? isEdited
+                    ? `Approve ${keptCount} of ${plan.steps.length} steps`
+                    : "Approve plan"
+                  : isEdited
+                    ? "Approve edited"
+                    : "Approve"}
+              <span
+                aria-hidden="true"
+                className="ml-1 hidden font-mono text-[11px] opacity-60 sm:inline"
+              >
+                ⌘↵
+              </span>
             </button>
-          )}
-        </div>
-        <div className="mt-3 flex items-baseline gap-3 border-t border-fg/55 pt-1.5">
-          <span className="font-mono text-[10.5px] tracking-[0.14em] text-fg-faint uppercase">
-            {stamped === "approved"
-              ? "Signed off by you"
-              : stamped === "denied"
-                ? "Declined by you"
-                : "Your signature"}
-          </span>
-          <Link
-            href={`/settings?section=rules&allow=${encodeURIComponent(name)}`}
-            className={cx(
-              "ml-auto text-12 text-fg-muted underline-offset-2 transition-opacity hover:text-fg hover:underline",
-              stamped && "opacity-0",
-              // A plan only means something when a person signs it.
-              plan && "hidden",
+            {denying || plan ? null : mode === "edit" ? (
+              <button type="button" className="btn h-10" onClick={resetEdit} disabled={locked}>
+                <Undo2 className="size-4" />
+                Discard edits
+              </button>
+            ) : (
+              <button type="button" className="btn h-10" onClick={startEdit} disabled={locked}>
+                <Pencil className="size-4" />
+                Edit
+              </button>
             )}
-          >
-            Always allow…
-          </Link>
-        </div>
-        {stamped ? (
-          <span
-            role="status"
-            className={cx(
-              "stamp stamp-in pointer-events-none absolute right-5 bottom-12 z-10 text-[24px] sm:right-10 sm:bottom-[46px] sm:text-[30px]",
-              stamped === "approved" ? "text-ok" : "text-danger",
+            {denying ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-danger h-10"
+                  disabled={locked}
+                  onClick={() => void decide(false)}
+                >
+                  {busy === "deny" ? <LoaderCircle className="anim-spin" /> : <CircleSlash />}
+                  {busy === "deny" ? "Denying…" : "Deny"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost h-10"
+                  disabled={locked}
+                  onClick={() => setDenying(false)}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-ghost h-10 text-danger"
+                disabled={locked}
+                onClick={openDeny}
+              >
+                Deny…
+              </button>
             )}
-          >
-            {stamped === "approved" ? "Approved" : "Denied"}
-          </span>
-        ) : null}
-      </div>
+          </div>
+          <div className="mt-3 flex items-baseline gap-3 border-t border-fg/55 pt-1.5">
+            <span className="font-mono text-[10.5px] tracking-[0.14em] text-fg-faint uppercase">
+              {stamped === "approved"
+                ? "Signed off by you"
+                : stamped === "denied"
+                  ? "Declined by you"
+                  : props.requester
+                    ? "Your signature, as a team admin"
+                    : "Your signature"}
+            </span>
+            <Link
+              href={`/settings?section=rules&allow=${encodeURIComponent(name)}`}
+              className={cx(
+                "ml-auto text-12 text-fg-muted underline-offset-2 transition-opacity hover:text-fg hover:underline",
+                stamped && "opacity-0",
+                // A plan only means something when a person signs it; a member's call
+                // follows their team's rules, not the admin's own.
+                (plan || props.requester) && "hidden",
+              )}
+            >
+              Always allow…
+            </Link>
+          </div>
+          {stamped ? (
+            <span
+              role="status"
+              className={cx(
+                "stamp stamp-in pointer-events-none absolute right-5 bottom-12 z-10 text-[24px] sm:right-10 sm:bottom-[46px] sm:text-[30px]",
+                stamped === "approved" ? "text-ok" : "text-danger",
+              )}
+            >
+              {stamped === "approved" ? "Approved" : "Denied"}
+            </span>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

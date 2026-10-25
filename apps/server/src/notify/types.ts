@@ -30,7 +30,10 @@ export interface PendingApproval {
 
 /** What happened to an action, so channels can update what they showed (e.g. a Slack message). */
 export interface ResolvedApproval {
+  /** Whose task it is. */
   userId: string;
+  /** Who decided: the requester, or a team admin for calls a team rule reserves for one. */
+  decidedBy?: string;
   runId: string;
   toolCallId: string;
   approved: boolean;

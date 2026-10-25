@@ -140,6 +140,81 @@ export const policyRules = pgTable(
   (t) => [index("policy_rules_user_idx").on(t.userId, t.position)],
 );
 
+// ── Team workspaces ────────────────────────────────────────────────────────
+
+export type WorkspaceRole = "owner" | "admin" | "member";
+
+/**
+ * A team. Its rules apply to every member on top of their own; tasks, connections and
+ * memory stay personal.
+ */
+export const workspaces = pgTable("workspaces", {
+  id: id(),
+  name: text("name").notNull(),
+  createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});
+
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** One workspace per person for now. */
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").$type<WorkspaceRole>().notNull().default("member"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.userId] }),
+    index("workspace_members_role_idx").on(t.workspaceId, t.role),
+  ],
+);
+
+/** Invite links. Only a SHA-256 of the token is stored; the link is shown once. */
+export const workspaceInvites = pgTable(
+  "workspace_invites",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    role: text("role").$type<Exclude<WorkspaceRole, "owner">>().notNull().default("member"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    usedBy: text("used_by").references(() => user.id, { onDelete: "set null" }),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("workspace_invites_workspace_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/** Team policy rules: like `policy_rules`, plus who must decide an `ask`. */
+export const workspaceRules = pgTable(
+  "workspace_rules",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(0),
+    tool: text("tool").notNull(),
+    decision: text("decision").$type<Decision>().notNull(),
+    when: jsonb("when").$type<ArgMatcher[]>(),
+    note: text("note"),
+    /** "admin": a workspace owner or admin must approve, not the member. */
+    approver: text("approver").$type<"admin">(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("workspace_rules_workspace_idx").on(t.workspaceId, t.position)],
+);
+
 // ── Chats, runs, messages ─────────────────────────────────────────────────
 
 export const chats = pgTable(
@@ -241,6 +316,8 @@ export const toolCalls = pgTable(
     decisionReason: text("decision_reason"),
     preview: text("preview"),
     decidedBy: text("decided_by"),
+    /** "admin" when a team rule says a workspace admin, not the requester, must decide. */
+    approver: text("approver").$type<"admin">(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     /** Where the person decided: web, push, slack, email. */
     decidedVia: text("decided_via"),

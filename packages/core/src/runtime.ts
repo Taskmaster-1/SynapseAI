@@ -22,7 +22,7 @@ import {
 } from "./context";
 import { costUsd, isRetryable, type ModelSpec } from "./models";
 import { hashInput, PLAN_GRANT_REASON } from "./plan";
-import { evaluatePolicy } from "./policy";
+import { evaluateComposedPolicy, planGrantMaySatisfy } from "./policy";
 import type { EventSink, RunStore } from "./store";
 import type { ToolDefinition, ToolRegistry } from "./tools";
 import type {
@@ -591,7 +591,8 @@ async function streamOneStep(
       });
       continue;
     }
-    let verdict = evaluatePolicy(
+    // The person's own policy plus their team's rules; the strictest verdict wins.
+    let verdict = evaluateComposedPolicy(
       {
         tool: def.name,
         effect: def.effect,
@@ -599,18 +600,25 @@ async function streamOneStep(
         tainted: run.tainted,
         ...(def.defaultDecision ? { defaultDecision: def.defaultDecision } : {}),
       },
-      policy.rules,
-      policy.defaults,
+      policy,
+      policy.teamRules,
     );
     // A call matching a step of an approved plan, exactly, was already signed off by the
-    // user: it runs without asking again, even in a tainted run. Block rules still win.
-    if (verdict.decision !== "block" && grants.some((g) => !g.usedBy && g.tool === def.name)) {
+    // user: it runs without asking again, even in a tainted run. Block rules still win, and
+    // so does a team rule that needs an admin: the user's own sign-off can't stand in for it.
+    if (planGrantMaySatisfy(verdict) && grants.some((g) => !g.usedBy && g.tool === def.name)) {
       const hash = await hashInput(input);
       const grant = grants.find((g) => !g.usedBy && g.tool === def.name && g.inputHash === hash);
       if (grant) {
         grant.usedBy = part.toolCallId;
         grantsUsed = true;
-        verdict = { decision: "allow", reason: PLAN_GRANT_REASON, ruleId: null };
+        verdict = {
+          decision: "allow",
+          reason: PLAN_GRANT_REASON,
+          ruleId: null,
+          approver: null,
+          source: "personal",
+        };
       }
     }
     const status: ToolCallStatus =
@@ -625,6 +633,7 @@ async function streamOneStep(
       status,
       decision: verdict.decision,
       decisionReason: verdict.reason,
+      approver: status === "awaiting_approval" ? verdict.approver : null,
       output:
         status === "denied"
           ? { type: "denied", reason: `Blocked by policy: ${verdict.reason}` }
@@ -670,6 +679,7 @@ async function streamOneStep(
         effect: call.effect,
         reason: call.decisionReason ?? "",
         preview: call.preview,
+        ...(call.approver ? { approver: call.approver } : {}),
       });
     }
     if (call.output)

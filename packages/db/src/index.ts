@@ -5,3 +5,4 @@ export * from "./events";
 export * from "./runs";
 export * as schema from "./schema";
 export * from "./store";
+export * from "./workspaces";

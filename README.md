@@ -35,6 +35,7 @@ Agent products that act in your tools share three problems: approvals that live 
 - Approvals that learn: after you approve the same kind of action unchanged a few times, Synapse offers a visible, removable rule ("emails where every address is @acme.com"). Tasks that read outside content still ask
 - Approve from Slack: approvals arrive as a DM with Approve and Deny buttons, and the message updates wherever you decide ([setup](docs/slack.md))
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
+- Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
@@ -107,7 +108,7 @@ Defaults: `read` → allow, `write`/`send`/`destructive` → ask. Rules are eval
 ]
 ```
 
-Taint overrides `allow` for anything but reads. MCP tools inherit effects from their annotations (`readOnlyHint`, `destructiveHint`); tools that declare nothing are treated as destructive until you say otherwise on the Connections page.
+Taint overrides `allow` for anything but reads. In a [team workspace](docs/teams.md), the team's rules are evaluated alongside yours and the strictest answer wins. MCP tools inherit effects from their annotations (`readOnlyHint`, `destructiveHint`); tools that declare nothing are treated as destructive until you say otherwise on the Connections page.
 
 ## Evals
 

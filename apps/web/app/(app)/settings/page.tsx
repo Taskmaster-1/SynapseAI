@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sun,
   User,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
@@ -35,8 +36,9 @@ import { useWorkspace } from "@/lib/workspace";
 import { MAX_CHAIN, ModelPicker, modelFromRef, priceLabel } from "./model-picker";
 import { Notifications } from "./notifications";
 import { PolicyEditor } from "./policy-editor";
+import { TeamSettings } from "./team";
 
-type Section = "general" | "notifications" | "models" | "budgets" | "rules" | "appearance";
+type Section = "general" | "notifications" | "models" | "budgets" | "rules" | "team" | "appearance";
 
 const SECTIONS: { id: Section; label: string; icon: ReactNode; blurb: string }[] = [
   {
@@ -68,6 +70,12 @@ const SECTIONS: { id: Section; label: string; icon: ReactNode; blurb: string }[]
     label: "Approval rules",
     icon: <ShieldCheck />,
     blurb: "What the agent may do on its own, and what waits for you.",
+  },
+  {
+    id: "team",
+    label: "Team",
+    icon: <Users />,
+    blurb: "Shared rules, admin sign-off and an audit log for everyone in your team.",
   },
   {
     id: "appearance",
@@ -178,11 +186,16 @@ export default function SettingsPage() {
             </h2>
             <p className="mt-2 text-14 text-fg-muted">{meta.blurb}</p>
           </header>
-          {settings.error && section !== "rules" && section !== "appearance" ? (
+          {settings.error &&
+          section !== "rules" &&
+          section !== "team" &&
+          section !== "appearance" ? (
             <ErrorNote>{errorMessage(settings.error)}</ErrorNote>
           ) : null}
           {section === "rules" ? (
             <PolicyEditor prefillTool={prefill} />
+          ) : section === "team" ? (
+            <TeamSettings />
           ) : section === "appearance" ? (
             <Appearance />
           ) : !s ? (
