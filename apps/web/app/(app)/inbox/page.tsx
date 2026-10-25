@@ -212,7 +212,12 @@ export default function InboxPage() {
 
   const loading = approvals === null;
   const empty = !loading && ordered.length === 0;
-  const signed = ordered.length - pending.length;
+  // Calls waiting for a team admin are in the list but are neither yours to sign nor signed.
+  const withAdmin = ordered.filter((a) => waitingIds.has(a.toolCallId)).length;
+  const signed = ordered.length - pending.length - withAdmin;
+  const adminNote = withAdmin
+    ? ` · ${withAdmin === 1 ? "one" : withAdmin} waiting for an admin`
+    : "";
 
   return (
     <div className="flex h-full min-h-0">
@@ -234,10 +239,12 @@ export default function InboxPage() {
             {loading
               ? "Loading…"
               : pending.length
-                ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}`
+                ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}${adminNote}`
                 : signed
-                  ? `All signed · ${signed} this visit`
-                  : "Nothing waiting on you"}
+                  ? `All signed · ${signed} this visit${adminNote}`
+                  : withAdmin
+                    ? `Nothing for you to sign${adminNote}`
+                    : "Nothing waiting on you"}
           </p>
         </header>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-6">
