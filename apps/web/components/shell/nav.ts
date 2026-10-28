@@ -1,9 +1,10 @@
-import { Activity, BookOpen, House, Inbox, Plug, Repeat, Settings } from "lucide-react";
+import { Activity, BookOpen, House, Inbox, Plug, Repeat, ScrollText, Settings } from "lucide-react";
 
 export const PRIMARY_NAV = [
   { href: "/", label: "Home", icon: House },
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/automations", label: "Automations", icon: Repeat },
+  { href: "/skills", label: "Skills", icon: ScrollText },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/connections", label: "Connections", icon: Plug },
 ] as const;
