@@ -27,6 +27,8 @@ interface WorkspaceValue {
   teamApprovals: Approval[];
   /** Your calls that wait for a team admin; you can't decide them. */
   waitingForAdmin: Approval[];
+  /** Two-person sign-offs you gave the first approval of; they wait for someone else. */
+  waitingForSecond: Approval[];
   /** Your role in your team workspace, or null when you're not in one. */
   teamRole: WorkspaceRole | null;
   user: SessionUser | null;
@@ -41,6 +43,7 @@ const WorkspaceContext = createContext<WorkspaceValue>({
   approvals: null,
   teamApprovals: [],
   waitingForAdmin: [],
+  waitingForSecond: [],
   teamRole: null,
   user: null,
   todaySpend: null,
@@ -153,29 +156,31 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, [reload]);
 
-  const value = useMemo(
-    () => ({
+  const value = useMemo(() => {
+    // Two-person sign-offs you gave the first approval of wait for someone else, not you.
+    const mine = (a: Approval) => !!user && a.signoffs?.first?.id === user.id;
+    return {
       tasks,
-      approvals,
-      teamApprovals,
+      approvals: approvals?.filter((a) => !mine(a)) ?? null,
+      teamApprovals: teamApprovals.filter((a) => !mine(a)),
       waitingForAdmin,
+      waitingForSecond: [...(approvals ?? []), ...teamApprovals].filter(mine),
       teamRole,
       user,
       todaySpend,
       reload,
       setUser: updateUser,
-    }),
-    [
-      tasks,
-      approvals,
-      teamApprovals,
-      waitingForAdmin,
-      teamRole,
-      user,
-      todaySpend,
-      reload,
-      updateUser,
-    ],
-  );
+    };
+  }, [
+    tasks,
+    approvals,
+    teamApprovals,
+    waitingForAdmin,
+    teamRole,
+    user,
+    todaySpend,
+    reload,
+    updateUser,
+  ]);
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

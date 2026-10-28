@@ -24,6 +24,7 @@ import { costUsd, isRetryable, type ModelSpec } from "./models";
 import { hashInput, PLAN_GRANT_REASON } from "./plan";
 import { evaluateComposedPolicy, planGrantMaySatisfy } from "./policy";
 import type { EventSink, RunStore } from "./store";
+import { callTargets, type TrustedTargets, trustedTargets, unseenTargets } from "./targets";
 import type { ToolDefinition, ToolRegistry } from "./tools";
 import type {
   RunRecord,
@@ -470,7 +471,7 @@ async function modelStep(
     let messages = buildHistory(rows, candidate.spec.ref);
     messages = await compactIfNeeded(opts, run, candidate, messages, limits);
 
-    const attempt = await streamOneStep(opts, run, candidate, messages, limits, signal);
+    const attempt = await streamOneStep(opts, run, rows, candidate, messages, limits, signal);
     if (attempt.ok) return;
     lastError = attempt.error;
     if (attempt.started || !isRetryable(attempt.error)) throw attempt.error;
@@ -485,6 +486,7 @@ type StepAttempt = { ok: true } | { ok: false; started: boolean; error: unknown 
 async function streamOneStep(
   opts: RunAgentOptions,
   run: RunRecord,
+  rows: StoredMessage[],
   candidate: { spec: ModelSpec; model: LanguageModel },
   messages: ModelMessage[],
   limits: RuntimeLimits,
@@ -568,6 +570,9 @@ async function streamOneStep(
   const toolCalls: Omit<ToolCallRecord, "messageId" | "runId">[] = [];
   const grants = run.planGrants.map((g) => ({ ...g }));
   let grantsUsed = false;
+  // Destinations already in play before outside content arrived; only needed once tainted.
+  let trusted: TrustedTargets | null = null;
+  const skills = run.skills.length > 0 ? run.skills.map((u) => ({ ...u })) : null;
   for (const part of content) {
     if (part.type !== "tool-call") continue;
     const def = opts.tools.get(part.toolName);
@@ -579,6 +584,7 @@ async function streamOneStep(
       inputEdited: false,
       decidedBy: null,
       preview: safePreview(def, input),
+      skills,
     };
     if (!def) {
       toolCalls.push({
@@ -591,6 +597,15 @@ async function streamOneStep(
       });
       continue;
     }
+    // A read never widens the write: destinations that first appeared in outside content.
+    let newTargets: ReturnType<typeof unseenTargets> = [];
+    if (run.tainted && def.effect !== "read") {
+      trusted ??= trustedTargets(rows, {
+        system: opts.system,
+        untrustedTool: (name) => opts.tools.get(name)?.untrustedOutput ?? true,
+      });
+      newTargets = unseenTargets(callTargets(input, def.effect), trusted);
+    }
     // The person's own policy plus their team's rules; the strictest verdict wins.
     let verdict = evaluateComposedPolicy(
       {
@@ -599,6 +614,7 @@ async function streamOneStep(
         input,
         tainted: run.tainted,
         ...(def.defaultDecision ? { defaultDecision: def.defaultDecision } : {}),
+        ...(newTargets.length > 0 ? { newTargets } : {}),
       },
       policy,
       policy.teamRules,
@@ -606,6 +622,7 @@ async function streamOneStep(
     // A call matching a step of an approved plan, exactly, was already signed off by the
     // user: it runs without asking again, even in a tainted run. Block rules still win, and
     // so does a team rule that needs an admin: the user's own sign-off can't stand in for it.
+    // Nor can it for a destination that first appeared in outside content.
     if (planGrantMaySatisfy(verdict) && grants.some((g) => !g.usedBy && g.tool === def.name)) {
       const hash = await hashInput(input);
       const grant = grants.find((g) => !g.usedBy && g.tool === def.name && g.inputHash === hash);
@@ -662,6 +679,7 @@ async function streamOneStep(
       name: call.name,
       input: call.input,
       effect: call.effect,
+      ...(call.skills ? { skills: call.skills } : {}),
     });
     await events.emit(run.id, {
       type: "tool.status",

@@ -79,12 +79,14 @@ function isTyping(e: KeyboardEvent) {
 }
 
 export default function InboxPage() {
-  const { approvals, teamApprovals, waitingForAdmin, tasks, reload } = useWorkspace();
-  // Team workspaces: other members' calls an admin must decide (admins only), and your own
-  // calls waiting on an admin (shown, not signable).
+  const { approvals, teamApprovals, waitingForAdmin, waitingForSecond, tasks, reload, user } =
+    useWorkspace();
+  // Team workspaces: other members' calls an admin must decide (admins only), your own
+  // calls waiting on an admin, and two-person sign-offs you already gave the first approval
+  // of (shown, not signable).
   const waitingIds = useMemo(
-    () => new Set(waitingForAdmin.map((a) => a.toolCallId)),
-    [waitingForAdmin],
+    () => new Set([...waitingForAdmin, ...waitingForSecond].map((a) => a.toolCallId)),
+    [waitingForAdmin, waitingForSecond],
   );
   const [kept, setKept] = useState<Record<string, Approval>>({});
   const [decided, setDecided] = useState<Record<string, Decided>>({});
@@ -97,10 +99,15 @@ export default function InboxPage() {
   const items = useMemo(() => {
     const map = new Map<string, Approval>();
     for (const a of Object.values(kept)) map.set(a.toolCallId, a);
-    for (const a of [...(approvals ?? []), ...teamApprovals, ...waitingForAdmin])
+    for (const a of [
+      ...(approvals ?? []),
+      ...teamApprovals,
+      ...waitingForAdmin,
+      ...waitingForSecond,
+    ])
       map.set(a.toolCallId, a);
     return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [approvals, teamApprovals, waitingForAdmin, kept]);
+  }, [approvals, teamApprovals, waitingForAdmin, waitingForSecond, kept]);
 
   // Members' calls (they carry a requester) form one "Needs an admin" group, first.
   const groups = useMemo(() => {
@@ -138,10 +145,14 @@ export default function InboxPage() {
       !current ||
       decided[current.toolCallId] ||
       current.name === PLAN_TOOL ||
+      current.signoffs?.needed === 2 ||
       waitingIds.has(current.toolCallId)
     )
       return [];
-    const same = pending.filter((a) => a.runId === current.runId && a.name !== PLAN_TOOL);
+    // Two-person sign-offs keep their own card: they show who approved first.
+    const same = pending.filter(
+      (a) => a.runId === current.runId && a.name !== PLAN_TOOL && a.signoffs?.needed !== 2,
+    );
     return same.length >= 2 ? same.sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
   }, [current, decided, pending, waitingIds]);
   const tainted = (chatId: string) => tasks?.find((t) => t.id === chatId)?.tainted ?? false;
@@ -213,11 +224,16 @@ export default function InboxPage() {
   const loading = approvals === null;
   const empty = !loading && ordered.length === 0;
   // Calls waiting for a team admin are in the list but are neither yours to sign nor signed.
-  const withAdmin = ordered.filter((a) => waitingIds.has(a.toolCallId)).length;
-  const signed = ordered.length - pending.length - withAdmin;
-  const adminNote = withAdmin
-    ? ` · ${withAdmin === 1 ? "one" : withAdmin} waiting for an admin`
-    : "";
+  const withAdmin = ordered.filter((a) =>
+    waitingForAdmin.some((w) => w.toolCallId === a.toolCallId),
+  ).length;
+  const withSecond = ordered.filter((a) =>
+    waitingForSecond.some((w) => w.toolCallId === a.toolCallId),
+  ).length;
+  const signed = ordered.length - pending.length - withAdmin - withSecond;
+  const adminNote =
+    (withAdmin ? ` · ${withAdmin === 1 ? "one" : withAdmin} waiting for an admin` : "") +
+    (withSecond ? ` · ${withSecond === 1 ? "one" : withSecond} waiting for a second approval` : "");
 
   return (
     <div className="flex h-full min-h-0">
@@ -242,7 +258,7 @@ export default function InboxPage() {
                 ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}${adminNote}`
                 : signed
                   ? `All signed · ${signed} this visit${adminNote}`
-                  : withAdmin
+                  : withAdmin || withSecond
                     ? `Nothing for you to sign${adminNote}`
                     : "Nothing waiting on you"}
           </p>
@@ -328,9 +344,21 @@ export default function InboxPage() {
                                 {d.undone ? "Undone" : d.approved ? "Approved" : "Denied"}
                               </MiniStamp>
                             ) : waitingIds.has(a.toolCallId) ? (
-                              <Pill>Waiting for an admin</Pill>
+                              <Pill>
+                                {a.signoffs?.first?.id === user?.id
+                                  ? "1 of 2 · waiting"
+                                  : "Waiting for an admin"}
+                              </Pill>
                             ) : (
-                              <EffectPill effect={a.effect} />
+                              <>
+                                <EffectPill effect={a.effect} />
+                                {a.signoffs?.needed === 2 ? (
+                                  <Pill tone="outline">
+                                    {a.signoffs.first ? "1 of 2" : "2 approvals"}
+                                  </Pill>
+                                ) : null}
+                                {a.escalatedAt ? <Pill tone="attention">Escalated</Pill> : null}
+                              </>
                             )}
                             {a.requester ? (
                               <span className="min-w-0 truncate text-fg-muted">
@@ -440,7 +468,7 @@ export default function InboxPage() {
                 handle={card}
                 runId={current.runId}
                 items={batch}
-                tainted={tainted(current.chatId)}
+                tainted={current.tainted ?? tainted(current.chatId)}
                 onDecided={(outcome) => onBatchDecided(batch, outcome)}
                 onConflict={() => void reload()}
               />
@@ -455,9 +483,11 @@ export default function InboxPage() {
                 input={current.input}
                 reason={current.reason}
                 preview={current.preview}
-                tainted={tainted(current.chatId)}
-                waitingForAdmin={waitingIds.has(current.toolCallId)}
+                tainted={current.tainted ?? tainted(current.chatId)}
+                waitingForAdmin={waitingForAdmin.some((w) => w.toolCallId === current.toolCallId)}
                 requester={current.requester ?? null}
+                meta={current}
+                onPartial={() => void reload()}
                 onDecided={(approved, info) => onDecided(current, { approved, ...info })}
                 onConflict={() => void reload()}
               />
@@ -473,8 +503,12 @@ export default function InboxPage() {
                     {current.requester.email} · in “{current.chatTitle || "Untitled task"}”
                   </p>
                   <p className="mt-3 text-13 text-fg-faint">
-                    Your team requires an admin to approve this. The task stays theirs; your
-                    decision lets it continue.
+                    {current.approver === "admin"
+                      ? "Your team requires an admin to approve this."
+                      : current.escalatedAt
+                        ? "Nobody decided this in time, so it was escalated to your team's admins."
+                        : "Your team needs two people to approve actions like this."}{" "}
+                    The task stays theirs; your decision lets it continue.
                   </p>
                 </div>
               </section>

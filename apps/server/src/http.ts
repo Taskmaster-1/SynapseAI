@@ -1,4 +1,4 @@
-import { ConflictError, ForbiddenError, NotFoundError } from "@synapse/db";
+import { AlreadyApprovedError, ConflictError, ForbiddenError, NotFoundError } from "@synapse/db";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
@@ -57,6 +57,9 @@ export function onError(err: Error, c: Context): Response {
   // e.g. a member deciding a call their team reserved for an admin.
   if (err instanceof ForbiddenError)
     return c.json({ error: { code: "forbidden", message: err.message } }, 403);
+  // Two-person sign-off: the same person can't give both approvals.
+  if (err instanceof AlreadyApprovedError)
+    return c.json({ error: { code: "already_approved", message: err.message } }, 409);
   if (err instanceof ConflictError)
     return c.json({ error: { code: "conflict", message: err.message } }, 409);
   log.error("unhandled", { path: c.req.path, error: err.stack ?? String(err) });

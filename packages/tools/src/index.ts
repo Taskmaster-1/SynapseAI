@@ -1,8 +1,10 @@
 import { type ToolDefinition, ToolRegistry } from "@synapse/core";
 import type { Db, SecretBox } from "@synapse/db";
+import { fileReadTool, loadFiles } from "./builtin/files";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
 import { planTool } from "./builtin/plan";
+import { enabledSkills, skillTools } from "./builtin/skills";
 import { type WebSearchConfig, webFetchTool, webSearchTool } from "./builtin/web";
 import { calendarTools } from "./google/calendar";
 import { type GoogleAppConfig, GoogleClient } from "./google/client";
@@ -10,12 +12,30 @@ import { gmailTools } from "./google/gmail";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 
+export * from "./builtin/files";
 export * from "./builtin/knowledge";
-export { loadMemoryBlock } from "./builtin/memory";
+export { loadMemoryBlock, loadWritingStyle } from "./builtin/memory";
 export { PLAN_TOOL } from "./builtin/plan";
+export {
+  BUILTIN_SKILL_FILES,
+  BUILTIN_SKILLS,
+  enabledSkills,
+  isBuiltinSkill,
+  MAX_USER_SKILLS,
+  type SkillEntry,
+  skillCatalog,
+  skillFromFiles,
+} from "./builtin/skills";
 export { htmlToText, type WebSearchConfig } from "./builtin/web";
 export * from "./google/client";
-export { buildMime, type MessageSummary, newMessagesSince } from "./google/gmail";
+export {
+  buildMime,
+  type MessageSummary,
+  newMessagesSince,
+  ownText,
+  type SentSample,
+  sentSamples,
+} from "./google/gmail";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
 export * from "./ssrf";
@@ -32,27 +52,32 @@ export interface ToolsetConfig {
 
 /**
  * Builds the tool registry for one run: built-ins plus the user's active MCP connections.
- * Call `close()` when the run releases its lease.
+ * `skills` is the run's skill catalog, the same list `load_skill` serves and the prompt
+ * shows. Call `close()` when the run releases its lease.
  */
 export async function buildToolset(cfg: ToolsetConfig, userId: string) {
   const mcp = new McpSession(cfg.db, cfg.box, cfg.app);
+  const skills = await enabledSkills(cfg.db, userId);
   const builtin: ToolDefinition[] = [
     webFetchTool(),
     knowledgeTool(cfg.db, cfg.embedder),
+    fileReadTool(cfg.db),
     ...memoryTools(cfg.db),
     planTool(cfg.db),
+    ...skillTools(cfg.db, skills),
     ...(cfg.webSearch ? [webSearchTool(cfg.webSearch)] : []),
   ];
   if (cfg.google) {
     const google = await GoogleClient.forUser(cfg.google, cfg.db, cfg.box, userId);
     if (google) {
       const client = async () => google;
-      builtin.push(...gmailTools(client), ...calendarTools(client));
+      const attachments = (userId: string, ids: string[]) => loadFiles(cfg.db, userId, ids);
+      builtin.push(...gmailTools(client, attachments), ...calendarTools(client));
     }
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {
     if (!registry.get(tool.name)) registry.add(tool);
   }
-  return { registry, close: () => mcp.close() };
+  return { registry, skills, close: () => mcp.close() };
 }

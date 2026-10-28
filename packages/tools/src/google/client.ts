@@ -272,6 +272,8 @@ export class GoogleClient {
       method?: string;
       query?: Record<string, string | number | boolean | undefined>;
       body?: unknown;
+      /** A non-JSON body, e.g. a multipart upload. */
+      raw?: { contentType: string; data: string | Uint8Array };
       signal?: AbortSignal;
     } = {},
   ): Promise<T> {
@@ -283,8 +285,10 @@ export class GoogleClient {
       headers: {
         authorization: `Bearer ${await this.accessToken()}`,
         ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(init.raw ? { "content-type": init.raw.contentType } : {}),
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+      ...(init.raw ? { body: init.raw.data } : {}),
       ...(init.signal ? { signal: init.signal } : {}),
     });
     if (res.status === 204) return undefined as T;

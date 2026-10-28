@@ -1,6 +1,6 @@
 "use client";
 
-import type { UiMessage, UiPart } from "@synapse/core/ui";
+import { splitAttachments, type UiMessage, type UiPart } from "@synapse/core/ui";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { approvalTitle } from "@/components/approval/approval-card";
@@ -17,6 +17,7 @@ import {
   splitToolName,
 } from "@/lib/format";
 import { stepsOf, type ToolPart, wasAsked } from "@/lib/steps";
+import { MessageFiles } from "./files";
 
 type Block =
   | { kind: "text"; text: string; key: string }
@@ -144,7 +145,7 @@ function textOf(m: UiMessage) {
 
 /** What you asked, set like the brief at the top of a page. Long pastes fall back to body type. */
 function UserMessage({ message, queued }: { message: UiMessage; queued: boolean }) {
-  const text = textOf(message);
+  const { text, files } = splitAttachments(textOf(message));
   const short = text.length <= 280 && !text.includes("\n\n");
   return (
     <Entry label="You" display={short}>
@@ -156,8 +157,13 @@ function UserMessage({ message, queued }: { message: UiMessage; queued: boolean 
             : "border-l-2 border-fg pl-4 text-14 leading-[1.65]",
         )}
       >
-        {text}
+        {text || (
+          <span className="text-fg-muted">
+            Sent {files.length === 1 ? "a file" : `${files.length} files`}
+          </span>
+        )}
       </p>
+      <MessageFiles files={files} />
       {queued ? (
         <p className="mt-2 inline-flex items-center gap-1.5 text-12 text-fg-faint">
           <span className="anim-pulse size-1.5 rounded-full bg-attention" />

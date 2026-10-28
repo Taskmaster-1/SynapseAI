@@ -5,6 +5,7 @@ import type {
   PlanGrant,
   PolicyDefaults,
   RunStatus,
+  SkillUse,
   ToolCallStatus,
   ToolOutput,
 } from "@synapse/core";
@@ -38,6 +39,9 @@ const updatedAt = () =>
     .$onUpdate(() => new Date());
 
 const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => "bytea",
+});
 
 // ── Auth (Better Auth core schema) ─────────────────────────────────────────
 
@@ -120,6 +124,12 @@ export const userSettings = pgTable("user_settings", {
   undoSeconds: integer("undo_seconds").notNull().default(10),
   /** Email the account address when something needs approval (needs SMTP configured). */
   emailAlerts: boolean("email_alerts").notNull().default(false),
+  /** Built-in skills the user switched off, by name. Their own skills carry `enabled`. */
+  disabledSkills: text("disabled_skills").array().notNull().default([]),
+  /** Re-notify once about an approval nobody decided after this many minutes. 0 disables. */
+  remindMinutes: integer("remind_minutes").notNull().default(30),
+  /** Deny an approval nobody decided after this many hours. 0: never expires. */
+  expireHours: integer("expire_hours").notNull().default(24),
   updatedAt: updatedAt(),
 });
 
@@ -144,6 +154,9 @@ export const policyRules = pgTable(
 
 export type WorkspaceRole = "owner" | "admin" | "member";
 
+/** Which effects need two distinct people to approve in a team workspace. */
+export type TwoPersonRule = "destructive" | "destructive_send";
+
 /**
  * A team. Its rules apply to every member on top of their own; tasks, connections and
  * memory stay personal.
@@ -152,6 +165,15 @@ export const workspaces = pgTable("workspaces", {
   id: id(),
   name: text("name").notNull(),
   createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  /**
+   * A member's approval nobody decided after this many minutes also goes to the team's
+   * owners and admins, who may then decide it. 0 disables.
+   */
+  escalateMinutes: integer("escalate_minutes").notNull().default(60),
+  /** Team-wide expiry for members' approvals, in hours, instead of each person's own. */
+  expireHours: integer("expire_hours"),
+  /** Two-person sign-off: these actions need two distinct approvers. Null: off. */
+  twoPerson: text("two_person").$type<TwoPersonRule>(),
   createdAt: createdAt(),
 });
 
@@ -256,6 +278,8 @@ export const runs = pgTable(
      * A matching call runs once without asking; `usedBy` marks a spent grant.
      */
     planGrants: jsonb("plan_grants").$type<PlanGrant[]>().notNull().default([]),
+    /** Skills loaded with `load_skill` in this run (name + content hash), in load order. */
+    skills: jsonb("skills").$type<SkillUse[]>().notNull().default([]),
     /** Worker lease. A run with an expired lease is picked up again by another worker. */
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
@@ -290,6 +314,8 @@ export const messages = pgTable(
     kind: text("kind").$type<"message" | "handover">().notNull().default("message"),
     cutoffSeq: integer("cutoff_seq"),
     message: jsonb("message").$type<ModelMessage>().notNull(),
+    /** A user-role row quoting third-party content (an event trigger's email or payload). */
+    untrusted: boolean("untrusted").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [index("messages_chat_seq_idx").on(t.chatId, t.seq)],
@@ -323,8 +349,20 @@ export const toolCalls = pgTable(
     decidedVia: text("decided_via"),
     /** When notification channels were told this call needs a person. */
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    /** When the one reminder went out (claimed with a compare-and-set, like `notifiedAt`). */
+    remindedAt: timestamp("reminded_at", { withTimezone: true }),
+    /** When it was escalated to the requester's team admins, who may then decide it too. */
+    escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+    /** Denied as expired if nobody decides by then. Null: never. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /** Two-person sign-off: the first of two approvals (the second is `decidedBy`). */
+    firstApprovedBy: text("first_approved_by"),
+    firstApprovedAt: timestamp("first_approved_at", { withTimezone: true }),
+    firstApprovedVia: text("first_approved_via"),
     /** Undo window: an approved call does not run before this time. */
     executeAfter: timestamp("execute_after", { withTimezone: true }),
+    /** Skills loaded in the run when this call was proposed, with their versions (audit). */
+    skills: jsonb("skills").$type<SkillUse[]>(),
     output: jsonb("output").$type<ToolOutput>(),
     fullOutput: jsonb("full_output").$type<ToolOutput>(),
     createdAt: createdAt(),
@@ -502,7 +540,8 @@ export const memories = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
-    source: text("source").$type<"user" | "agent">().notNull().default("user"),
+    /** "style": the writing-style profile learned from sent mail (one per user, editable). */
+    source: text("source").$type<"user" | "agent" | "style">().notNull().default("user"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -557,6 +596,31 @@ export const chunks = pgTable(
   ],
 );
 
+// ── Skills ──────────────────────────────────────────────────────────────────
+
+/**
+ * A user's own skill, in the Agent Skills shape: SKILL.md frontmatter fields, a markdown
+ * body and optional reference files. Built-in skills ship with the server, not in here.
+ */
+export const skills = pgTable(
+  "skills",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    body: text("body").notNull(),
+    /** Reference files by relative path. */
+    files: jsonb("files").$type<Record<string, string>>().notNull().default({}),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("skills_user_name_idx").on(t.userId, t.name)],
+);
+
 // ── Automations ────────────────────────────────────────────────────────────
 
 /** What starts an automation. */
@@ -580,6 +644,30 @@ export interface TriggerCursor {
  * A prompt that runs in its own chat when its trigger fires: on a schedule, on new email,
  * or on a webhook. Approvals land in the inbox.
  */
+/**
+ * Files the user attached in a chat: photos, videos, PDFs, anything. The agent can read the
+ * text ones (their text also goes to the knowledge base) and attach any of them to an email.
+ */
+export const files = pgTable(
+  "files",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    data: bytea("data").notNull(),
+    /** Extracted text (text files and PDFs), capped; null for photos, videos and the like. */
+    text: text("text"),
+    /** Set when the text was also added to the knowledge base. */
+    documentId: text("document_id").references(() => documents.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("files_user_idx").on(t.userId, t.createdAt)],
+);
+
 export const automations = pgTable(
   "automations",
   {

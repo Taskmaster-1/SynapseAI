@@ -96,6 +96,14 @@ async function decide(approved, data, body, url) {
     // Signed out, already decided elsewhere, or offline: let the person see it in the app.
     return focusOrOpen(url);
   }
+  // Two-person sign-off: the first of two approvals; it waits for someone else.
+  if (approved && result.partial)
+    return show("Approved · needs a second approval", {
+      body: body || "Someone else on your team has to approve it too.",
+      tag: data.toolCallId,
+      data: { url: data.url },
+      silent: true,
+    });
   if (!approved || !result.executeAfter) return;
   // A send or delete waits out the undo window: say so, and offer Undo where possible.
   const seconds = Math.max(1, Math.round((Date.parse(result.executeAfter) - Date.now()) / 1000));

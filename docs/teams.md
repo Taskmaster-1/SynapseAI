@@ -65,6 +65,48 @@ team owner or admin signs off, not the member whose task asked:
 - If the member leaves the team while it waits, the team's rules no longer govern them and
   they decide it themselves.
 
+## Approvals that don't wait forever
+
+Pending approvals get one reminder, escalate to the team, and finally expire. A sweeper in
+the worker loop (every 30 seconds, on every worker) does this; each step is claimed with a
+compare-and-set on its own timestamp (`reminded_at`, `escalated_at`, the expiry itself), so
+any number of workers can sweep at once and each step happens exactly once.
+
+| Step | Default | Set in | What happens |
+|---|---|---|---|
+| Remind | 30 min | Settings → Notifications (per person) | One more notification, through the same channels, to whoever can decide it |
+| Escalate | 60 min | Settings → Team → Approvals | A member's approval also goes to the team's owners and admins, who may now decide it. The member still can. Calls that need an admin are with admins from the start and don't escalate |
+| Expire | 24 h | Settings → Notifications, or team-wide in Settings → Team | Denied with "Expired: nobody decided in time". The agent sees that as the tool result and the run continues, like any deny |
+
+Times count from when people were first told (`notified_at`). The expiry is fixed when an
+approval starts waiting, so changing the setting affects new approvals only. `0` turns a
+step off (expiry: never). Personal accounts have no escalation.
+
+## Two-person sign-off
+
+**Settings → Team → Approvals → Two-person sign-off** makes irreversible actions (and,
+optionally, anything that sends) need two different people:
+
+- **Who:** the member and any owner or admin, in either order; or, when a team rule says an
+  admin decides, two different admins (a requester who is an admin can be one of them).
+  Nobody can give both approvals: a second approval from the same person is refused
+  (`409 already_approved`).
+- **First approval:** recorded (`first_approved_by`, `_at`, `_via`) and the action keeps
+  waiting, shown as "1 of 2 approvals". The other people who may give the second approval
+  are notified.
+- **Second approval:** completes it. Only now does the requester's undo window start, and
+  the requester can still undo inside it.
+- **Any deny** ends it, including from the first approver.
+- **Edits:** an approval with edited input stores the edit, so the next person sees and
+  approves exactly what will run. An edit counts as the editor's approval only: any earlier
+  approval of the old input is set aside and one more person must approve. Both approvals
+  always cover the same input.
+- It works the same from the web app, push notifications and Slack (all go through one
+  decision path). Expiry still applies.
+
+A team whose only owner or admin is one person can't give that person's own actions a
+second approval: they will expire. Make someone else an admin.
+
 ## Roles
 
 | | Owner | Admin | Member |
@@ -72,6 +114,8 @@ team owner or admin signs off, not the member whose task asked:
 | See the team, its members and rules | ✓ | ✓ | ✓ |
 | Leave | ✓ (not the last owner) | ✓ | ✓ |
 | Decide team members' "an admin decides" actions | ✓ | ✓ | |
+| Decide members' escalated actions, give the second of two approvals | ✓ | ✓ | |
+| Change escalation, team expiry, two-person sign-off | ✓ | ✓ | |
 | Rename the team | ✓ | ✓ | |
 | Create and revoke invite links | ✓ | ✓ | |
 | Change members' and admins' roles, remove them | ✓ | ✓ | |
@@ -104,9 +148,13 @@ members' tasks while they were in the team:
 | `effect` | read, write, send or destructive |
 | `decision` | What the rules said: allow, ask or block |
 | `status` | What happened: succeeded, failed, denied, awaiting_approval… |
-| `decided_by` | Email of the person who approved or denied (empty when the rules decided) |
-| `decided_via` | Where they decided: web, push, slack, email |
+| `decided_by` | Email of the person who approved or denied (empty when the rules decided, or it expired). With two-person sign-off, the second approver |
+| `decided_via` | Where they decided: web, push, slack, email; `expiry` when nobody decided in time |
 | `reason` | Why the rules said so |
+| `first_approved_by` | Two-person sign-off: email of the first approver |
+| `first_approved_via` | Where they approved |
+| `reminded_at` | When the reminder went out, if it did |
+| `escalated_at` | When it escalated to the team's admins, if it did |
 
 The file is RFC 4180 CSV. Task titles and reasons can contain text that came from outside
 (an email subject, say), so any cell starting with `=`, `+`, `-` or `@` is prefixed with `'`

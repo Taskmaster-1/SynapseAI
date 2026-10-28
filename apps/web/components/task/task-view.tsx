@@ -1,7 +1,13 @@
 "use client";
 
 import type { SeqEvent } from "@synapse/core";
-import { applyEvent, isActive, type UiMessage } from "@synapse/core/ui";
+import {
+  applyEvent,
+  isActive,
+  splitAttachments,
+  type UiMessage,
+  withAttachments,
+} from "@synapse/core/ui";
 import { Ellipsis, PanelRight, PanelRightClose, Pencil, Square, Trash } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,6 +26,7 @@ import { useRunStream } from "@/lib/use-run-stream";
 import { useWorkspace } from "@/lib/workspace";
 import { Composer, type ComposerHandle } from "./composer";
 import { Conversation, RunReceipt } from "./conversation";
+import { useAttachments } from "./files";
 import { type PanelTab, RunPanel } from "./run-panel";
 
 interface State {
@@ -39,10 +46,12 @@ const PANEL_KEY = "synapse-run-panel";
 export function TaskView({ taskId }: { taskId: string }) {
   const router = useRouter();
   const toast = useToast();
-  const { reload: reloadWorkspace, tasks, teamRole } = useWorkspace();
+  const { reload: reloadWorkspace, tasks, teamRole, approvals } = useWorkspace();
   // A call the team reserves for an admin: members only watch it; admins sign it here.
   const waitsForAdmin = (p: ToolPart) =>
     p.approver === "admin" && teamRole !== null && !isTeamAdmin(teamRole);
+  /** Expiry, escalation, two-person progress and risk facts, from the inbox. */
+  const metaOf = (toolCallId: string) => approvals?.find((a) => a.toolCallId === toolCallId);
   const [title, setTitle] = useState("");
   const [state, setState] = useState<State | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -55,6 +64,7 @@ export function TaskView({ taskId }: { taskId: string }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const composer = useRef<ComposerHandle>(null);
+  const attach = useAttachments();
 
   // ---------- Run panel ----------
   const wide = useMedia("(min-width: 1200px)");
@@ -187,8 +197,10 @@ export function TaskView({ taskId }: { taskId: string }) {
   const status = hasAwaiting ? "needs" : taskStatus(run?.status);
 
   async function send() {
-    const content = draft.trim();
-    if (!content || !state) return;
+    const files = attach.ready;
+    const content = withAttachments(draft.trim(), files);
+    if (!content || !state || attach.uploading) return;
+    const pending = attach.items;
     const localId = `local-${Date.now()}`;
     const local: UiMessage = {
       id: localId,
@@ -198,6 +210,7 @@ export function TaskView({ taskId }: { taskId: string }) {
     };
     setSending(true);
     setDraft("");
+    attach.clear();
     stickToBottom.current = true;
     setState((s) => (s ? { ...s, messages: [...s.messages, local] } : s));
     try {
@@ -207,7 +220,8 @@ export function TaskView({ taskId }: { taskId: string }) {
       void reloadWorkspace();
     } catch (err) {
       setState((s) => (s ? { ...s, messages: s.messages.filter((m) => m.id !== localId) } : s));
-      setDraft(content);
+      setDraft(splitAttachments(content).text);
+      attach.restore(pending);
       toast(errorMessage(err), "error");
     } finally {
       setSending(false);
@@ -270,7 +284,8 @@ export function TaskView({ taskId }: { taskId: string }) {
             p.status === "awaiting_approval" &&
             p.name !== PLAN_TOOL &&
             !decided[p.toolCallId] &&
-            !waitsForAdmin(p),
+            !waitsForAdmin(p) &&
+            metaOf(p.toolCallId)?.signoffs?.needed !== 2,
         )
       : [];
     if (runId && group.length >= 2 && group.some((p) => p.toolCallId === part.toolCallId)) {
@@ -325,6 +340,8 @@ export function TaskView({ taskId }: { taskId: string }) {
         tainted={tainted}
         glow={initialAwaiting !== null && !initialAwaiting.has(part.toolCallId)}
         waitingForAdmin={waitsForAdmin(part)}
+        meta={metaOf(part.toolCallId)}
+        onPartial={() => void reloadWorkspace()}
         onDecided={(approved, info) => {
           setDecided((m) => ({ ...m, [part.toolCallId]: { approved, ...info } }));
           follow(runId);
@@ -448,6 +465,7 @@ export function TaskView({ taskId }: { taskId: string }) {
               onChange={setDraft}
               onSend={() => void send()}
               sending={sending}
+              attach={attach}
               queue={active}
               placeholder={
                 active ? "Add something for the agent…" : "Reply or ask for something else…"

@@ -5,8 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./policy": "./src/policy.ts",
     "./testing": "./src/testing.ts",
-    "./ui": "./src/ui.ts"
+    "./ui": "./src/ui.ts",
+    "./risk": "./src/risk.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.65",

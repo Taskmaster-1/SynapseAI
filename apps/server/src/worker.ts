@@ -1,11 +1,4 @@
-import {
-  createModel,
-  type ModelSpec,
-  nextUndoWaitMs,
-  type ProviderKeys,
-  parseModelRef,
-  runAgent,
-} from "@synapse/core";
+import { type ModelSpec, nextUndoWaitMs, runAgent, skillsPromptBlock } from "@synapse/core";
 import {
   claimRun,
   continuePendingInputs,
@@ -16,13 +9,15 @@ import {
   resetAttempts,
   schema,
 } from "@synapse/db";
-import { buildToolset, loadMemoryBlock } from "@synapse/tools";
+import { buildToolset, loadMemoryBlock, loadWritingStyle } from "@synapse/tools";
 import type { LanguageModel } from "ai";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { log } from "./log";
 import { buildSystemPrompt } from "./prompt";
 import { RUNS_CHANNEL, type Services } from "./services";
+import { sweepApprovals } from "./sweeper";
 import { pollGmailTriggers } from "./triggers";
+import { resolveModels } from "./user-models";
 
 const LEASE_MS = 60_000;
 const IDLE_POLL_MS = 5_000;
@@ -63,6 +58,13 @@ export class Worker {
   }
 
   private async fireAutomations() {
+    try {
+      const swept = await sweepApprovals(this.s);
+      if (swept.expired || swept.reminded || swept.escalated || swept.announced)
+        log.info("approvals swept", { ...swept });
+    } catch (error) {
+      log.error("approval sweep failed", { error: String(error) });
+    }
     try {
       const fired = await fireDueAutomations(this.s.database.db);
       for (const runId of fired) await this.s.wake(runId);
@@ -234,7 +236,9 @@ export class Worker {
         userName: user?.name ?? "there",
         instructions: settings?.instructions ?? null,
         memory: await loadMemoryBlock(db, run.userId),
+        writingStyle: await loadWritingStyle(db, run.userId),
         connections: conns.map((c) => c.name),
+        skills: skillsPromptBlock(toolset.skills),
       });
 
       const summary = this.modelOverride
@@ -301,31 +305,11 @@ export class Worker {
     }
   }
 
-  private async resolveModels(
+  private resolveModels(
     settings: typeof schema.userSettings.$inferSelect | undefined,
-    refs = settings?.models?.chain?.length ? settings.models.chain : this.s.config.SYNAPSE_MODELS,
+    refs?: string[],
   ) {
-    const keys: ProviderKeys = { ...this.s.config.serverKeys };
-    for (const [provider, sealed] of Object.entries(settings?.providerKeys ?? {})) {
-      const key = await this.s.box.open(sealed);
-      if (
-        provider === "anthropic" ||
-        provider === "openai" ||
-        provider === "google" ||
-        provider === "gateway"
-      )
-        keys[provider] = key;
-    }
-    const out: { spec: ModelSpec; model: LanguageModel }[] = [];
-    for (const ref of refs) {
-      try {
-        const spec = parseModelRef(ref);
-        out.push({ spec, model: createModel(spec, keys) });
-      } catch (error) {
-        log.warn("skipping model", { ref, error: String(error) });
-      }
-    }
-    return out;
+    return resolveModels(this.s, settings, refs);
   }
 
   private async dailySpendExceeded(userId: string, limit: number): Promise<boolean> {

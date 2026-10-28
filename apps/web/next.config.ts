@@ -7,6 +7,10 @@ const config: NextConfig = {
   poweredByHeader: false,
   // @synapse/core ships TypeScript source.
   transpilePackages: ["@synapse/core"],
+  experimental: {
+    // Chat attachments go through the proxy; files may be up to 25 MB.
+    proxyClientMaxBodySize: "26mb",
+  },
   async headers() {
     return [
       {

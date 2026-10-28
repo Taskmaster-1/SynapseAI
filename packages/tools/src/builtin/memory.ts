@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "@synapse/core";
 import { type Db, schema } from "@synapse/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 
 const MAX_MEMORIES = 200;
 const MAX_MEMORY_CHARS = 500;
@@ -50,14 +50,25 @@ export function memoryTools(db: Db): ToolDefinition[] {
   ];
 }
 
-/** Renders the user's notes for the system prompt. */
+/** Renders the user's notes for the system prompt (the writing style has its own block). */
 export async function loadMemoryBlock(db: Db, userId: string): Promise<string | null> {
   const rows = await db
     .select({ content: schema.memories.content })
     .from(schema.memories)
-    .where(and(eq(schema.memories.userId, userId)))
+    .where(and(eq(schema.memories.userId, userId), ne(schema.memories.source, "style")))
     .orderBy(asc(schema.memories.createdAt))
     .limit(MAX_MEMORIES);
   if (rows.length === 0) return null;
   return rows.map((r) => `- ${r.content}`).join("\n");
+}
+
+/** The user's writing-style profile (learned from sent mail, then theirs to edit), if any. */
+export async function loadWritingStyle(db: Db, userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ content: schema.memories.content })
+    .from(schema.memories)
+    .where(and(eq(schema.memories.userId, userId), eq(schema.memories.source, "style")))
+    .orderBy(asc(schema.memories.createdAt))
+    .limit(1);
+  return row?.content.trim() || null;
 }
