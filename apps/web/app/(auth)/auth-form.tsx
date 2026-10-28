@@ -3,7 +3,7 @@
 import { LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { type CSSProperties, type FormEvent, useEffect, useState } from "react";
-import { Slip } from "@/components/landing/signature-hero";
+import { Slip } from "@/components/landing/approval-slip";
 import { Brand, Field } from "@/components/ui";
 import { type AppConfig, api } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
