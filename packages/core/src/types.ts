@@ -42,6 +42,11 @@ export interface ToolCallRecord {
   output: ToolOutput | null;
   decidedBy: string | null;
   /**
+   * "admin" when a team rule says a workspace admin (not the requester) must decide.
+   * Null or absent: the requester decides.
+   */
+  approver?: "admin" | null;
+  /**
    * Undo window (ISO time): an approved call does not run before this. Set when a person
    * approves a send or destructive action; null or absent means it may run now.
    */
@@ -130,6 +135,8 @@ export type RunEvent =
       effect: Effect;
       reason: string;
       preview: string | null;
+      /** "admin": a workspace admin must decide; the requester sees it as waiting. */
+      approver?: "admin" | null;
     }
   | { type: "usage"; inputTokens: number; outputTokens: number; costUsd: number }
   | { type: "compacted"; messageId: string }

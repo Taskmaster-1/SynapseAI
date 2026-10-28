@@ -36,6 +36,20 @@
       "when": 1792890418069,
       "tag": "0004_trust_that_grows",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792891462021,
+      "tag": "0005_approval_channels",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792892830225,
+      "tag": "0006_reach_and_teams",
+      "breakpoints": true
     }
   ]
 }

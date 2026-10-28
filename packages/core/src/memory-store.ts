@@ -1,4 +1,4 @@
-import type { PolicyDefaults, PolicyRule } from "./policy";
+import type { PolicyDefaults, PolicyRule, TeamPolicyRule } from "./policy";
 import { SAFE_DEFAULTS } from "./policy";
 import { UNDO_DENIAL } from "./runtime";
 import type { EventSink, RunStore } from "./store";
@@ -12,6 +12,8 @@ export class MemoryStore implements RunStore {
   pendingInputs: { chatId: string; text: string }[] = [];
   rules: PolicyRule[] = [];
   defaults: PolicyDefaults = SAFE_DEFAULTS;
+  /** Rules of the user's team workspace, applied on top of `rules`. */
+  teamRules: TeamPolicyRule[] = [];
   private seq = 0;
 
   createRun(init: { chatId: string; userId: string; text?: string }): RunRecord {
@@ -123,7 +125,7 @@ export class MemoryStore implements RunStore {
   }
 
   async getPolicy() {
-    return { rules: this.rules, defaults: this.defaults };
+    return { rules: this.rules, defaults: this.defaults, teamRules: this.teamRules };
   }
 
   /**

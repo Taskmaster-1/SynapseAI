@@ -4,7 +4,7 @@ All endpoints live under `/api`, return JSON, and require a session cookie (Bett
 mounted at `/api/auth/*`) unless noted. Every query is scoped to the signed-in user; ids
 belonging to someone else return `404`.
 
-Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/404/409/422/500.
+Errors: `{ "error": { "code": string, "message": string } }` with status 400/401/403/404/409/422/500/503.
 
 Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`,
 `ToolOutput`, `PolicyRule`, `PolicyDefaults`) are exported from `@synapse/core` and
@@ -15,8 +15,9 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 | Method | Path | Response |
 |---|---|---|
 | GET | `/api/health` | `{ ok: true }` |
-| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean }, features: { webSearch: boolean, embeddings: boolean }, models: string[] }` |
+| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean }, features: { webSearch: boolean, embeddings: boolean, push: boolean, emailAlerts: boolean }, models: string[] }` — `push`/`emailAlerts`: the server has VAPID keys / SMTP configured |
 | GET | `/oauth/client-metadata.json` | OAuth client metadata document for MCP servers |
+| POST | `/api/slack/interactions` | Slack's interactivity endpoint (button clicks). Authenticated by Slack's `X-Slack-Signature` over the raw body, rejected (`401`) when wrong or more than 5 minutes old. Answers `200` at once and decides in the background |
 | POST | `/api/hooks/:automationId/:token` | Starts a task for a webhook automation. Any body (JSON is pretty-printed for the agent, capped at 16 KB). `202 { ok, taskId }`; `404` for an unknown id or wrong token, `409` when paused, `413` over 256 KB, `429` over 60 per hour |
 
 ## Chats
@@ -39,13 +40,18 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/runs/:id/events?after=<seq>` | | **SSE** stream (see below) |
-| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before |
+| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown, via?: "web" \| "push" }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before. `via` (default `"web"`; anything else is `422`) records where it was decided: the service worker sends `"push"` for a notification's Approve/Deny button |
 | POST | `/api/runs/:id/tool-calls/:toolCallId/undo` | | `204`; `409` once the window has ended ("Too late to undo: it already ran."). The call is denied and the agent is told the user undid it |
 | POST | `/api/runs/:id/tool-calls/decisions` | `{ decisions: { toolCallId, approved, reason?, input? }[] }` (`input`: approve with edited input, same as the single route) | `{ executeAfter: Record<toolCallId, string> }` for calls that opened an undo window; all or nothing in one transaction: `409` if any call is no longer awaiting approval, `400` on duplicate ids. The run is re-queued once when nothing is left awaiting |
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
 | GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, executeAfter, createdAt }[] }` (audit view) |
-| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user |
+| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, approver, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user. `approver: "admin"` means the user's team requires a team admin to decide it: unless the user is an owner or admin of their team, they can only wait (deciding returns `403`) |
+
+Tool calls carry `approver: "admin" | null` (in `GET /api/runs/:id`, in `UiPart`s and on the
+`approval.requested` event). A team owner or admin decides such a call of a team member with
+the same decision routes above; `decidedBy` records the admin. They can't decide a member's
+other calls (`404`), and can't undo for them.
 
 ### Event stream
 
@@ -87,10 +93,17 @@ Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null } }` |
+| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null }, slack: { available, connection: { team, status, lastError, connectedAt } \| null } }` |
 | POST | `/api/integrations/google/connect` | | `{ url }` — open it in the browser; Google redirects back to the callback |
 | GET | `/api/integrations/google/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=google` or `?error=<message>` |
 | DELETE | `/api/integrations/google` | | `204` — revokes the grant at Google and deletes the tokens |
+| POST | `/api/integrations/slack/connect` | | `{ url }` — Slack's install page; needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET` ([setup](slack.md)), else `422 not_configured` |
+| GET | `/api/integrations/slack/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=slack` or `?error=<message>` |
+| POST | `/api/integrations/slack/test` | | `{ ok: true }` — sends a test DM (`422 slack_not_connected`, `422 slack_error`) |
+| DELETE | `/api/integrations/slack` | | `204` — revokes the bot token at Slack and deletes it |
+
+With Slack connected, each approval addressed to you arrives as a Slack DM with Approve and
+Deny; decisions made there are recorded with `decidedVia: "slack"`.
 
 ## Policy
 
@@ -108,6 +121,35 @@ decisions. Recipients that all share one (non-public) email domain become an `al
 condition; a single `repo`/`project`/`channel`/`team` becomes `equals`. Sending and
 destructive tools are only suggested with a condition. Learned rules are ordinary rules; a
 task that read outside content still asks.
+
+## Team workspace
+
+See [teams.md](teams.md) for how team rules combine with yours. One workspace per person.
+`Role` is `"owner" | "admin" | "member"`; "admin+" means owner or admin (`403` otherwise);
+endpoints other than create and join return `404 no_workspace` when you're not in one.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/workspace` | | `{ workspace: { id, name, createdAt } \| null, role: Role \| null, members: { userId, name, email, role, joinedAt }[] }` |
+| POST | `/api/workspace` | `{ name }` | `201`, same shape; you are the owner. `409 already_member` if you're in one |
+| PATCH | `/api/workspace` | `{ name }` | same shape (admin+) |
+| POST | `/api/workspace/invites` | `{ role?: "member" \| "admin", expiresInDays?: 1–30 }` (default member, 7) | `201 { invite: { id, role, expiresAt, createdAt, status }, link }` — `link` is `${PUBLIC_URL}/join/<token>`, returned only here; only a SHA-256 of the token is stored (admin+) |
+| GET | `/api/workspace/invites` | | `{ invites: { id, role, expiresAt, createdAt, usedAt, revokedAt, usedByEmail, status: "active" \| "used" \| "revoked" \| "expired" }[] }` (admin+) |
+| DELETE | `/api/workspace/invites/:id` | | `204` — revokes an unused invite (admin+) |
+| POST | `/api/workspace/join` | `{ token }` | same shape as GET. Single use. `404 invite_not_found`; `409 invite_used` / `invite_revoked` / `invite_expired` / `already_member` / `already_joined` |
+| PATCH | `/api/workspace/members/:userId` | `{ role: Role }` | same shape as GET (admin+). Only owners make or change owners; `409 last_owner` when it would leave no owner |
+| DELETE | `/api/workspace/members/:userId` | | `204`. Anyone may remove themselves (leave); admin+ remove others, only owners remove owners. `409 last_owner` for the last owner while others remain; the last person to leave deletes the workspace |
+| GET | `/api/workspace/rules` | | `{ rules: TeamRule[], canEdit: boolean }` — `TeamRule` is a `PolicyRule` plus `approver?: "admin"` |
+| PUT | `/api/workspace/rules` | `{ rules: TeamRule[] }` (priority order) | same (admin+). Validated like personal rules, incl. `422 invalid_pattern`. `approver` is kept only on `ask` rules |
+| GET | `/api/workspace/approvals` | | `{ approvals: { …same as /api/approvals, requester: { id, name, email } }[] }` — team members' calls (yours included) awaiting an admin (admin+) |
+| GET | `/api/workspace/audit.csv?from&to` | | `text/csv` attachment (admin+). `from`/`to` are `YYYY-MM-DD` (inclusive) or ISO times; default the last 30 days, at most a year, at most 50,000 rows (`422 too_many_rows`) |
+
+The audit CSV has a header row `time,member,task,tool,effect,decision,status,decided_by,decided_via,reason`:
+every tool call proposed in members' tasks while they were in the team, oldest first. `decision`
+is what the policy said (`allow`/`ask`/`block`), `decided_by` the email of the person who
+decided (empty when policy decided). Quoting follows RFC 4180 (CRLF lines); a cell starting
+with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'` so spreadsheets don't run it as a
+formula.
 
 ## Memory
 
@@ -131,7 +173,7 @@ task that read outside content still asks.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
 | GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |
@@ -143,6 +185,25 @@ Anthropic, OpenAI or Google (e.g. `openai:gpt-5.5`, `anthropic:claude-sonnet-5-5
 price table and the server's configured chain. `available` means the server or the user has a key
 for that provider. Available models come first, then newest. `updatedAt` is the last catalog sync
 (`null` if it never synced; built-in prices are used then).
+
+## Notifications
+
+Web Push for approvals (setup: [notifications.md](notifications.md)). Routes other than
+`GET /api/push/config` and the list/remove routes answer `503 push_not_configured` when the
+server has no VAPID keys.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/push/config` | | `{ enabled: boolean, publicKey: string \| null }` — the VAPID public key for `PushManager.subscribe` |
+| GET | `/api/push/subscriptions` | | `{ subscriptions: { id, endpoint, label: string \| null, createdAt, lastUsedAt: string \| null }[] }` — this user's devices |
+| POST | `/api/push/subscriptions` | the browser's `PushSubscription.toJSON()`: `{ endpoint, keys: { p256dh, auth } }`, plus optional `label` (default: derived from the User-Agent, e.g. "Safari on iPhone") | `201 { subscription }`. Upserts by endpoint (a device signed in to another account moves to it). Keys are sealed at rest. `422 invalid_endpoint` unless the endpoint is an https URL on a known push service (FCM, Mozilla, Apple, WNS) |
+| DELETE | `/api/push/subscriptions/:id` | | `204` |
+| POST | `/api/push/test` | | `{ sent: number, removed: number }` — a test notification to every device; `removed` counts devices the push service no longer knows (404/410), which are deleted |
+
+Each approval is pushed once (to every device of each of its recipients) when a run starts
+waiting: `{ title, body, tag: toolCallId, data: { url, runId, toolCallId, effect }, actions: [approve, deny] }`;
+several at once for one person become one summary without buttons. Email alerts are a user
+setting (`emailAlerts` in `/api/settings`).
 
 ## Automations
 

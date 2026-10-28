@@ -24,10 +24,10 @@ export async function signOut() {
 export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { tasks, approvals } = useWorkspace();
+  const { tasks, approvals, teamApprovals } = useWorkspace();
   const palette = usePalette();
   const [query, setQuery] = useState("");
-  const inboxCount = approvals?.length ?? 0;
+  const inboxCount = (approvals?.length ?? 0) + teamApprovals.length;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

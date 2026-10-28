@@ -14,7 +14,7 @@ import { ApprovalBatch, PLAN_TOOL } from "@/components/approval/checklist";
 import { LearnPrompt, SuggestionStrip } from "@/components/approval/learned-rules";
 import { UndoCountdown, type UndoTarget, useTimeLeft } from "@/components/approval/undo-window";
 import { Markdown } from "@/components/markdown";
-import { EffectPill, Kbd, Monogram, Skeleton, StatusDot } from "@/components/ui";
+import { EffectPill, Kbd, Monogram, Pill, Skeleton, StatusDot } from "@/components/ui";
 import { type Approval, api } from "@/lib/api";
 import { cx, formatDateTime, formatRelative, splitToolName } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -79,7 +79,13 @@ function isTyping(e: KeyboardEvent) {
 }
 
 export default function InboxPage() {
-  const { approvals, tasks, reload } = useWorkspace();
+  const { approvals, teamApprovals, waitingForAdmin, tasks, reload } = useWorkspace();
+  // Team workspaces: other members' calls an admin must decide (admins only), and your own
+  // calls waiting on an admin (shown, not signable).
+  const waitingIds = useMemo(
+    () => new Set(waitingForAdmin.map((a) => a.toolCallId)),
+    [waitingForAdmin],
+  );
   const [kept, setKept] = useState<Record<string, Approval>>({});
   const [decided, setDecided] = useState<Record<string, Decided>>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -91,13 +97,22 @@ export default function InboxPage() {
   const items = useMemo(() => {
     const map = new Map<string, Approval>();
     for (const a of Object.values(kept)) map.set(a.toolCallId, a);
-    for (const a of approvals ?? []) map.set(a.toolCallId, a);
+    for (const a of [...(approvals ?? []), ...teamApprovals, ...waitingForAdmin])
+      map.set(a.toolCallId, a);
     return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [approvals, kept]);
+  }, [approvals, teamApprovals, waitingForAdmin, kept]);
 
+  // Members' calls (they carry a requester) form one "Needs an admin" group, first.
   const groups = useMemo(() => {
-    const g = new Map<string, { chatId: string; title: string; items: Approval[] }>();
+    const g = new Map<
+      string,
+      { chatId: string; title: string; items: Approval[]; team?: boolean }
+    >();
+    const team = items.filter((a) => a.requester);
+    if (team.length)
+      g.set("team", { chatId: "team", title: "Needs an admin", items: team, team: true });
     for (const a of items) {
+      if (a.requester) continue;
       const cur = g.get(a.chatId) ?? { chatId: a.chatId, title: a.chatTitle, items: [] };
       cur.items.push(a);
       g.set(a.chatId, cur);
@@ -105,7 +120,7 @@ export default function InboxPage() {
     return Array.from(g.values());
   }, [items]);
   const ordered = useMemo(() => groups.flatMap((g) => g.items), [groups]);
-  const pending = ordered.filter((a) => !decided[a.toolCallId]);
+  const pending = ordered.filter((a) => !decided[a.toolCallId] && !waitingIds.has(a.toolCallId));
 
   // Initial selection: ?id= or the first pending item.
   useEffect(() => {
@@ -119,10 +134,16 @@ export default function InboxPage() {
   const current = ordered.find((a) => a.toolCallId === selected) ?? null;
   // Open asks from the same run sign off together as one checklist (plans keep their card).
   const batch = useMemo(() => {
-    if (!current || decided[current.toolCallId] || current.name === PLAN_TOOL) return [];
+    if (
+      !current ||
+      decided[current.toolCallId] ||
+      current.name === PLAN_TOOL ||
+      waitingIds.has(current.toolCallId)
+    )
+      return [];
     const same = pending.filter((a) => a.runId === current.runId && a.name !== PLAN_TOOL);
     return same.length >= 2 ? same.sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
-  }, [current, decided, pending]);
+  }, [current, decided, pending, waitingIds]);
   const tainted = (chatId: string) => tasks?.find((t) => t.id === chatId)?.tainted ?? false;
 
   const move = useCallback(
@@ -165,7 +186,8 @@ export default function InboxPage() {
 
   function onDecided(a: Approval, d: Decided) {
     setKept((k) => ({ ...k, [a.toolCallId]: a }));
-    setDecided((m) => ({ ...m, [a.toolCallId]: d }));
+    // Undo stays with the member who owns the task, not the admin who signed it.
+    setDecided((m) => ({ ...m, [a.toolCallId]: a.requester ? { ...d, executeAfter: null } : d }));
     const next = pending.find((x) => x.toolCallId !== a.toolCallId);
     if (next && desktop) setSelected(next.toolCallId);
     void reload();
@@ -190,7 +212,12 @@ export default function InboxPage() {
 
   const loading = approvals === null;
   const empty = !loading && ordered.length === 0;
-  const signed = ordered.length - pending.length;
+  // Calls waiting for a team admin are in the list but are neither yours to sign nor signed.
+  const withAdmin = ordered.filter((a) => waitingIds.has(a.toolCallId)).length;
+  const signed = ordered.length - pending.length - withAdmin;
+  const adminNote = withAdmin
+    ? ` · ${withAdmin === 1 ? "one" : withAdmin} waiting for an admin`
+    : "";
 
   return (
     <div className="flex h-full min-h-0">
@@ -212,10 +239,12 @@ export default function InboxPage() {
             {loading
               ? "Loading…"
               : pending.length
-                ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}`
+                ? `${pending.length === 1 ? "One thing" : `${pending.length} things`} waiting for your signature${signed ? ` · ${signed} signed` : ""}${adminNote}`
                 : signed
-                  ? `All signed · ${signed} this visit`
-                  : "Nothing waiting on you"}
+                  ? `All signed · ${signed} this visit${adminNote}`
+                  : withAdmin
+                    ? `Nothing for you to sign${adminNote}`
+                    : "Nothing waiting on you"}
           </p>
         </header>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-6">
@@ -235,14 +264,25 @@ export default function InboxPage() {
               <div key={g.chatId} className="mb-5">
                 <div className="flex items-center gap-2 px-2 pb-2">
                   <StatusDot
-                    status={g.items.some((a) => !decided[a.toolCallId]) ? "needs" : "done"}
+                    status={
+                      g.items.some((a) => !decided[a.toolCallId] && !waitingIds.has(a.toolCallId))
+                        ? "needs"
+                        : g.items.some((a) => waitingIds.has(a.toolCallId))
+                          ? "idle"
+                          : "done"
+                    }
                   />
-                  <Link
-                    href={`/t/${g.chatId}`}
-                    className="min-w-0 truncate text-12 text-fg-muted hover:text-fg"
-                  >
-                    {g.title || "Untitled task"}
-                  </Link>
+                  {g.team ? (
+                    // Members' tasks stay theirs: admins see the call, not the task.
+                    <span className="eyebrow min-w-0 truncate">{g.title}</span>
+                  ) : (
+                    <Link
+                      href={`/t/${g.chatId}`}
+                      className="min-w-0 truncate text-12 text-fg-muted hover:text-fg"
+                    >
+                      {g.title || "Untitled task"}
+                    </Link>
+                  )}
                 </div>
                 <ul className="space-y-2">
                   {g.items.map((a) => {
@@ -287,9 +327,16 @@ export default function InboxPage() {
                               <MiniStamp tone={d.approved && !d.undone ? "ok" : "danger"}>
                                 {d.undone ? "Undone" : d.approved ? "Approved" : "Denied"}
                               </MiniStamp>
+                            ) : waitingIds.has(a.toolCallId) ? (
+                              <Pill>Waiting for an admin</Pill>
                             ) : (
                               <EffectPill effect={a.effect} />
                             )}
+                            {a.requester ? (
+                              <span className="min-w-0 truncate text-fg-muted">
+                                {a.requester.name}
+                              </span>
+                            ) : null}
                             <RowTime createdAt={a.createdAt} undo={rowUndo(a, d)} />
                           </span>
                         </button>
@@ -371,7 +418,9 @@ export default function InboxPage() {
                   onUndone={() => markUndone(current.toolCallId)}
                   phase="continuing"
                 />
-                {decided[current.toolCallId]!.approved && !decided[current.toolCallId]!.edited ? (
+                {decided[current.toolCallId]!.approved &&
+                !decided[current.toolCallId]!.edited &&
+                !current.requester ? (
                   <LearnPrompt tool={current.name} />
                 ) : null}
                 {pending.length === 0 ? (
@@ -407,11 +456,31 @@ export default function InboxPage() {
                 reason={current.reason}
                 preview={current.preview}
                 tainted={tainted(current.chatId)}
+                waitingForAdmin={waitingIds.has(current.toolCallId)}
+                requester={current.requester ?? null}
                 onDecided={(approved, info) => onDecided(current, { approved, ...info })}
                 onConflict={() => void reload()}
               />
             )}
-            <TaskContext chatId={current.chatId} title={current.chatTitle} />
+            {current.requester ? (
+              <section className="mt-10" aria-label="Who asked">
+                <h2 className="eyebrow mb-3">Asked by</h2>
+                <div className="border-t border-line pt-4">
+                  <p className="font-serif text-[22px] leading-tight text-fg">
+                    {current.requester.name}
+                  </p>
+                  <p className="mt-1 text-13 text-fg-muted">
+                    {current.requester.email} · in “{current.chatTitle || "Untitled task"}”
+                  </p>
+                  <p className="mt-3 text-13 text-fg-faint">
+                    Your team requires an admin to approve this. The task stays theirs; your
+                    decision lets it continue.
+                  </p>
+                </div>
+              </section>
+            ) : (
+              <TaskContext chatId={current.chatId} title={current.chatTitle} />
+            )}
           </div>
         ) : null}
       </section>

@@ -1,4 +1,4 @@
-import { ConflictError, NotFoundError } from "@synapse/db";
+import { ConflictError, ForbiddenError, NotFoundError } from "@synapse/db";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
@@ -14,7 +14,7 @@ export interface AppEnv {
 }
 
 export function apiError(
-  status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500 | 503,
   code: string,
   message: string,
 ): never {
@@ -54,6 +54,9 @@ export function onError(err: Error, c: Context): Response {
   }
   if (err instanceof NotFoundError)
     return c.json({ error: { code: "not_found", message: err.message } }, 404);
+  // e.g. a member deciding a call their team reserved for an admin.
+  if (err instanceof ForbiddenError)
+    return c.json({ error: { code: "forbidden", message: err.message } }, 403);
   if (err instanceof ConflictError)
     return c.json({ error: { code: "conflict", message: err.message } }, 409);
   log.error("unhandled", { path: c.req.path, error: err.stack ?? String(err) });

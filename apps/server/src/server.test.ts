@@ -5,6 +5,7 @@ import { schema } from "@synapse/db";
 import { eq } from "drizzle-orm";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
+import type { PendingApproval, ResolvedApproval } from "./notify/types";
 import { createServices, type Services } from "./services";
 import { Worker } from "./worker";
 
@@ -669,4 +670,57 @@ test("approvals that learn: suggest, accept, dismiss", async () => {
   await approveNote(other);
   expect((await other("/api/policy/suggestions")).json!.suggestions).toEqual([]);
   expect((await other("/api/policy")).json!.rules).toHaveLength(1);
+});
+
+test("new approvals are announced once to notification channels, and decisions reported back", async () => {
+  const me = api(await signUp("notify@example.com"));
+  await me("/api/policy", {
+    method: "PUT",
+    json: {
+      defaults: { read: "allow", write: "ask", send: "ask", destructive: "ask" },
+      rules: [{ tool: "memory_save", decision: "ask" }],
+    },
+  });
+  const seen: PendingApproval[] = [];
+  const resolved: ResolvedApproval[] = [];
+  services.notifier.add({
+    name: "test",
+    notify: async (a) => {
+      seen.push(...a);
+    },
+    resolved: async (r) => {
+      resolved.push(...r);
+    },
+  });
+  script([
+    { toolCalls: [{ name: "memory_save", input: { note: "likes tea" }, id: "n1" }] },
+    { text: "Saved." },
+  ]);
+  const { json } = await me("/api/chats", { method: "POST", json: { content: "remember tea" } });
+  const runId = json!.runId as string;
+  await worker.processNow(runId);
+  expect(seen).toHaveLength(1);
+  expect(seen[0]).toMatchObject({
+    runId,
+    toolCallId: "n1",
+    name: "memory_save",
+    chatTitle: "remember tea",
+  });
+  expect(seen[0]!.recipients).toEqual([seen[0]!.userId]);
+  expect(seen[0]!.url).toBe(`${ORIGIN}/t/${seen[0]!.chatId}`);
+  // Announcing again finds nothing new.
+  expect(await services.notifier.announce(runId)).toEqual([]);
+
+  await me(`/api/runs/${runId}/tool-calls/n1/decision`, {
+    method: "POST",
+    json: { approved: true },
+  });
+  expect(resolved).toEqual([
+    expect.objectContaining({ toolCallId: "n1", approved: true, via: "web", executeAfter: null }),
+  ]);
+  const [row] = await services.database.db
+    .select({ via: schema.toolCalls.decidedVia })
+    .from(schema.toolCalls)
+    .where(eq(schema.toolCalls.id, "n1"));
+  expect(row?.via).toBe("web");
 });

@@ -30,6 +30,8 @@ export type UiPart =
       preview: string | null;
       /** Undo window: an approved call waits until this time (ISO) before it runs. */
       executeAfter?: string | null;
+      /** "admin": the person's team requires an admin to decide; they only wait. */
+      approver?: "admin" | null;
     };
 
 export interface UiMessage {
@@ -102,6 +104,7 @@ export function toUiMessages(rows: StoredMessage[], calls: ToolCallRecord[]): Ui
             output: rec?.output ?? null,
             preview: rec?.preview ?? null,
             ...(rec?.executeAfter ? { executeAfter: rec.executeAfter } : {}),
+            ...(rec?.approver ? { approver: rec.approver } : {}),
           });
         }
       }
@@ -246,6 +249,7 @@ export function applyEvent(state: ChatState, e: SeqEvent): ChatState {
         status: "awaiting_approval",
         reason: e.reason,
         preview: e.preview,
+        ...(e.approver ? { approver: e.approver } : {}),
       });
     case "tool.result":
       return updateTool(next, e.toolCallId, { output: e.output });

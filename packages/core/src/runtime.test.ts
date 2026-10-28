@@ -519,6 +519,52 @@ describe("plan grants", () => {
     expect(executed).toEqual([]);
   });
 
+  test("a grant can't stand in for a team admin's sign-off or beat a team block", async () => {
+    const { store, run, opts, events } = setup([
+      {
+        toolCalls: [
+          { name: "send_email", input: email, id: "g1" },
+          { name: "send_email", input: { ...email, to: "x@y.com" }, id: "g2" },
+        ],
+      },
+    ]);
+    store.rules = [{ id: "mine", tool: "*", decision: "allow" }];
+    store.teamRules = [
+      { id: "admin", tool: "send_*", decision: "ask", approver: "admin" },
+      {
+        id: "no-y",
+        tool: "send_*",
+        decision: "block",
+        when: [{ path: "to", op: "equals", value: "x@y.com" }],
+      },
+    ];
+    await grant(store, run.id, "send_email", email);
+    await grant(store, run.id, "send_email", { ...email, to: "x@y.com" });
+    expect(await runAgent(opts)).toBe("waiting");
+    expect(store.toolCalls.get("g1")).toMatchObject({
+      status: "awaiting_approval",
+      approver: "admin",
+      decisionReason: "Your team requires an admin to approve this.",
+    });
+    expect(store.toolCalls.get("g2")).toMatchObject({ status: "denied", decision: "block" });
+    expect(events.events).toContainEqual(
+      expect.objectContaining({ type: "approval.requested", toolCallId: "g1", approver: "admin" }),
+    );
+    expect((await store.getRun(run.id)).planGrants.every((g) => !g.usedBy)).toBe(true);
+    expect(executed).toEqual([]);
+  });
+
+  test("a grant still satisfies an ordinary team ask", async () => {
+    const { store, run, opts } = setup([
+      { toolCalls: [{ name: "send_email", input: email, id: "g1" }] },
+      { text: "sent" },
+    ]);
+    store.teamRules = [{ id: "ask", tool: "send_*", decision: "ask" }];
+    await grant(store, run.id, "send_email", email);
+    expect(await runAgent(opts)).toBe("completed");
+    expect(store.toolCalls.get("g1")).toMatchObject({ status: "succeeded", approver: null });
+  });
+
   test("a grant holds in a tainted run, even next to an untrusted read", async () => {
     const { store, run, opts } = setup([
       { toolCalls: [{ name: "read_inbox", input: {} }] },

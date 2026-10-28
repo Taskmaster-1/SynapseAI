@@ -24,7 +24,8 @@ const Defaults = z.object({
   send: Decision,
   destructive: Decision,
 });
-const Rule = z.object({
+/** A personal policy rule; team rules (routes/workspace.ts) extend it. */
+export const Rule = z.object({
   id: z.string().optional(),
   tool: z.string().min(1).max(128),
   decision: Decision,
@@ -32,18 +33,23 @@ const Rule = z.object({
   note: z.string().max(300).optional(),
 });
 
+/** Refuses rules whose regex patterns could hang the policy check. */
+export function assertSafePatterns(rules: z.infer<typeof Rule>[]) {
+  for (const rule of rules) {
+    for (const m of rule.when ?? []) {
+      const problem = m.op === "matches" ? unsafePatternReason(m.value) : null;
+      if (problem) apiError(422, "invalid_pattern", `Rule for ${rule.tool}: ${problem}`);
+    }
+  }
+}
+
 // ── Policy ─────────────────────────────────────────────────────────────────
 
 export const policy = new Hono<AppEnv>()
   .get("/", async (c) => c.json(await loadPolicy(c.var.services.database.db, c.var.user.id)))
   .put("/", async (c) => {
     const input = await body(c, z.object({ defaults: Defaults, rules: z.array(Rule).max(200) }));
-    for (const rule of input.rules) {
-      for (const m of rule.when ?? []) {
-        const problem = m.op === "matches" ? unsafePatternReason(m.value) : null;
-        if (problem) apiError(422, "invalid_pattern", `Rule for ${rule.tool}: ${problem}`);
-      }
-    }
+    assertSafePatterns(input.rules);
     const { db } = c.var.services.database;
     const userId = c.var.user.id;
     await db.transaction(async (tx) => {
@@ -239,6 +245,7 @@ export const settings = new Hono<AppEnv>()
           .partialRecord(z.enum(PROVIDERS), z.string().min(8).max(400).nullable())
           .optional(),
         undoSeconds: z.number().int().min(0).max(MAX_UNDO_SECONDS).optional(),
+        emailAlerts: z.boolean().optional(),
       }),
     );
     const { db } = c.var.services.database;
@@ -257,6 +264,7 @@ export const settings = new Hono<AppEnv>()
       ...(input.models ? { models: input.models } : {}),
       ...(input.budgets ? { budgets: input.budgets } : {}),
       ...(input.undoSeconds !== undefined ? { undoSeconds: input.undoSeconds } : {}),
+      ...(input.emailAlerts !== undefined ? { emailAlerts: input.emailAlerts } : {}),
       providerKeys: keys,
     };
     await db
@@ -281,6 +289,7 @@ async function loadSettings(c: { var: AppEnv["Variables"] }) {
     },
     providerKeys: Object.fromEntries(PROVIDERS.map((p) => [p, Boolean(s?.providerKeys?.[p])])),
     undoSeconds: s?.undoSeconds ?? DEFAULT_UNDO_SECONDS,
+    emailAlerts: s?.emailAlerts ?? false,
   };
 }
 

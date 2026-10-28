@@ -7,8 +7,11 @@ import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
 import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
+import { push } from "./routes/push";
 import { approvals, runs } from "./routes/runs";
+import { slackIntegration, slackInteractions } from "./routes/slack";
 import { suggestions } from "./routes/suggestions";
+import { workspace } from "./routes/workspace";
 import type { Services } from "./services";
 
 export function createApp(services: Services) {
@@ -47,8 +50,13 @@ export function createApp(services: Services) {
         github: Boolean(config.GITHUB_CLIENT_ID),
         google: Boolean(config.GOOGLE_CLIENT_ID),
       },
-      integrations: { google: Boolean(config.google) },
-      features: { webSearch: Boolean(config.webSearch), embeddings: Boolean(config.embedding) },
+      integrations: { google: Boolean(config.google), slack: Boolean(config.slack) },
+      features: {
+        webSearch: Boolean(config.webSearch),
+        embeddings: Boolean(config.embedding),
+        push: Boolean(services.push),
+        emailAlerts: Boolean(services.email),
+      },
       models: config.SYNAPSE_MODELS,
     }),
   );
@@ -56,6 +64,8 @@ export function createApp(services: Services) {
   app.on(["GET", "POST"], "/api/auth/*", (c) => services.auth.handler(c.req.raw));
   // Public: authenticated by the secret token in the URL, not a session.
   app.route("/api/hooks", hooks);
+  // Public: authenticated by Slack's request signature.
+  app.route("/api/slack/interactions", slackInteractions);
 
   const api = new Hono<AppEnv>();
   api.use(requireUser);
@@ -65,6 +75,7 @@ export function createApp(services: Services) {
   api.route("/connections/oauth/callback", oauthCallback);
   api.route("/connections", connections);
   api.route("/integrations/google/callback", googleCallback);
+  api.route("/integrations/slack", slackIntegration);
   api.route("/integrations", integrations);
   api.route("/policy/suggestions", suggestions);
   api.route("/policy", policy);
@@ -74,6 +85,8 @@ export function createApp(services: Services) {
   api.route("/usage", usage);
   api.route("/models", models);
   api.route("/automations", automations);
+  api.route("/push", push);
+  api.route("/workspace", workspace);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);
 

@@ -12,7 +12,7 @@ import { LearnPrompt } from "@/components/approval/learned-rules";
 import { Menu } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { EmptyState, Skeleton, StatusPill, TaintShield, taskStatus } from "@/components/ui";
-import { ApiError, api, errorMessage, type TaskRun } from "@/lib/api";
+import { ApiError, api, errorMessage, isTeamAdmin, type TaskRun } from "@/lib/api";
 import { cx, formatCost } from "@/lib/format";
 import { denialReason, isUndone, receiptPhase, type ToolPart } from "@/lib/steps";
 import { useMedia } from "@/lib/use-media";
@@ -39,7 +39,10 @@ const PANEL_KEY = "synapse-run-panel";
 export function TaskView({ taskId }: { taskId: string }) {
   const router = useRouter();
   const toast = useToast();
-  const { reload: reloadWorkspace, tasks } = useWorkspace();
+  const { reload: reloadWorkspace, tasks, teamRole } = useWorkspace();
+  // A call the team reserves for an admin: members only watch it; admins sign it here.
+  const waitsForAdmin = (p: ToolPart) =>
+    p.approver === "admin" && teamRole !== null && !isTeamAdmin(teamRole);
   const [title, setTitle] = useState("");
   const [state, setState] = useState<State | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -174,7 +177,11 @@ export function TaskView({ taskId }: { taskId: string }) {
   );
   const hasAwaiting = state?.messages.some((m) =>
     m.parts.some(
-      (p) => p.type === "tool" && p.status === "awaiting_approval" && !decided[p.toolCallId],
+      (p) =>
+        p.type === "tool" &&
+        p.status === "awaiting_approval" &&
+        !decided[p.toolCallId] &&
+        !waitsForAdmin(p),
     ),
   );
   const status = hasAwaiting ? "needs" : taskStatus(run?.status);
@@ -262,7 +269,8 @@ export function TaskView({ taskId }: { taskId: string }) {
             p.type === "tool" &&
             p.status === "awaiting_approval" &&
             p.name !== PLAN_TOOL &&
-            !decided[p.toolCallId],
+            !decided[p.toolCallId] &&
+            !waitsForAdmin(p),
         )
       : [];
     if (runId && group.length >= 2 && group.some((p) => p.toolCallId === part.toolCallId)) {
@@ -316,6 +324,7 @@ export function TaskView({ taskId }: { taskId: string }) {
         preview={part.preview}
         tainted={tainted}
         glow={initialAwaiting !== null && !initialAwaiting.has(part.toolCallId)}
+        waitingForAdmin={waitsForAdmin(part)}
         onDecided={(approved, info) => {
           setDecided((m) => ({ ...m, [part.toolCallId]: { approved, ...info } }));
           follow(runId);

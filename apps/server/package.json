@@ -9,13 +9,18 @@
     "seed": "bun src/seed.ts"
   },
   "dependencies": {
-    "better-auth": "1.7.6",
-    "hono": "4.13.9",
-    "zod": "4.6.5",
     "@synapse/core": "workspace:*",
     "@synapse/db": "workspace:*",
     "@synapse/tools": "workspace:*",
     "ai": "7.0.116",
-    "drizzle-orm": "0.45.3"
+    "better-auth": "1.7.6",
+    "drizzle-orm": "0.45.3",
+    "hono": "4.13.9",
+    "nodemailer": "10.1.0",
+    "web-push": "3.6.7",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/web-push": "3.6.4"
   }
 }

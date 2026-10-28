@@ -2,7 +2,15 @@ import { type Effect, type PlanGrant, UNDO_DENIAL } from "@synapse/core";
 import type { JSONValue } from "ai";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
-import { chats, messages, pendingInputs, runs, toolCalls, userSettings } from "./schema";
+import {
+  chats,
+  messages,
+  pendingInputs,
+  runs,
+  toolCalls,
+  userSettings,
+  workspaceMembers,
+} from "./schema";
 
 export class NotFoundError extends Error {}
 
@@ -216,6 +224,62 @@ export interface DecisionOutcome {
   requeued: boolean;
   /** ...and no worker may take it before this time (null: now). */
   runnableAt: Date | null;
+  /** Whose run it is (differs from the decider when a team admin decided). */
+  ownerId: string;
+}
+
+/** The person may not decide this (e.g. a team rule says an admin must). */
+export class ForbiddenError extends Error {}
+
+/**
+ * Who may decide which call. The requester decides their own calls, except those a team
+ * rule reserves for an admin (`approver = 'admin'`): only an owner or admin of the
+ * requester's current workspace may decide those, which includes a requester who is an
+ * admin themselves. If the requester has since left the workspace, its rules no longer
+ * govern them and they decide it themselves. Anyone else gets "not found", as before.
+ */
+export async function assertMayDecide(
+  tx: Db,
+  run: { id: string; userId: string },
+  args: { userId: string; decisions: ToolCallDecision[] },
+): Promise<void> {
+  const ids = args.decisions.map((d) => d.toolCallId);
+  const calls = ids.length
+    ? await tx
+        .select({ id: toolCalls.id, approver: toolCalls.approver })
+        .from(toolCalls)
+        .where(and(eq(toolCalls.runId, run.id), inArray(toolCalls.id, ids)))
+    : [];
+  const own = run.userId === args.userId;
+  const needsAdmin = calls.some((c) => c.approver === "admin");
+  if (!own && !needsAdmin) throw new NotFoundError("run not found");
+  if (!needsAdmin) return;
+
+  const [requester, decider] = await Promise.all([
+    tx
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, run.userId)),
+    tx
+      .select({ workspaceId: workspaceMembers.workspaceId, role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, args.userId)),
+  ]);
+  const team = requester[0]?.workspaceId;
+  const deciderIsAdmin =
+    team !== undefined &&
+    decider[0]?.workspaceId === team &&
+    (decider[0].role === "owner" || decider[0].role === "admin");
+
+  if (!own) {
+    if (!deciderIsAdmin) throw new NotFoundError("run not found");
+    // An admin decides only the calls reserved for an admin, never the member's own.
+    if (calls.length !== ids.length || calls.some((c) => c.approver !== "admin"))
+      throw new NotFoundError("action not found");
+    return;
+  }
+  if (team !== undefined && !deciderIsAdmin)
+    throw new ForbiddenError("Your team requires an admin to approve this.");
 }
 
 /**
@@ -245,20 +309,28 @@ export async function decideToolCall(
  */
 export async function decideToolCalls(
   db: Db,
-  args: { userId: string; runId: string; decisions: ToolCallDecision[] },
+  args: {
+    userId: string;
+    runId: string;
+    decisions: ToolCallDecision[];
+    /** Where the person decided (web, push, slack…), for the audit log. */
+    via?: string;
+  },
 ): Promise<DecisionOutcome> {
   return db.transaction(async (tx) => {
     const [run] = await tx
-      .select({ id: runs.id, status: runs.status })
+      .select({ id: runs.id, status: runs.status, userId: runs.userId })
       .from(runs)
-      .where(and(eq(runs.id, args.runId), eq(runs.userId, args.userId)))
+      .where(eq(runs.id, args.runId))
       .for("update");
     if (!run) throw new NotFoundError("run not found");
+    await assertMayDecide(tx as unknown as Db, run, args);
 
+    // The requester's undo window applies, whoever approves.
     const [settings] = await tx
       .select({ undoSeconds: userSettings.undoSeconds })
       .from(userSettings)
-      .where(eq(userSettings.userId, args.userId));
+      .where(eq(userSettings.userId, run.userId));
 
     const executeAfter: Record<string, Date> = {};
     for (const d of args.decisions) {
@@ -268,6 +340,7 @@ export async function decideToolCalls(
           status: d.approved ? "approved" : "denied",
           decidedBy: args.userId,
           decidedAt: new Date(),
+          decidedVia: args.via ?? "web",
           ...(d.approved && d.editedInput !== undefined
             ? { input: d.editedInput, inputEdited: true }
             : {}),
@@ -286,7 +359,7 @@ export async function decideToolCalls(
           and(
             eq(toolCalls.runId, run.id),
             eq(toolCalls.id, d.toolCallId),
-            eq(toolCalls.userId, args.userId),
+            eq(toolCalls.userId, run.userId),
             eq(toolCalls.status, "awaiting_approval"),
           ),
         )
@@ -310,9 +383,9 @@ export async function decideToolCalls(
         .update(runs)
         .set({ status: "queued", leaseExpiresAt: at })
         .where(eq(runs.id, run.id));
-      return { executeAfter, requeued: true, runnableAt: at };
+      return { executeAfter, requeued: true, runnableAt: at, ownerId: run.userId };
     }
-    return { executeAfter, requeued: false, runnableAt: null };
+    return { executeAfter, requeued: false, runnableAt: null, ownerId: run.userId };
   });
 }
 
