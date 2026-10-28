@@ -502,7 +502,8 @@ export const memories = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
-    source: text("source").$type<"user" | "agent">().notNull().default("user"),
+    /** "style": the writing-style profile learned from sent mail (one per user, editable). */
+    source: text("source").$type<"user" | "agent" | "style">().notNull().default("user"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

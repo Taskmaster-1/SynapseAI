@@ -253,7 +253,8 @@ export interface Preset {
 export interface Memory {
   id: string;
   content: string;
-  source: "user" | "agent";
+  /** "style": the writing-style profile learned from sent mail. */
+  source: "user" | "agent" | "style";
   createdAt: string;
 }
 
@@ -373,6 +374,29 @@ export interface AutomationInput {
   rotateWebhook?: boolean;
 }
 
+export type TemplateRequirement = "google" | "github" | "linear";
+
+/** A ready-made automation from the gallery. */
+export interface AutomationTemplate {
+  id: string;
+  name: string;
+  /** One line: what you get. */
+  outcome: string;
+  category: string;
+  trigger: AutomationTrigger;
+  schedule?: string;
+  prompt: string;
+  requires: TemplateRequirement[];
+  /** What the user still has to connect to use it. */
+  missing: TemplateRequirement[];
+}
+
+export interface Onboarding {
+  /** False when the server has no Google OAuth app configured. */
+  googleAvailable: boolean;
+  steps: { google: boolean; writingStyle: boolean; automation: boolean; approved: boolean };
+}
+
 export interface GoogleIntegration {
   /** False when the server has no Google OAuth app configured. */
   available: boolean;
@@ -474,6 +498,10 @@ export const api = {
   updateMemory: (id: string, content: string) =>
     patch<{ memory: Memory }>(`/api/memories/${enc(id)}`, { content }),
   deleteMemory: (id: string) => del(`/api/memories/${enc(id)}`),
+  /** Learns how you write from your recent sent mail; stores only the profile. */
+  learnWritingStyle: () =>
+    post<{ memory: Memory; samples: number }>("/api/writing-style/learn", {}),
+  onboarding: () => get<Onboarding>("/api/onboarding"),
 
   documents: () => get<{ documents: KnowledgeDocument[] }>("/api/documents"),
   uploadDocument: (file: File) => {
@@ -493,6 +521,10 @@ export const api = {
   testSlack: () => post<{ ok: true }>("/api/integrations/slack/test", {}),
   disconnectSlack: () => del("/api/integrations/slack"),
   automations: () => get<{ automations: Automation[] }>("/api/automations"),
+  automationTemplates: () =>
+    get<{ categories: string[]; googleAvailable: boolean; templates: AutomationTemplate[] }>(
+      "/api/automations/templates",
+    ),
   createAutomation: (body: AutomationInput) =>
     post<{ automation: Automation }>("/api/automations", body),
   updateAutomation: (id: string, body: Partial<AutomationInput>) =>

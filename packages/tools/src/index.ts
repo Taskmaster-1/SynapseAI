@@ -11,11 +11,18 @@ import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 
 export * from "./builtin/knowledge";
-export { loadMemoryBlock } from "./builtin/memory";
+export { loadMemoryBlock, loadWritingStyle } from "./builtin/memory";
 export { PLAN_TOOL } from "./builtin/plan";
 export { htmlToText, type WebSearchConfig } from "./builtin/web";
 export * from "./google/client";
-export { buildMime, type MessageSummary, newMessagesSince } from "./google/gmail";
+export {
+  buildMime,
+  type MessageSummary,
+  newMessagesSince,
+  ownText,
+  type SentSample,
+  sentSamples,
+} from "./google/gmail";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
 export * from "./ssrf";

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, ArrowUpRight, Check, Repeat } from "lucide-react";
+import { ArrowRight, Check, LoaderCircle, Repeat } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -24,6 +24,7 @@ import {
   type ChatSummary,
   type Connection,
   errorMessage,
+  type Onboarding,
 } from "@/lib/api";
 import { describeCron } from "@/lib/cron";
 import {
@@ -65,42 +66,13 @@ function suggestionsFor(conns: Connection[] | undefined): string[] {
 
 const GUIDE_HIDDEN_KEY = "synapse-guide-hidden";
 
-/**
- * Whether you've ever decided on an approval. Only asked while the first-run guide could
- * show, and only of the latest few runs.
- */
-function useSignedOff(enabled: boolean, hasTasks: boolean) {
-  const [signedOff, setSignedOff] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    if (!hasTasks) {
-      setSignedOff(false);
-      return;
-    }
-    let live = true;
-    (async () => {
-      try {
-        const { runs } = await api.runs(5);
-        const details = await Promise.all(runs.map((r) => api.run(r.id).catch(() => null)));
-        const any = details.some((d) => d?.toolCalls.some((c) => c.decidedBy));
-        if (live) setSignedOff(any);
-      } catch {
-        if (live) setSignedOff(false);
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, [enabled, hasTasks]);
-  return signedOff;
-}
-
 export default function HomePage() {
   const router = useRouter();
   const toast = useToast();
   const { tasks, approvals, user, todaySpend, reload } = useWorkspace();
   const conns = useApi(() => api.connections());
   const autos = useApi(() => api.automations());
+  const onboarding = useApi(() => api.onboarding());
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [guideHidden, setGuideHidden] = useState(true);
@@ -150,14 +122,15 @@ export default function HomePage() {
   const suggestions = useMemo(() => suggestionsFor(conns.data?.connections), [conns.data]);
 
   // First-run guide: shown to new accounts until every step is done (or it's hidden).
-  const connectionCount = conns.data?.connections.length;
-  const hasConnection = (connectionCount ?? 0) > 0;
   const hasTask = (tasks?.length ?? 0) > 0;
-  const guideCandidate =
-    !guideHidden && connectionCount !== undefined && tasks !== null && tasks.length < 5;
-  const signedOff = useSignedOff(guideCandidate, hasTask);
+  const steps = guideSteps(onboarding.data, (conns.data?.connections.length ?? 0) > 0);
   const showGuide =
-    guideCandidate && signedOff !== null && !(hasConnection && hasTask && signedOff);
+    !guideHidden &&
+    steps !== null &&
+    conns.data !== undefined &&
+    tasks !== null &&
+    tasks.length < 5 &&
+    !steps.every((s) => s.done);
 
   function hideGuide() {
     setGuideHidden(true);
@@ -230,13 +203,11 @@ export default function HomePage() {
         </div>
       </section>
 
-      {showGuide ? (
+      {showGuide && steps ? (
         <FirstRunGuide
-          hasConnection={hasConnection}
-          connections={conns.data?.connections ?? []}
-          hasTask={hasTask}
-          signedOff={!!signedOff}
+          steps={steps}
           waiting={needs}
+          onChanged={() => void onboarding.reload()}
           onWrite={() => composer.current?.focus()}
           onHide={hideGuide}
         />
@@ -429,128 +400,217 @@ const lightScope = {
   "--mono-mix": "22%",
 } as CSSProperties;
 
+type GuideStepId = "google" | "tool" | "style" | "automation" | "approve";
+
+/**
+ * The getting-started steps, from real state. Without Google on this server, the first
+ * step is any connection and there's no writing style to learn.
+ */
+function guideSteps(
+  o: Onboarding | undefined,
+  hasConnection: boolean,
+): { id: GuideStepId; done: boolean }[] | null {
+  if (!o) return null;
+  const rest = [
+    { id: "automation" as const, done: o.steps.automation },
+    { id: "approve" as const, done: o.steps.approved },
+  ];
+  if (!o.googleAvailable) return [{ id: "tool", done: hasConnection }, ...rest];
+  return [
+    { id: "google", done: o.steps.google },
+    { id: "style", done: o.steps.writingStyle },
+    ...rest,
+  ];
+}
+
+const FIELDS = ["var(--lilac)", "var(--sage)", "var(--blush)", "var(--field-amber)"];
+
 function FirstRunGuide({
-  hasConnection,
-  connections,
-  hasTask,
-  signedOff,
+  steps,
   waiting,
+  onChanged,
   onWrite,
   onHide,
 }: {
-  hasConnection: boolean;
-  connections: Connection[];
-  hasTask: boolean;
-  signedOff: boolean;
+  steps: { id: GuideStepId; done: boolean }[];
   waiting: number;
+  onChanged: () => void;
   onWrite: () => void;
   onHide: () => void;
 }) {
-  const done = [hasConnection, hasTask, signedOff];
-  const count = done.filter(Boolean).length;
-  const next = done.indexOf(false);
-  const firstConn = connections[0];
+  const toast = useToast();
+  const [learning, setLearning] = useState(false);
+  const count = steps.filter((s) => s.done).length;
+  const next = steps.findIndex((s) => !s.done);
+  const googleDone = steps.find((s) => s.id === "google")?.done ?? false;
+  const words = ["", "One", "Two", "Three", "Four"];
+
+  async function learn() {
+    setLearning(true);
+    try {
+      const { samples } = await api.learnWritingStyle();
+      toast(`Learned your style from ${samples} sent emails`, "success");
+      onChanged();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setLearning(false);
+    }
+  }
+
+  const content = (id: GuideStepId, done: boolean) => {
+    switch (id) {
+      case "google":
+        return {
+          title: "Connect Google",
+          body: "Gmail and Calendar. It reads on its own; sending and changing things waits for you.",
+          art: (
+            <div className="flex items-center">
+              {["Gmail", "Calendar"].map((n, i) => (
+                <span
+                  key={n}
+                  className="-ml-1.5 rounded-full p-[3px] first:ml-0"
+                  style={{ background: FIELDS[0], zIndex: 2 - i }}
+                >
+                  <Monogram name={n} size={30} round />
+                </span>
+              ))}
+            </div>
+          ),
+          action: done ? (
+            <DoneLine>Google connected</DoneLine>
+          ) : (
+            <InkLink href="/connections">Connect Google</InkLink>
+          ),
+        };
+      case "tool":
+        return {
+          title: "Connect a tool",
+          body: "GitHub, Linear, Notion or any MCP server. The agent works inside them.",
+          art: (
+            <div className="flex items-center">
+              {["GitHub", "Linear", "Notion"].map((n, i) => (
+                <span
+                  key={n}
+                  className="-ml-1.5 rounded-full p-[3px] first:ml-0"
+                  style={{ background: FIELDS[0], zIndex: 3 - i }}
+                >
+                  <Monogram name={n} size={30} round />
+                </span>
+              ))}
+            </div>
+          ),
+          action: done ? (
+            <DoneLine>Connected</DoneLine>
+          ) : (
+            <InkLink href="/connections?add=1">Add a connection</InkLink>
+          ),
+        };
+      case "style":
+        return {
+          title: "Learn your writing style",
+          body: "It reads your recent sent mail once and keeps a short description, so drafts sound like you.",
+          art: (
+            <span
+              className="rounded-[10px] bg-[#fffdf8] px-3 py-1.5 font-serif text-[18px] italic shadow-[0_6px_16px_-8px_rgb(21_20_15/0.45)]"
+              style={ink}
+            >
+              Cheers, A.
+            </span>
+          ),
+          action: done ? (
+            <DoneLine>Style learned · edit it in Memory</DoneLine>
+          ) : googleDone ? (
+            <InkButton onClick={() => void learn()} busy={learning}>
+              {learning ? "Reading sent mail…" : "Learn it now"}
+            </InkButton>
+          ) : (
+            <span className="text-12" style={{ ...ink, opacity: 0.7 }}>
+              Connect Google first.
+            </span>
+          ),
+        };
+      case "automation":
+        return {
+          title: "Turn on an automation",
+          body: "Pick a ready-made one, like a morning brief or reply drafts, and edit it to taste.",
+          art: (
+            <div
+              className="flex items-center gap-2 rounded-[10px] bg-[#fffdf8] py-1.5 pr-3 pl-2.5 shadow-[0_6px_16px_-8px_rgb(21_20_15/0.45)]"
+              style={ink}
+            >
+              <Repeat className="size-3.5 opacity-60" />
+              <span className="font-serif text-[18px] leading-none">8:00</span>
+              <span className="font-mono text-[9px] tracking-[0.1em] uppercase opacity-60">
+                Weekdays
+              </span>
+            </div>
+          ),
+          action: done ? (
+            <DoneLine>An automation is on</DoneLine>
+          ) : (
+            <InkLink href="/automations">Pick a template</InkLink>
+          ),
+        };
+      case "approve":
+        return {
+          title: "Approve your first action",
+          body: "Before it sends, changes or deletes anything, it asks. You approve, edit or deny.",
+          art: (
+            <span className="stamp text-[13px]" style={{ color: "var(--ink)" }}>
+              Approved
+            </span>
+          ),
+          action: done ? (
+            <DoneLine>You've signed one off</DoneLine>
+          ) : waiting > 0 ? (
+            <InkLink href="/inbox">
+              Review {waiting === 1 ? "the request" : `${waiting} requests`}
+            </InkLink>
+          ) : (
+            <InkButton onClick={onWrite} up>
+              Give it a task
+            </InkButton>
+          ),
+        };
+    }
+  };
 
   return (
     <section className="mt-14" aria-labelledby="guide-h">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div>
-          <p className="eyebrow">Getting started · {count} of 3 done</p>
+          <p className="eyebrow">
+            Getting started · {count} of {steps.length} done
+          </p>
           <h2
             id="guide-h"
             className="mt-2 font-serif text-[32px] leading-[1.02] tracking-[-0.015em] text-fg md:text-[38px]"
           >
-            Three steps to your first <span className="italic">sign-off</span>.
+            {words[steps.length]} steps to your first <span className="italic">sign-off</span>.
           </h2>
         </div>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onHide}>
           Hide guide
         </button>
       </div>
-      <ol className="grid gap-3 md:grid-cols-3">
-        <GuideStep
-          n={1}
-          field="var(--lilac)"
-          done={hasConnection}
-          next={next === 0}
-          title="Connect a tool"
-          body="GitHub, Linear, Notion or any MCP server. The agent works inside them."
-          art={
-            <div className="flex items-center">
-              {["GitHub", "Linear", "Notion"].map((n, i) => (
-                <span
-                  key={n}
-                  className="-ml-1.5 rounded-full p-[3px] first:ml-0"
-                  style={{ background: "var(--lilac)", zIndex: 3 - i }}
-                >
-                  <Monogram name={n} size={30} round />
-                </span>
-              ))}
-            </div>
-          }
-          action={
-            hasConnection ? (
-              <DoneLine>
-                {firstConn ? `${firstConn.name} connected` : "Connected"}
-                {connections.length > 1 ? ` + ${connections.length - 1}` : ""}
-              </DoneLine>
-            ) : (
-              <InkLink href="/connections?add=1">Add a connection</InkLink>
-            )
-          }
-        />
-        <GuideStep
-          n={2}
-          field="var(--sage)"
-          done={hasTask}
-          next={next === 1}
-          title="Give it a task"
-          body="Plain words, like you'd ask a colleague. It reads on its own and reports back."
-          art={
-            <div
-              className="flex w-full max-w-[220px] items-center gap-2 rounded-full bg-[#fffdf8] py-1.5 pr-1.5 pl-3.5 text-12 shadow-[0_6px_16px_-8px_rgb(21_20_15/0.45)]"
-              style={ink}
-            >
-              <span className="min-w-0 flex-1 truncate opacity-70">Triage my open PRs</span>
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#15140f] text-[#f4f1ea]">
-                <ArrowUpRight className="size-3.5" />
-              </span>
-            </div>
-          }
-          action={
-            hasTask ? (
-              <DoneLine>First task started</DoneLine>
-            ) : (
-              <InkButton onClick={onWrite}>Write one above</InkButton>
-            )
-          }
-        />
-        <GuideStep
-          n={3}
-          field="var(--field-amber)"
-          done={signedOff}
-          next={next === 2}
-          title="Sign off on what it does"
-          body="Before it sends, changes or deletes anything, it asks. You approve, edit or deny."
-          art={
-            <span className="stamp text-[13px]" style={{ color: "var(--ink)" }}>
-              Approved
-            </span>
-          }
-          action={
-            signedOff ? (
-              <DoneLine>You've signed one off</DoneLine>
-            ) : waiting > 0 ? (
-              <InkLink href="/inbox">
-                Review {waiting === 1 ? "the request" : `${waiting} requests`}
-              </InkLink>
-            ) : (
-              <span className="text-12" style={{ ...ink, opacity: 0.7 }}>
-                Requests show up here and in the Inbox.
-              </span>
-            )
-          }
-        />
+      <ol className={cx("grid gap-3", steps.length === 4 ? "sm:grid-cols-2" : "md:grid-cols-3")}>
+        {steps.map((step, i) => {
+          const c = content(step.id, step.done);
+          return (
+            <GuideStep
+              key={step.id}
+              n={i + 1}
+              field={FIELDS[step.id === "approve" ? 3 : i]!}
+              done={step.done}
+              next={next === i}
+              title={c.title}
+              body={c.body}
+              art={c.art}
+              action={c.action}
+            />
+          );
+        })}
       </ol>
     </section>
   );
@@ -590,13 +650,14 @@ function GuideStep({
           className="mt-1 font-mono text-[10.5px] font-medium tracking-[0.14em] uppercase"
           style={{ opacity: 0.65 }}
         >
-          {done ? "Done" : next ? "Up next" : `Step ${n}`}
+          {/* Done steps carry a stamp in this corner instead. */}
+          {done ? null : next ? "Up next" : `Step ${n}`}
         </span>
       </div>
       <div aria-hidden="true" className="my-5 flex h-10 items-center">
         {art}
       </div>
-      <h3 className="font-serif text-[25px] leading-[1.05] tracking-[-0.01em]">
+      <h3 className="font-serif text-[23px] leading-[1.05] tracking-[-0.01em]">
         {done ? <span className="sr-only">Done: </span> : null}
         {title}
       </h3>
@@ -640,11 +701,36 @@ function InkLink({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-function InkButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+/** `up`: the action happens above (the composer); otherwise it happens right here. */
+function InkButton({
+  onClick,
+  children,
+  up = false,
+  busy = false,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  up?: boolean;
+  busy?: boolean;
+}) {
   return (
-    <button type="button" onClick={onClick} className={inkPill}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className={cx(inkPill, "disabled:opacity-80")}
+    >
       {children}
-      <ArrowRight className="size-3.5 -rotate-90 transition-transform duration-200 group-hover:-translate-y-0.5" />
+      {busy ? (
+        <LoaderCircle className="anim-spin size-3.5" />
+      ) : (
+        <ArrowRight
+          className={cx(
+            "size-3.5 transition-transform duration-200",
+            up ? "-rotate-90 group-hover:-translate-y-0.5" : "group-hover:translate-x-0.5",
+          )}
+        />
+      )}
     </button>
   );
 }

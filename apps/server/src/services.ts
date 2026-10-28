@@ -6,6 +6,7 @@ import { EmailChannel, type MailTransport, smtpTransport } from "./notify/email"
 import { Notifier } from "./notify/notifier";
 import { PushChannel, type PushSender, webPushSender } from "./notify/push";
 import { SlackChannel } from "./notify/slack";
+import type { ResolvedModel } from "./user-models";
 
 export const RUNS_CHANNEL = "synapse_runs";
 
@@ -58,6 +59,8 @@ export interface Services {
   email: EmailChannel | null;
   /** Wakes idle workers (on any instance) when a run becomes runnable. */
   wake: (runId: string) => Promise<void>;
+  /** Test hook: one-off model calls outside runs (e.g. learning a writing style) use these. */
+  modelOverride?: () => ResolvedModel[];
   close: () => Promise<void>;
 }
 
@@ -65,6 +68,7 @@ export interface Services {
 export interface ServiceOptions {
   pushSender?: PushSender;
   mailTransport?: MailTransport;
+  models?: () => ResolvedModel[];
 }
 
 export async function createServices(
@@ -95,6 +99,7 @@ export async function createServices(
     push: null,
     email: null,
     wake: (runId) => database.notify(RUNS_CHANNEL, runId),
+    ...(options.models ? { modelOverride: options.models } : {}),
     close: async () => {
       await services.slack?.settled();
       await stop();

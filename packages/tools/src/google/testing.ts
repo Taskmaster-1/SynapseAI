@@ -76,13 +76,14 @@ export function fakeGoogle(opts: { email?: string } = {}) {
     },
   });
 
-  /** Gmail search, just enough of it: `after:<sec>`, `from:x`, `-from:me`, free words. */
+  /** Gmail search, just enough of it: `in:sent`, `after:<sec>`, `from:x`, `-from:me`, free words. */
   const matches = (m: FakeMessage, q: string) =>
     q
       .split(/\s+/)
       .filter(Boolean)
       .every((term) => {
         if (term === "in:inbox") return m.labelIds.includes("INBOX");
+        if (term === "in:sent") return m.labelIds.includes("SENT");
         if (term === "is:unread") return m.labelIds.includes("UNREAD");
         if (term === "-from:me") return !m.from.includes(state.email);
         if (term.startsWith("after:")) return m.internalDate / 1000 > Number(term.slice(6)) - 1;
@@ -238,6 +239,19 @@ export function fakeGoogle(opts: { email?: string } = {}) {
         internalDate: Date.now(),
         labelIds: ["INBOX", "UNREAD"],
         messageId: `<${n}@mail.example.com>`,
+        ...m,
+      };
+      state.messages.push(msg);
+      return msg;
+    },
+    /** Adds a message the user sent (for reading their sent mail). */
+    sent(m: Partial<FakeMessage> & Pick<FakeMessage, "to" | "subject" | "body">): FakeMessage {
+      const msg: FakeMessage = {
+        id: nextId("s"),
+        threadId: nextId("t"),
+        from: state.email,
+        internalDate: Date.now(),
+        labelIds: ["SENT"],
         ...m,
       };
       state.messages.push(msg);
