@@ -1,6 +1,18 @@
 "use client";
 
-import { Bot, FileText, LoaderCircle, Pencil, Search, Trash, Upload, User } from "lucide-react";
+import {
+  Bot,
+  FileText,
+  LoaderCircle,
+  Pencil,
+  PenLine,
+  RotateCw,
+  Search,
+  Trash,
+  Upload,
+  User,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type DragEvent, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
@@ -316,7 +328,9 @@ function MemoryTab() {
   const mems = useApi(() => api.memories());
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const list = mems.data?.memories;
+  const all = mems.data?.memories;
+  const style = all?.find((m) => m.source === "style") ?? null;
+  const list = all?.filter((m) => m.source !== "style");
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -342,6 +356,18 @@ function MemoryTab() {
 
   return (
     <div className="space-y-8">
+      {all ? (
+        <WritingStyle
+          memory={style}
+          onLearned={(m) =>
+            mems.setData((d) => ({
+              memories: [...(d?.memories ?? []).filter((x) => x.id !== m.id), m],
+            }))
+          }
+          onSaved={replace}
+          onDeleted={() => style && drop(style.id)}
+        />
+      ) : null}
       <p className="text-14 text-fg-muted">
         Notes the agent reads at the start of every task. It can add its own — review them here.
       </p>
@@ -414,7 +440,14 @@ function MemoryItem({
   }
 
   async function remove() {
-    if (!window.confirm("Delete this note?")) return;
+    if (
+      !window.confirm(
+        m.source === "style"
+          ? "Delete your writing style? Drafts go back to a neutral voice."
+          : "Delete this note?",
+      )
+    )
+      return;
     setBusy(true);
     try {
       await api.deleteMemory(m.id);
@@ -427,15 +460,17 @@ function MemoryItem({
 
   return (
     <div className="group flex gap-3 px-4 py-3.5">
-      <span
-        className={cx(
-          "mt-0.5 grid size-6 shrink-0 place-items-center rounded-full",
-          m.source === "agent" ? "bg-accent-soft text-accent" : "bg-sunken text-fg-muted",
-        )}
-        title={m.source === "agent" ? "Added by the agent" : "Added by you"}
-      >
-        {m.source === "agent" ? <Bot className="size-3.5" /> : <User className="size-3.5" />}
-      </span>
+      {m.source !== "style" ? (
+        <span
+          className={cx(
+            "mt-0.5 grid size-6 shrink-0 place-items-center rounded-full",
+            m.source === "agent" ? "bg-accent-soft text-accent" : "bg-sunken text-fg-muted",
+          )}
+          title={m.source === "agent" ? "Added by the agent" : "Added by you"}
+        >
+          {m.source === "agent" ? <Bot className="size-3.5" /> : <User className="size-3.5" />}
+        </span>
+      ) : null}
       <div className="min-w-0 flex-1">
         {editing ? (
           <div className="space-y-2">
@@ -481,9 +516,11 @@ function MemoryItem({
         ) : (
           <p className="text-14 whitespace-pre-wrap text-fg">{m.content}</p>
         )}
-        <p className="mt-1 text-12 text-fg-faint" title={formatDateTime(m.createdAt)}>
-          {m.source === "agent" ? "Agent" : "You"} · {formatRelative(m.createdAt)}
-        </p>
+        {m.source !== "style" ? (
+          <p className="mt-1 text-12 text-fg-faint" title={formatDateTime(m.createdAt)}>
+            {m.source === "agent" ? "Agent" : "You"} · {formatRelative(m.createdAt)}
+          </p>
+        ) : null}
       </div>
       {!editing ? (
         <div className="flex shrink-0 items-start gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100">
@@ -507,6 +544,98 @@ function MemoryItem({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The writing-style profile: learned from sent mail on request, then an ordinary note the
+ * user can read, edit, relearn or delete.
+ */
+function WritingStyle({
+  memory,
+  onLearned,
+  onSaved,
+  onDeleted,
+}: {
+  memory: Memory | null;
+  onLearned: (m: Memory) => void;
+  onSaved: (m: Memory) => void;
+  onDeleted: () => void;
+}) {
+  const toast = useToast();
+  const integ = useApi(() => api.integrations());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const google = integ.data?.google;
+  const connected = google?.connection?.status === "active";
+
+  async function learn() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { memory: m, samples } = await api.learnWritingStyle();
+      onLearned(m);
+      toast(`Learned from ${samples} sent emails`, "success");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section
+      aria-labelledby="style-h"
+      className="overflow-hidden rounded-[16px] border border-line bg-surface"
+    >
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-3 px-4 pt-4 pb-3">
+        <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-accent-soft text-accent">
+          <PenLine className="size-3.5" />
+        </span>
+        <div className="min-w-0 flex-1 basis-60">
+          <h2 id="style-h" className="text-14 font-medium text-fg">
+            Writing style
+          </h2>
+          <p className="mt-0.5 text-13 text-fg-muted">
+            {memory
+              ? "Drafts are written in this voice. Learned from your sent mail; edit it freely."
+              : "Learn how you write from your last 25 sent emails, so drafts sound like you. Only a short description is kept, never the emails."}
+          </p>
+        </div>
+        {google && !connected ? (
+          google.available ? (
+            <Link href="/connections" className="btn btn-sm shrink-0 max-sm:ml-10">
+              Connect Google
+            </Link>
+          ) : null
+        ) : (
+          <button
+            type="button"
+            className={cx("btn btn-sm shrink-0 max-sm:ml-10", !memory && "btn-primary")}
+            disabled={busy || !connected}
+            onClick={() => void learn()}
+          >
+            {busy ? (
+              <LoaderCircle className="anim-spin size-3.5" />
+            ) : memory ? (
+              <RotateCw className="size-3.5" />
+            ) : null}
+            {busy ? "Reading sent mail…" : memory ? "Relearn" : "Learn my writing style"}
+          </button>
+        )}
+      </div>
+      {google && !google.available && !memory ? (
+        <p className="border-t border-line px-4 py-3 text-13 text-fg-muted">
+          Needs Google set up on this server. See docs/google.md.
+        </p>
+      ) : null}
+      {error ? <ErrorNote className="mx-4 mb-4">{error}</ErrorNote> : null}
+      {memory ? (
+        <div className="border-t border-line bg-sunken/40">
+          <MemoryItem memory={memory} onSaved={onSaved} onDeleted={onDeleted} />
+        </div>
+      ) : null}
+    </section>
   );
 }
 
