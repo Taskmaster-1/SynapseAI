@@ -263,3 +263,47 @@ export function applyEvent(state: ChatState, e: SeqEvent): ChatState {
 export function isActive(status: RunStatus | undefined): boolean {
   return status === "queued" || status === "running";
 }
+
+/** A file the user attached to a message (stored by the server; the model gets its id). */
+export interface Attachment {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  bytes: number;
+}
+
+const ATTACHED_HEADER = "Attached files (use file_read to read one, or attach it to an email):";
+const ATTACHED_LINE = /^- (.+) \(file ([\w-]+), ([^,()\s]+), (\d+) bytes\)$/;
+
+/**
+ * Appends attachments to a message as plain text, so every model sees them the same way.
+ * Names are the user's own words; file contents are not included and stay untrusted until
+ * the agent reads them with a tool.
+ */
+export function withAttachments(text: string, files: Attachment[]): string {
+  if (files.length === 0) return text;
+  const list = files
+    .map(
+      (f) =>
+        `- ${f.name.replace(/[\r\n()]+/g, " ").trim()} (file ${f.fileId}, ${f.mimeType.split(";")[0]!.trim() || "application/octet-stream"}, ${f.bytes} bytes)`,
+    )
+    .join("\n");
+  const body = text.trim();
+  return `${body ? `${body}\n\n` : ""}${ATTACHED_HEADER}\n${list}`;
+}
+
+/** Splits a message written by `withAttachments` back into its text and its files. */
+export function splitAttachments(content: string): { text: string; files: Attachment[] } {
+  const at = content.lastIndexOf(ATTACHED_HEADER);
+  if (at === -1) return { text: content, files: [] };
+  const files: Attachment[] = [];
+  for (const line of content
+    .slice(at + ATTACHED_HEADER.length)
+    .trim()
+    .split("\n")) {
+    const m = ATTACHED_LINE.exec(line.trim());
+    if (!m) return { text: content, files: [] };
+    files.push({ name: m[1]!, fileId: m[2]!, mimeType: m[3]!, bytes: Number(m[4]) });
+  }
+  return { text: content.slice(0, at).trimEnd(), files };
+}

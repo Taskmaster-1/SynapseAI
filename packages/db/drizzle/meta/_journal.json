@@ -57,6 +57,13 @@
       "when": 1793188081034,
       "tag": "0007_skills_and_approvals_that_expire",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793217062459,
+      "tag": "0008_chat_files",
+      "breakpoints": true
     }
   ]
 }

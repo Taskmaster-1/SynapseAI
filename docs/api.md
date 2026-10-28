@@ -181,6 +181,10 @@ other notes.
 | GET | `/api/documents` | | `{ documents: { id, name, mimeType, bytes, status, error, createdAt }[] }` |
 | POST | `/api/documents` | `multipart/form-data` with `file` (text, markdown, csv, json, html; ≤ 10 MB) | `{ document }` |
 | DELETE | `/api/documents/:id` | | `204` |
+| POST | `/api/files` | `multipart/form-data` with `file` (any type, ≤ 25 MB). Text files and PDFs are also added to the knowledge base | `201 { file: { id, name, mimeType, bytes, documentId, createdAt } }` |
+| GET | `/api/files/:id` | | `{ file }` (your own files only) |
+| GET | `/api/files/:id/content` | | The file. Photos, video, audio and PDFs show inline; everything else downloads |
+| DELETE | `/api/files/:id` | | `204` |
 | GET | `/api/documents/search?q=` | | `{ results: { document, documentId, position, content, score }[] }` |
 
 ## Settings

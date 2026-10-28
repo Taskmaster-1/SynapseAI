@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { EmailAttachments } from "@/components/task/files";
 import { Switch } from "@/components/ui";
 import { cx, humanize } from "@/lib/format";
 
@@ -142,8 +143,14 @@ function EmailView({ obj }: { obj: Obj }) {
   const head = EMAIL_HEAD.filter((k) => k in obj);
   const bodyKey = BODY_KEYS.find((k) => k in obj);
   const body = bodyKey ? obj[bodyKey] : undefined;
+  const files = Array.isArray(obj.attachments)
+    ? obj.attachments.filter((v): v is string => typeof v === "string")
+    : [];
   const rest = Object.keys(obj).filter(
-    (k) => !(EMAIL_HEAD as readonly string[]).includes(k) && k !== bodyKey,
+    (k) =>
+      !(EMAIL_HEAD as readonly string[]).includes(k) &&
+      k !== bodyKey &&
+      !(k === "attachments" && files.length > 0),
   );
   const long = typeof body === "string" && body.length > 700;
   return (
@@ -188,9 +195,24 @@ function EmailView({ obj }: { obj: Obj }) {
           </div>
         )
       ) : null}
+      {files.length > 0 ? (
+        <div className="mt-5">
+          <p className="mb-2 text-13 text-fg-muted">
+            {files.length === 1 ? "1 attachment" : `${files.length} attachments`}
+          </p>
+          <EmailAttachments ids={files} />
+        </div>
+      ) : null}
       {rest.length > 0 ? (
         <div className="mt-5 border-t border-dashed border-line-strong pt-4">
-          <Fields obj={obj} skip={[...EMAIL_HEAD, ...(bodyKey ? [bodyKey] : [])]} />
+          <Fields
+            obj={obj}
+            skip={[
+              ...EMAIL_HEAD,
+              ...(bodyKey ? [bodyKey] : []),
+              ...(files.length > 0 ? ["attachments"] : []),
+            ]}
+          />
         </div>
       ) : null}
     </div>

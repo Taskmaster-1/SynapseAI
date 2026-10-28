@@ -4,6 +4,22 @@ import { htmlToText } from "../builtin/web";
 import type { GoogleClient } from "./client";
 
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
+const UPLOAD = "https://gmail.googleapis.com/upload/gmail/v1/users/me";
+/** Gmail's limit for a message's attachments together. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** A file to attach, already loaded (and owned by the user). */
+export interface MailAttachment {
+  name: string;
+  mimeType: string;
+  data: Uint8Array;
+}
+
+/** Loads the user's own attached files by id; ids that aren't theirs come back missing. */
+export type AttachmentLoader = (
+  userId: string,
+  ids: string[],
+) => Promise<({ id: string } & MailAttachment)[]>;
 const MAX_BODY = 20_000;
 
 interface Header {
@@ -103,8 +119,11 @@ export function buildMime(m: {
   body: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: MailAttachment[];
 }): string {
   const clean = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
+  const b64 = (data: Uint8Array | string) =>
+    Buffer.from(data).toString("base64").replace(/.{76}/g, "$&\r\n");
   const subject = clean(m.subject);
   const encodedSubject = /^[\x20-\x7e]*$/.test(subject)
     ? subject
@@ -118,12 +137,38 @@ export function buildMime(m: {
     ...(m.inReplyTo ? [`In-Reply-To: ${clean(m.inReplyTo)}`] : []),
     ...(m.references ? [`References: ${clean(m.references)}`] : []),
     "MIME-Version: 1.0",
+  ];
+  const text = [
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
     "",
-    Buffer.from(m.body.replace(/\r?\n/g, "\r\n")).toString("base64").replace(/.{76}/g, "$&\r\n"),
+    b64(m.body.replace(/\r?\n/g, "\r\n")),
   ];
-  return lines.join("\r\n");
+  if (!m.attachments?.length) return [...lines, ...text].join("\r\n");
+  const boundary = `synapse-${crypto.randomUUID()}`;
+  const parts = m.attachments.map((a) => {
+    const name = clean(a.name).replace(/"/g, "'");
+    const encoded = /^[\x20-\x7e]*$/.test(name)
+      ? `"${name}"`
+      : `"=?UTF-8?B?${Buffer.from(name).toString("base64")}?="`;
+    return [
+      `Content-Type: ${clean(a.mimeType) || "application/octet-stream"}; name=${encoded}`,
+      `Content-Disposition: attachment; filename=${encoded}`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      b64(a.data),
+    ].join("\r\n");
+  });
+  return [
+    ...lines,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    ...text,
+    ...parts.flatMap((p) => [`--${boundary}`, p]),
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 /** One message with all headers (metadata format, no body). */
@@ -254,6 +299,7 @@ interface SendInput {
   subject: string;
   body: string;
   replyToMessageId?: string;
+  attachments?: string[];
 }
 
 const addressList = (description: string) => ({
@@ -274,12 +320,24 @@ const SEND_SCHEMA = {
       type: "string" as const,
       description: "Gmail message id this replies to; keeps the reply in the same thread",
     },
+    attachments: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      maxItems: 10,
+      description:
+        "Ids of files the user attached in this chat (photos, videos, PDFs, anything) to attach to the email",
+    },
   },
   required: ["to", "subject", "body"],
   additionalProperties: false,
 };
 
-async function compose(g: GoogleClient, input: SendInput, signal: AbortSignal) {
+async function compose(
+  g: GoogleClient,
+  input: SendInput,
+  signal: AbortSignal,
+  attached: MailAttachment[] = [],
+) {
   let threadId: string | undefined;
   let inReplyTo: string | undefined;
   let references: string | undefined;
@@ -289,27 +347,92 @@ async function compose(g: GoogleClient, input: SendInput, signal: AbortSignal) {
     inReplyTo = header(orig, "Message-ID") || undefined;
     references = [header(orig, "References"), inReplyTo].filter(Boolean).join(" ") || undefined;
   }
-  const raw = Buffer.from(
-    buildMime({
-      to: input.to,
-      ...(input.cc ? { cc: input.cc } : {}),
-      ...(input.bcc ? { bcc: input.bcc } : {}),
-      subject: input.subject,
-      body: input.body,
-      ...(inReplyTo ? { inReplyTo } : {}),
-      ...(references ? { references } : {}),
-    }),
-  ).toString("base64url");
-  return { raw, ...(threadId ? { threadId } : {}) };
+  const mime = buildMime({
+    to: input.to,
+    ...(input.cc ? { cc: input.cc } : {}),
+    ...(input.bcc ? { bcc: input.bcc } : {}),
+    subject: input.subject,
+    body: input.body,
+    ...(inReplyTo ? { inReplyTo } : {}),
+    ...(references ? { references } : {}),
+    ...(attached.length ? { attachments: attached } : {}),
+  });
+  return { mime, threadId };
+}
+
+/** Loads the files an email asks for; every id must be one of the user's own files. */
+async function loadAttachments(
+  load: AttachmentLoader | undefined,
+  userId: string,
+  input: SendInput,
+): Promise<MailAttachment[]> {
+  const ids = [...new Set(input.attachments ?? [])];
+  if (ids.length === 0) return [];
+  if (!load) throw new Error("Attachments aren't available on this server.");
+  const files = await load(userId, ids);
+  const missing = ids.filter((id) => !files.some((f) => f.id === id));
+  if (missing.length) throw new Error(`No attached file with id ${missing.join(", ")}.`);
+  const total = files.reduce((n, f) => n + f.data.byteLength, 0);
+  if (total > MAX_ATTACHMENT_BYTES)
+    throw new Error("Attachments add up to more than 25 MB, Gmail's limit for one email.");
+  return files;
+}
+
+/**
+ * Sends or drafts a message. Without attachments it uses the JSON API; with them, Gmail's
+ * multipart upload, which takes messages up to 35 MB.
+ */
+async function submit(
+  g: GoogleClient,
+  kind: "send" | "draft",
+  message: { mime: string; threadId: string | undefined },
+  signal: AbortSignal,
+  upload: boolean,
+) {
+  const path = kind === "send" ? "/messages/send" : "/drafts";
+  const meta = message.threadId ? { threadId: message.threadId } : {};
+  if (!upload) {
+    const raw = Buffer.from(message.mime).toString("base64url");
+    const msg = { raw, ...meta };
+    return g.request<{ id: string; threadId?: string }>(`${API}${path}`, {
+      method: "POST",
+      body: kind === "send" ? msg : { message: msg },
+      signal,
+    });
+  }
+  const boundary = `synapse-upload-${crypto.randomUUID()}`;
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(kind === "send" ? meta : { message: meta }),
+    `--${boundary}`,
+    "Content-Type: message/rfc822",
+    "",
+    message.mime,
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+  return g.request<{ id: string; threadId?: string }>(`${UPLOAD}${path}`, {
+    method: "POST",
+    query: { uploadType: "multipart" },
+    raw: { contentType: `multipart/related; boundary=${boundary}`, data: body },
+    signal,
+  });
 }
 
 const emailPreview = (verb: string) => (input: JSONValue) => {
   const i = input as unknown as SendInput;
-  return `${verb} ${(i.to ?? []).join(", ")}: ${i.subject ?? ""}`;
+  const n = i.attachments?.length ?? 0;
+  const files = n ? ` · ${n} attachment${n === 1 ? "" : "s"}` : "";
+  return `${verb} ${(i.to ?? []).join(", ")}: ${i.subject ?? ""}${files}`;
 };
 
 /** Gmail tools for one user. `client` resolves lazily so runs without Gmail use pay nothing. */
-export function gmailTools(client: () => Promise<GoogleClient>): ToolDefinition[] {
+export function gmailTools(
+  client: () => Promise<GoogleClient>,
+  loadFiles?: AttachmentLoader,
+): ToolDefinition[] {
   const base = { source: "builtin:google" };
   return [
     {
@@ -374,20 +497,26 @@ export function gmailTools(client: () => Promise<GoogleClient>): ToolDefinition[
       ...base,
       name: "gmail_send",
       description:
-        "Send an email from the user's Gmail. To reply in a thread, pass replyToMessageId. Put the complete final text in body; the user approves exactly what you write.",
+        "Send an email from the user's Gmail. To reply in a thread, pass replyToMessageId. To attach files the user attached in chat, pass their ids in attachments. Put the complete final text in body; the user approves exactly what you write.",
       inputSchema: SEND_SCHEMA,
       effect: "send",
       untrustedOutput: false,
       preview: emailPreview("Email"),
       execute: async (input, ctx) => {
+        const send = input as unknown as SendInput;
+        const files = await loadAttachments(loadFiles, ctx.userId, send);
         const g = await client();
-        const msg = await compose(g, input as unknown as SendInput, ctx.abortSignal);
-        const sent = await g.request<{ id: string; threadId: string }>(`${API}/messages/send`, {
-          method: "POST",
-          body: msg,
-          signal: ctx.abortSignal,
-        });
-        return { type: "json", value: { sent: true, id: sent.id, threadId: sent.threadId } };
+        const msg = await compose(g, send, ctx.abortSignal, files);
+        const sent = await submit(g, "send", msg, ctx.abortSignal, files.length > 0);
+        return {
+          type: "json",
+          value: {
+            sent: true,
+            id: sent.id,
+            threadId: sent.threadId ?? null,
+            ...(files.length ? { attached: files.map((f) => f.name) } : {}),
+          },
+        };
       },
     },
     {
@@ -402,14 +531,19 @@ export function gmailTools(client: () => Promise<GoogleClient>): ToolDefinition[
       untrustedOutput: false,
       preview: emailPreview("Draft to"),
       execute: async (input, ctx) => {
+        const draftInput = input as unknown as SendInput;
+        const files = await loadAttachments(loadFiles, ctx.userId, draftInput);
         const g = await client();
-        const message = await compose(g, input as unknown as SendInput, ctx.abortSignal);
-        const draft = await g.request<{ id: string }>(`${API}/drafts`, {
-          method: "POST",
-          body: { message },
-          signal: ctx.abortSignal,
-        });
-        return { type: "json", value: { drafted: true, draftId: draft.id } };
+        const msg = await compose(g, draftInput, ctx.abortSignal, files);
+        const draft = await submit(g, "draft", msg, ctx.abortSignal, files.length > 0);
+        return {
+          type: "json",
+          value: {
+            drafted: true,
+            draftId: draft.id,
+            ...(files.length ? { attached: files.map((f) => f.name) } : {}),
+          },
+        };
       },
     },
     {

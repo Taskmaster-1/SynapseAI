@@ -22,7 +22,7 @@ export interface RiskInput {
   domain?: string | null;
 }
 
-export const MAX_RISK_FACTS = 3;
+export const MAX_RISK_FACTS = 4;
 
 /** Webmail domains say nothing about who is "inside": everyone is at gmail.com. */
 const PERSONAL_DOMAINS = new Set([
@@ -94,7 +94,7 @@ const people = (n: number) => (n === 1 ? "1 person" : `${n} people`);
 
 const IRREVERSIBLE = /delete|remove|trash|purge|destroy|drop|erase|archive|cancel|revoke/i;
 
-/** Up to three short facts about what approving this would do. */
+/** Up to four short facts about what approving this would do. */
 export function riskFacts(call: RiskInput): string[] {
   const facts: string[] = [];
   const domain = call.domain?.toLowerCase() || null;
@@ -111,6 +111,10 @@ export function riskFacts(call: RiskInput): string[] {
   } else if (call.effect === "send") {
     facts.push("Reaches other people");
   }
+
+  const attached = (call.input as { attachments?: unknown } | null)?.attachments;
+  if (Array.isArray(attached) && attached.length > 0 && call.effect !== "read")
+    facts.push(`Attaches ${attached.length === 1 ? "1 file" : `${attached.length} files`}`);
 
   if (call.effect === "destructive") facts.push("Can't be undone");
   else if (call.effect === "send") facts.push("Can't be unsent once it goes");

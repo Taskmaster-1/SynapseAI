@@ -1,7 +1,13 @@
 "use client";
 
 import type { SeqEvent } from "@synapse/core";
-import { applyEvent, isActive, type UiMessage } from "@synapse/core/ui";
+import {
+  applyEvent,
+  isActive,
+  splitAttachments,
+  type UiMessage,
+  withAttachments,
+} from "@synapse/core/ui";
 import { Ellipsis, PanelRight, PanelRightClose, Pencil, Square, Trash } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,6 +26,7 @@ import { useRunStream } from "@/lib/use-run-stream";
 import { useWorkspace } from "@/lib/workspace";
 import { Composer, type ComposerHandle } from "./composer";
 import { Conversation, RunReceipt } from "./conversation";
+import { useAttachments } from "./files";
 import { type PanelTab, RunPanel } from "./run-panel";
 
 interface State {
@@ -57,6 +64,7 @@ export function TaskView({ taskId }: { taskId: string }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const composer = useRef<ComposerHandle>(null);
+  const attach = useAttachments();
 
   // ---------- Run panel ----------
   const wide = useMedia("(min-width: 1200px)");
@@ -189,8 +197,10 @@ export function TaskView({ taskId }: { taskId: string }) {
   const status = hasAwaiting ? "needs" : taskStatus(run?.status);
 
   async function send() {
-    const content = draft.trim();
-    if (!content || !state) return;
+    const files = attach.ready;
+    const content = withAttachments(draft.trim(), files);
+    if (!content || !state || attach.uploading) return;
+    const pending = attach.items;
     const localId = `local-${Date.now()}`;
     const local: UiMessage = {
       id: localId,
@@ -200,6 +210,7 @@ export function TaskView({ taskId }: { taskId: string }) {
     };
     setSending(true);
     setDraft("");
+    attach.clear();
     stickToBottom.current = true;
     setState((s) => (s ? { ...s, messages: [...s.messages, local] } : s));
     try {
@@ -209,7 +220,8 @@ export function TaskView({ taskId }: { taskId: string }) {
       void reloadWorkspace();
     } catch (err) {
       setState((s) => (s ? { ...s, messages: s.messages.filter((m) => m.id !== localId) } : s));
-      setDraft(content);
+      setDraft(splitAttachments(content).text);
+      attach.restore(pending);
       toast(errorMessage(err), "error");
     } finally {
       setSending(false);
@@ -453,6 +465,7 @@ export function TaskView({ taskId }: { taskId: string }) {
               onChange={setDraft}
               onSend={() => void send()}
               sending={sending}
+              attach={attach}
               queue={active}
               placeholder={
                 active ? "Add something for the agent…" : "Reply or ask for something else…"

@@ -5,6 +5,7 @@ import { documents, memories, policy, settings, usage } from "./routes/account";
 import { automations, hooks } from "./routes/automations";
 import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
+import { files } from "./routes/files";
 import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
 import { onboarding } from "./routes/onboarding";
@@ -84,6 +85,7 @@ export function createApp(services: Services) {
   api.route("/policy", policy);
   api.route("/memories", memories);
   api.route("/documents", documents);
+  api.route("/files", files);
   api.route("/settings", settings);
   api.route("/usage", usage);
   api.route("/models", models);

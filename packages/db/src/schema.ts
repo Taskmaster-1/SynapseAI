@@ -39,6 +39,9 @@ const updatedAt = () =>
     .$onUpdate(() => new Date());
 
 const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => "bytea",
+});
 
 // ── Auth (Better Auth core schema) ─────────────────────────────────────────
 
@@ -641,6 +644,30 @@ export interface TriggerCursor {
  * A prompt that runs in its own chat when its trigger fires: on a schedule, on new email,
  * or on a webhook. Approvals land in the inbox.
  */
+/**
+ * Files the user attached in a chat: photos, videos, PDFs, anything. The agent can read the
+ * text ones (their text also goes to the knowledge base) and attach any of them to an email.
+ */
+export const files = pgTable(
+  "files",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    data: bytea("data").notNull(),
+    /** Extracted text (text files and PDFs), capped; null for photos, videos and the like. */
+    text: text("text"),
+    /** Set when the text was also added to the knowledge base. */
+    documentId: text("document_id").references(() => documents.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("files_user_idx").on(t.userId, t.createdAt)],
+);
+
 export const automations = pgTable(
   "automations",
   {

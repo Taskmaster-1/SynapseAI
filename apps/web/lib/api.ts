@@ -312,6 +312,16 @@ export interface KnowledgeDocument {
   createdAt: string;
 }
 
+/** A file attached in chat (photo, video, PDF, anything), stored privately on the server. */
+export interface ChatFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  bytes: number;
+  documentId: string | null;
+  createdAt: string;
+}
+
 export interface SearchResult {
   document: string;
   documentId: string;
@@ -561,6 +571,13 @@ export const api = {
     return request<{ document: KnowledgeDocument }>("POST", "/api/documents", form);
   },
   deleteDocument: (id: string) => del(`/api/documents/${enc(id)}`),
+  uploadFile: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ file: ChatFile }>("POST", "/api/files", form);
+  },
+  file: (id: string) => get<{ file: ChatFile }>(`/api/files/${enc(id)}`),
+  deleteFile: (id: string) => del(`/api/files/${enc(id)}`),
   searchDocuments: (q: string, signal?: AbortSignal) =>
     get<{ results: SearchResult[] }>(`/api/documents/search?q=${enc(q)}`, { signal }),
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ToolOutput } from "@synapse/core";
-import type { UiMessage } from "@synapse/core/ui";
+import { splitAttachments, type UiMessage } from "@synapse/core/ui";
 import { ChevronRight, ShieldAlert, User, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { approvalTitle } from "@/components/approval/approval-card";
@@ -112,8 +112,12 @@ function ActivityTimeline({
   for (const s of steps) byMessage.set(s.messageId, [...(byMessage.get(s.messageId) ?? []), s]);
   for (const m of messages) {
     if (m.role === "user") {
-      const text = m.parts.map((p) => (p.type === "text" ? p.text : "")).join("");
-      rows.push({ kind: "ask", id: m.id, text });
+      const { text, files } = splitAttachments(
+        m.parts.map((p) => (p.type === "text" ? p.text : "")).join(""),
+      );
+      const n = files.length;
+      const note = n ? `${n === 1 ? "1 file" : `${n} files`} attached` : "";
+      rows.push({ kind: "ask", id: m.id, text: [text, note].filter(Boolean).join(" · ") });
     } else for (const s of byMessage.get(m.id) ?? []) rows.push({ kind: "step", step: s });
   }
 

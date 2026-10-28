@@ -30,6 +30,8 @@ export function fakeGoogle(opts: { email?: string } = {}) {
     email: opts.email ?? "ada@example.com",
     messages: [] as FakeMessage[],
     drafts: [] as { id: string; raw: string; threadId?: string }[],
+    /** Messages sent or drafted through the multipart upload endpoint. */
+    uploads: 0,
     events: [] as FakeEvent[],
     labels: [
       { id: "INBOX", name: "INBOX" },
@@ -117,6 +119,44 @@ export function fakeGoogle(opts: { email?: string } = {}) {
     }
     if (url.host === "oauth2.googleapis.com" && path === "/revoke") return json({});
     if (url.host === "openidconnect.googleapis.com") return json({ email: state.email });
+
+    // Multipart uploads (messages with attachments): JSON metadata, then the raw message.
+    const upload = path.match(/^\/upload\/gmail\/v1\/users\/me\/(messages\/send|drafts)$/);
+    if (upload) {
+      const type = new Headers(init.headers).get("content-type") ?? "";
+      const boundary = /boundary=([^;]+)/.exec(type)?.[1];
+      if (url.searchParams.get("uploadType") !== "multipart" || !boundary || !body)
+        return json({ error: { message: "bad upload" } }, 400);
+      const parts = body
+        .split(`--${boundary}`)
+        .slice(1, -1)
+        .map((p) => p.slice(p.indexOf("\r\n\r\n") + 4).replace(/\r\n$/, ""));
+      const meta = JSON.parse(parts[0]!) as {
+        threadId?: string;
+        message?: { threadId?: string };
+      };
+      const raw = parts[1]!;
+      state.uploads++;
+      if (upload[1] === "drafts") {
+        const threadId = meta.message?.threadId;
+        const d = { id: nextId("d"), raw, ...(threadId ? { threadId } : {}) };
+        state.drafts.push(d);
+        return json({ id: d.id });
+      }
+      const m: FakeMessage = {
+        id: nextId("sent"),
+        threadId: meta.threadId ?? nextId("t"),
+        from: state.email,
+        to: "",
+        subject: "",
+        body: "",
+        internalDate: Date.now(),
+        labelIds: ["SENT"],
+        raw,
+      };
+      state.messages.push(m);
+      return json({ id: m.id, threadId: m.threadId });
+    }
 
     const gmail = path.match(/^\/gmail\/v1\/users\/me\/(.*)$/);
     if (gmail) {

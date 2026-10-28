@@ -1,11 +1,13 @@
 "use client";
 
+import { type Attachment, withAttachments } from "@synapse/core/ui";
 import { ArrowRight, Check, LoaderCircle, Repeat } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApprovalCompact } from "@/components/approval/approval-compact";
 import { Composer, type ComposerHandle } from "@/components/task/composer";
+import { useAttachments } from "@/components/task/files";
 import { useToast } from "@/components/toast";
 import {
   Monogram,
@@ -77,6 +79,7 @@ export default function HomePage() {
   const [sending, setSending] = useState(false);
   const [guideHidden, setGuideHidden] = useState(true);
   const composer = useRef<ComposerHandle>(null);
+  const attach = useAttachments();
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has("new")) {
@@ -93,12 +96,13 @@ export default function HomePage() {
     }
   }, []);
 
-  async function start(content: string) {
-    const text = content.trim();
-    if (!text || sending) return;
+  async function start(content: string, files: Attachment[] = []) {
+    const text = withAttachments(content.trim(), files);
+    if (!text || sending || attach.uploading) return;
     setSending(true);
     try {
       const { chat } = await api.createChat(text);
+      attach.clear();
       void reload();
       router.push(`/t/${chat.id}`);
     } catch (err) {
@@ -182,11 +186,12 @@ export default function HomePage() {
           label="New task"
           value={draft}
           onChange={setDraft}
-          onSend={() => void start(draft)}
+          onSend={() => void start(draft, attach.ready)}
+          attach={attach}
           sending={sending}
           placeholder="What should I take care of?"
           autoFocus
-          footer="Anything that sends, changes or deletes waits for your OK."
+          footer="Attach photos, videos or any file. Anything that sends, changes or deletes waits for your OK."
         />
         <div className="mt-3 flex flex-wrap gap-2">
           {suggestions.map((s) => (

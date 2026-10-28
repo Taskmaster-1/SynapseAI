@@ -1,5 +1,6 @@
 import { type ToolDefinition, ToolRegistry } from "@synapse/core";
 import type { Db, SecretBox } from "@synapse/db";
+import { fileReadTool, loadFiles } from "./builtin/files";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
 import { planTool } from "./builtin/plan";
@@ -11,6 +12,7 @@ import { gmailTools } from "./google/gmail";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 
+export * from "./builtin/files";
 export * from "./builtin/knowledge";
 export { loadMemoryBlock, loadWritingStyle } from "./builtin/memory";
 export { PLAN_TOOL } from "./builtin/plan";
@@ -59,6 +61,7 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
   const builtin: ToolDefinition[] = [
     webFetchTool(),
     knowledgeTool(cfg.db, cfg.embedder),
+    fileReadTool(cfg.db),
     ...memoryTools(cfg.db),
     planTool(cfg.db),
     ...skillTools(cfg.db, skills),
@@ -68,7 +71,8 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     const google = await GoogleClient.forUser(cfg.google, cfg.db, cfg.box, userId);
     if (google) {
       const client = async () => google;
-      builtin.push(...gmailTools(client), ...calendarTools(client));
+      const attachments = (userId: string, ids: string[]) => loadFiles(cfg.db, userId, ids);
+      builtin.push(...gmailTools(client, attachments), ...calendarTools(client));
     }
   }
   const registry = new ToolRegistry(builtin);
