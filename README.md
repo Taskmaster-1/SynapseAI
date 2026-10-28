@@ -37,6 +37,8 @@ Agent products that act in your tools share three problems: approvals that live 
 - Approve from Slack: approvals arrive as a DM with Approve and Deny buttons, and the message updates wherever you decide ([setup](docs/slack.md))
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
+- Approvals that don't wait forever: one reminder, escalation to team admins, then expiry as an ordinary deny the agent sees. Optional two-person sign-off for irreversible actions (and sends): two different people, any deny ends it
+- Plain-language risk facts on every approval, in the app and in push, Slack and email ("Sends to 2 people outside acme.com", "Can't be undone", "After reading outside content")
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch

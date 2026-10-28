@@ -40,13 +40,13 @@ agent reads it at its next step; if the run is waiting on approvals, those are d
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/runs/:id/events?after=<seq>` | | **SSE** stream (see below) |
-| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown, via?: "web" \| "push" }` | `{ executeAfter: string \| null }`; `409` if no longer awaiting approval. `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before. `via` (default `"web"`; anything else is `422`) records where it was decided: the service worker sends `"push"` for a notification's Approve/Deny button |
+| POST | `/api/runs/:id/tool-calls/:toolCallId/decision` | `{ approved: boolean, reason?: string, input?: unknown, via?: "web" \| "push" }` | `{ executeAfter: string \| null, partial: boolean }`; `409` if no longer awaiting approval. `partial: true`: two-person sign-off, this was the first of two approvals and the call keeps waiting for a different person (the same person approving again is `409 already_approved`). `input` replaces the arguments (edited on the approval card). Approving a `send` or `destructive` call opens the user's undo window: it runs at `executeAfter`, not before. `via` (default `"web"`; anything else is `422`) records where it was decided: the service worker sends `"push"` for a notification's Approve/Deny button |
 | POST | `/api/runs/:id/tool-calls/:toolCallId/undo` | | `204`; `409` once the window has ended ("Too late to undo: it already ran."). The call is denied and the agent is told the user undid it |
 | POST | `/api/runs/:id/tool-calls/decisions` | `{ decisions: { toolCallId, approved, reason?, input? }[] }` (`input`: approve with edited input, same as the single route) | `{ executeAfter: Record<toolCallId, string> }` for calls that opened an undo window; all or nothing in one transaction: `409` if any call is no longer awaiting approval, `400` on duplicate ids. The run is re-queued once when nothing is left awaiting |
 | POST | `/api/runs/:id/cancel` | `{ mode: "now" \| "after_step" }` | `204` |
 | GET | `/api/runs?limit=50` | | `{ runs: { id, chatId, chatTitle, status, trigger, model, steps, inputTokens, outputTokens, costUsd, error, createdAt, finishedAt }[] }` |
-| GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedAt, executeAfter, createdAt }[] }` (audit view) |
-| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, reason, preview, approver, createdAt }[] }` — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user. `approver: "admin"` means the user's team requires a team admin to decide it: unless the user is an owner or admin of their team, they can only wait (deciding returns `403`) |
+| GET | `/api/runs/:id` | | `{ run, toolCalls: { id, name, effect, status, decision, decisionReason, input, output, decidedBy, decidedByName, decidedAt, decidedVia, firstApprovedBy, firstApprovedByName, firstApprovedAt, remindedAt, escalatedAt, expiresAt, executeAfter, createdAt }[] }` (audit view; `decidedVia: "expiry"` when nobody decided in time) |
+| GET | `/api/approvals` | | `{ approvals: { runId, chatId, chatTitle, toolCallId, name, effect, input, inputEdited, reason, preview, approver, tainted, facts, expiresAt, escalatedAt, signoffs: { needed: 1 \| 2, first: { id, name, at } \| null }, createdAt }[] }` — `facts` are up to three plain-language risk facts; `expiresAt` is when it is denied as expired (null: never) — `preview` is a one-line human summary from the tool, `reason` explains why approval is needed — everything awaiting the user. `approver: "admin"` means the user's team requires a team admin to decide it: unless the user is an owner or admin of their team, they can only wait (deciding returns `403`) |
 
 Tool calls carry `approver: "admin" | null` (in `GET /api/runs/:id`, in `UiPart`s and on the
 `approval.requested` event). A team owner or admin decides such a call of a team member with
@@ -132,7 +132,7 @@ endpoints other than create and join return `404 no_workspace` when you're not i
 |---|---|---|---|
 | GET | `/api/workspace` | | `{ workspace: { id, name, createdAt } \| null, role: Role \| null, members: { userId, name, email, role, joinedAt }[] }` |
 | POST | `/api/workspace` | `{ name }` | `201`, same shape; you are the owner. `409 already_member` if you're in one |
-| PATCH | `/api/workspace` | `{ name }` | same shape (admin+) |
+| PATCH | `/api/workspace` | `{ name?, escalateMinutes?: 0–1440, expireHours?: 0–336 \| null, twoPerson?: "destructive" \| "destructive_send" \| null }` | same shape (admin+). `escalateMinutes` (default 60, 0 is off): when members' undecided approvals also go to admins; `expireHours`: team-wide expiry instead of each person's own (null); `twoPerson`: which actions need two different approvers (null is off) |
 | POST | `/api/workspace/invites` | `{ role?: "member" \| "admin", expiresInDays?: 1–30 }` (default member, 7) | `201 { invite: { id, role, expiresAt, createdAt, status }, link }` — `link` is `${PUBLIC_URL}/join/<token>`, returned only here; only a SHA-256 of the token is stored (admin+) |
 | GET | `/api/workspace/invites` | | `{ invites: { id, role, expiresAt, createdAt, usedAt, revokedAt, usedByEmail, status: "active" \| "used" \| "revoked" \| "expired" }[] }` (admin+) |
 | DELETE | `/api/workspace/invites/:id` | | `204` — revokes an unused invite (admin+) |
@@ -141,10 +141,10 @@ endpoints other than create and join return `404 no_workspace` when you're not i
 | DELETE | `/api/workspace/members/:userId` | | `204`. Anyone may remove themselves (leave); admin+ remove others, only owners remove owners. `409 last_owner` for the last owner while others remain; the last person to leave deletes the workspace |
 | GET | `/api/workspace/rules` | | `{ rules: TeamRule[], canEdit: boolean }` — `TeamRule` is a `PolicyRule` plus `approver?: "admin"` |
 | PUT | `/api/workspace/rules` | `{ rules: TeamRule[] }` (priority order) | same (admin+). Validated like personal rules, incl. `422 invalid_pattern`. `approver` is kept only on `ask` rules |
-| GET | `/api/workspace/approvals` | | `{ approvals: { …same as /api/approvals, requester: { id, name, email } }[] }` — team members' calls (yours included) awaiting an admin (admin+) |
+| GET | `/api/workspace/approvals` | | `{ approvals: { …same as /api/approvals, requester: { id, name, email } }[] }` — team members' calls (yours included) that admins may decide: a team rule needs an admin, it was escalated, or two-person sign-off applies (admin+) |
 | GET | `/api/workspace/audit.csv?from&to` | | `text/csv` attachment (admin+). `from`/`to` are `YYYY-MM-DD` (inclusive) or ISO times; default the last 30 days, at most a year, at most 50,000 rows (`422 too_many_rows`) |
 
-The audit CSV has a header row `time,member,task,tool,effect,decision,status,decided_by,decided_via,reason`:
+The audit CSV has a header row `time,member,task,tool,effect,decision,status,decided_by,decided_via,reason,first_approved_by,first_approved_via,reminded_at,escalated_at`:
 every tool call proposed in members' tasks while they were in the team, oldest first. `decision`
 is what the policy said (`allow`/`ask`/`block`), `decided_by` the email of the person who
 decided (empty when policy decided). Quoting follows RFC 4180 (CRLF lines); a cell starting
@@ -173,7 +173,7 @@ formula.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean, remindMinutes: number, expireHours: number }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured; `remindMinutes` (0–1440, default 30, 0 is off) sends one reminder about an undecided approval; `expireHours` (0–336, default 24, 0 is never) denies it as expired |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
 | GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |

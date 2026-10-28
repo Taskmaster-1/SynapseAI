@@ -10,6 +10,25 @@ When a task stops to ask, Synapse can tell you where you are:
 Each approval is announced once, when the run starts waiting. Several approvals at once
 become one summary notification per person.
 
+## Reminders, escalation and expiry
+
+If nobody decides, the same channels hear about it again, once each:
+
+- **Reminder** (default after 30 minutes; Settings → Notifications → When nobody decides):
+  "Reminder: Synapse still needs your OK". In Slack, the original message is refreshed (its
+  buttons stay) and a reply in its thread does the nudging.
+- **Escalated** (team workspaces, default after 60 minutes): the team's owners and admins
+  get it too, and may decide it.
+- **Needs a second approval** (two-person sign-off): after the first approval, the others
+  who may give the second one are told.
+- **Expired** (default after 24 hours): it is denied as "Expired: nobody decided in time";
+  Slack messages are rewritten to say so.
+
+Every notification carries up to three plain-language risk facts ("Sends to 2 people
+outside acme.com", "Can't be undone", "After reading outside content"), how long until it
+expires, and two-person progress. See [teams](teams.md) for escalation and two-person
+sign-off.
+
 ## Web Push
 
 ### 1. VAPID keys
