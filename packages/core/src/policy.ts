@@ -1,4 +1,5 @@
 import type { JSONValue } from "ai";
+import { emailsIn, MAX_MATCH_INPUT, newTargetReason, type Target } from "./targets";
 import type { Decision, Effect } from "./types";
 
 /**
@@ -9,6 +10,9 @@ import type { Decision, Effect } from "./types";
  *  2. Otherwise the first matching `allow`/`ask` rule decides, else the effect default.
  *  3. Rule of Two: once a run is tainted by untrusted content, `send`, `destructive`
  *     and `write` calls are never auto-allowed, whatever the rules say.
+ *  4. A read never widens the write: in a tainted run, a call naming a destination that
+ *     first appeared in outside content (`newTargets`, see targets.ts) asks with a reason
+ *     that names it, and no plan grant can stand in for that approval.
  */
 export interface PolicyRule {
   id: string;
@@ -54,12 +58,19 @@ export interface PolicyInput {
   tainted: boolean;
   /** Tool-specific default used when no rule matches, e.g. "allow" for memory notes. */
   defaultDecision?: Decision;
+  /**
+   * Destinations in this call that the run's trusted context never named (only checked in
+   * tainted runs). The runtime computes them with `callTargets` and `unseenTargets`.
+   */
+  newTargets?: Target[];
 }
 
 export interface PolicyResult {
   decision: Decision;
   reason: string;
   ruleId: string | null;
+  /** Set when the call asks because of destinations that came from outside content. */
+  newTargets?: Target[];
 }
 
 const DEFAULT_REASONS: Record<Decision, string> = {
@@ -128,12 +139,31 @@ export function evaluatePolicy(
           ruleId: null,
         };
 
-  if (result.decision === "allow" && call.tainted && call.effect !== "read") {
+  return applyTaint(result, call);
+}
+
+/** Steps 3 and 4 above. Never loosens: a block stays a block, an admin's ask stays theirs. */
+function applyTaint<T extends PolicyResult & { approver?: Approver | null }>(
+  result: T,
+  call: PolicyInput,
+): T {
+  if (!call.tainted || call.effect === "read" || result.decision === "block") return result;
+  if (call.newTargets?.length) {
+    const why = newTargetReason(call.newTargets);
     return {
+      ...result,
       decision: "ask",
-      reason:
-        "This task has read outside content (an email, web page or document), so anything that changes or sends data needs your approval.",
-      ruleId: result.ruleId,
+      // An admin who must decide sees why the call is unusual, after the team's reason.
+      reason: result.approver === "admin" ? `${result.reason} ${why}` : why,
+      newTargets: call.newTargets,
+    };
+  }
+  if (result.decision === "allow") {
+    return {
+      ...result,
+      decision: "ask",
+      reason: TAINT_REASON,
+      ...("approver" in result ? { approver: null } : {}),
     };
   }
   return result;
@@ -186,21 +216,6 @@ function matches(m: ArgMatcher, value: JSONValue | undefined): boolean {
   }
 }
 
-const MAX_MATCH_INPUT = 10_000;
-const EMAIL = /[^\s@<>"',;:()[\]]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
-
-/** Every email address in any string anywhere in a value, lowercased. */
-export function emailsIn(value: JSONValue | undefined): string[] {
-  const out: string[] = [];
-  const walk = (v: JSONValue | undefined) => {
-    if (typeof v === "string") {
-      for (const m of v.slice(0, MAX_MATCH_INPUT).matchAll(EMAIL)) out.push(m[0].toLowerCase());
-    } else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") Object.values(v).forEach(walk);
-  };
-  walk(value);
-  return out;
-}
 const MAX_PATTERN = 500;
 
 /**
@@ -312,10 +327,7 @@ export function evaluateComposedPolicy(
   // Ties go to the personal verdict; only the team can be stricter than it.
   const result = team && strictness(team) > strictness(own) ? team : own;
 
-  if (result.decision === "allow" && call.tainted && call.effect !== "read") {
-    return { ...result, decision: "ask", reason: TAINT_REASON, approver: null };
-  }
-  return result;
+  return applyTaint(result, call);
 }
 
 function evaluateTeamRules(
@@ -342,11 +354,16 @@ function evaluateTeamRules(
 /**
  * Whether an exact-input plan grant may turn this verdict into an allow. A grant stands in
  * for the requester's own approval, so it satisfies an ordinary ask (theirs or their
- * team's) but never a block, nor an ask that an admin must decide.
+ * team's) but never a block, nor an ask that an admin must decide, nor a call whose
+ * destinations first appeared in outside content: a plan is signed off as a list, and a
+ * new recipient in it deserves a look of its own.
  */
 export function planGrantMaySatisfy(verdict: {
   decision: Decision;
   approver: Approver | null;
+  newTargets?: Target[];
 }): boolean {
-  return verdict.decision !== "block" && verdict.approver !== "admin";
+  return (
+    verdict.decision !== "block" && verdict.approver !== "admin" && !verdict.newTargets?.length
+  );
 }

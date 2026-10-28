@@ -16,13 +16,18 @@ export class MemoryStore implements RunStore {
   teamRules: TeamPolicyRule[] = [];
   private seq = 0;
 
-  createRun(init: { chatId: string; userId: string; text?: string }): RunRecord {
+  /** `untrusted`: the opening message quotes third-party content, as event triggers do. */
+  createRun(init: {
+    chatId: string;
+    userId: string;
+    text?: string;
+    untrusted?: boolean;
+  }): RunRecord {
     const run: RunRecord = {
       id: crypto.randomUUID(),
       chatId: init.chatId,
       userId: init.userId,
       status: "queued",
-      tainted: false,
       steps: 0,
       model: null,
       inputTokens: 0,
@@ -31,20 +36,28 @@ export class MemoryStore implements RunStore {
       error: null,
       cancelRequested: null,
       planGrants: [],
+      skills: [],
+      tainted: init.untrusted ?? false,
     };
     this.runs.set(run.id, run);
-    if (init.text) this.pushUser(init.chatId, run.id, init.text);
+    if (init.text) this.pushUser(init.chatId, run.id, init.text, init.untrusted);
     return run;
   }
 
-  pushUser(chatId: string, runId: string | null, text: string): StoredMessage {
-    return this.push({ chatId, runId, model: null, message: { role: "user", content: text } });
+  pushUser(chatId: string, runId: string | null, text: string, untrusted = false): StoredMessage {
+    const row = this.push({ chatId, runId, model: null, message: { role: "user", content: text } });
+    if (untrusted) row.untrusted = true;
+    return row;
   }
 
   async getRun(runId: string) {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`run ${runId} not found`);
-    return { ...run, planGrants: run.planGrants.map((g) => ({ ...g })) };
+    return {
+      ...run,
+      planGrants: run.planGrants.map((g) => ({ ...g })),
+      skills: run.skills.map((u) => ({ ...u })),
+    };
   }
 
   async updateRun(runId: string, patch: Partial<RunRecord>) {

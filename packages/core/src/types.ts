@@ -51,6 +51,17 @@ export interface ToolCallRecord {
    * approves a send or destructive action; null or absent means it may run now.
    */
   executeAfter?: string | null;
+  /**
+   * Skills loaded in this run when the call was proposed, each with the content hash of the
+   * version that was read. For audit: which instructions were in play. Null or absent: none.
+   */
+  skills?: SkillUse[] | null;
+}
+
+/** A skill the agent loaded, by name and content hash (see `skillVersion`). */
+export interface SkillUse {
+  name: string;
+  version: string;
 }
 
 export type ToolOutput =
@@ -75,6 +86,8 @@ export interface RunRecord {
   cancelRequested: "now" | "after_step" | null;
   /** Exact calls the user approved through `propose_plan`; each runs once without asking. */
   planGrants: PlanGrant[];
+  /** Skills loaded with `load_skill` during this run, in load order. */
+  skills: SkillUse[];
 }
 
 /** One approved plan step: a tool name and the hash of its canonical input. */
@@ -100,6 +113,11 @@ export interface StoredMessage {
   kind: "message" | "handover";
   /** For handovers: the summary covers rows with seq < cutoffSeq. */
   cutoffSeq: number | null;
+  /**
+   * A user-role row that quotes third-party content (an event trigger's email or webhook
+   * payload). It taints like a tool result would, and names no trusted destinations.
+   */
+  untrusted?: boolean;
 }
 
 /** Events streamed to clients. `seq` is assigned by the event log. */
@@ -116,6 +134,8 @@ export type RunEvent =
       name: string;
       input: JSONValue;
       effect: Effect;
+      /** Skills loaded in the run when this call was proposed. */
+      skills?: SkillUse[];
     }
   | {
       type: "tool.status";
