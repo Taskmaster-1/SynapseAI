@@ -19,14 +19,24 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
-import { EmptyState, ErrorNote, Field, Page, PageHeader, Skeleton, Switch } from "@/components/ui";
+import {
+  ErrorNote,
+  Field,
+  Page,
+  PageHeader,
+  SectionTitle,
+  Skeleton,
+  Switch,
+} from "@/components/ui";
 import {
   ApiError,
   type Automation,
   type AutomationInput,
+  type AutomationTemplate,
   type AutomationTrigger,
   api,
   errorMessage,
+  type TemplateRequirement,
 } from "@/lib/api";
 import { describeCron, nextRuns, SCHEDULE_PRESETS } from "@/lib/cron";
 import { cx, formatDateTime, formatRelative } from "@/lib/format";
@@ -46,9 +56,14 @@ function humanSchedule(cron: string, tz: string) {
   return d ? `${d} (${tz})` : `Custom schedule (${tz})`;
 }
 
+type Editing = Automation | "new" | "new-email" | { template: AutomationTemplate };
+
+const editingKey = (e: Editing) =>
+  typeof e === "string" ? e : "template" in e ? `t-${e.template.id}` : e.id;
+
 export default function AutomationsPage() {
   const autos = useApi(() => api.automations());
-  const [editing, setEditing] = useState<Automation | "new" | "new-email" | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
   const list = autos.data?.automations;
 
   useEffect(() => {
@@ -86,20 +101,7 @@ export default function AutomationsPage() {
             <Skeleton className="h-40 rounded-card" />
           </div>
         ) : null
-      ) : list.length === 0 ? (
-        <EmptyState
-          illustration={<SampleSchedule />}
-          title="Nothing running on its own yet"
-          action={
-            <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
-              Create an automation
-            </button>
-          }
-        >
-          A morning brief every weekday, a draft reply for every customer email, a review for every
-          new pull request. Set it once and it runs on its own.
-        </EmptyState>
-      ) : (
+      ) : list.length === 0 ? null : (
         <ul className="space-y-3">
           {list.map((a) => (
             <li key={a.id}>
@@ -109,17 +111,30 @@ export default function AutomationsPage() {
         </ul>
       )}
 
+      {list ? (
+        <Gallery first={list.length === 0} onUse={(template) => setEditing({ template })} />
+      ) : null}
+
       <Sheet
         open={editing !== null}
         onClose={() => setEditing(null)}
-        title={typeof editing === "string" ? "New automation" : "Edit automation"}
+        title={
+          editing !== null && typeof editing !== "string" && "template" in editing
+            ? editing.template.name
+            : typeof editing === "string"
+              ? "New automation"
+              : "Edit automation"
+        }
         description="Runs as you, with your approval rules."
         width={520}
       >
         {editing !== null ? (
           <AutomationForm
-            key={typeof editing === "string" ? editing : editing.id}
-            initial={typeof editing === "string" ? null : editing}
+            key={editingKey(editing)}
+            initial={typeof editing === "string" || "template" in editing ? null : editing}
+            template={
+              typeof editing !== "string" && "template" in editing ? editing.template : null
+            }
             startWith={editing === "new-email" ? "gmail" : "schedule"}
             onCancel={() => setEditing(null)}
             onSaved={(a) => {
@@ -265,25 +280,27 @@ function AutomationCard({
 
 function AutomationForm({
   initial,
+  template,
   startWith,
   onCancel,
   onSaved,
   onDeleted,
 }: {
   initial: Automation | null;
+  /** Prefills a new automation from the gallery. */
+  template?: AutomationTemplate | null;
   startWith: AutomationTrigger["type"];
   onCancel: () => void;
   onSaved: (a: Automation) => void;
   onDeleted: (id: string) => void;
 }) {
   const toast = useToast();
-  const [name, setName] = useState(initial?.name ?? "");
-  const [prompt, setPrompt] = useState(initial?.prompt ?? "");
-  const [kind, setKind] = useState<AutomationTrigger["type"]>(initial?.trigger.type ?? startWith);
-  const [query, setQuery] = useState(
-    initial?.trigger.type === "gmail" ? initial.trigger.query : "",
-  );
-  const [schedule, setSchedule] = useState(initial?.schedule || SCHEDULE_PRESETS[0]!.cron);
+  const from = initial ?? template ?? null;
+  const [name, setName] = useState(from?.name ?? "");
+  const [prompt, setPrompt] = useState(from?.prompt ?? "");
+  const [kind, setKind] = useState<AutomationTrigger["type"]>(from?.trigger.type ?? startWith);
+  const [query, setQuery] = useState(from?.trigger.type === "gmail" ? from.trigger.query : "");
+  const [schedule, setSchedule] = useState(from?.schedule || SCHEDULE_PRESETS[0]!.cron);
   const [timezone, setTimezone] = useState(initial?.timezone ?? localTimezone());
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);
@@ -351,6 +368,11 @@ function AutomationForm({
 
   return (
     <form onSubmit={submit} className="space-y-5">
+      {template ? (
+        <p className="rounded-[10px] bg-sunken px-3.5 py-3 text-13 text-fg-muted">
+          {template.outcome} Change anything below before you create it.
+        </p>
+      ) : null}
       <Field label="Name" htmlFor="auto-name">
         <input
           id="auto-name"
@@ -531,47 +553,6 @@ function ScheduleStub({ cron, enabled }: { cron: string; enabled: boolean }) {
       <span className="mt-1.5 font-mono text-[10px] leading-tight tracking-[0.1em] text-fg-faint uppercase">
         {when}
       </span>
-    </div>
-  );
-}
-
-/** Empty-state art: two schedule tickets. */
-function SampleSchedule() {
-  const ticket = (at: string, when: string, name: string, line: string) => (
-    <div className="slip flex w-[270px] overflow-hidden">
-      <div className="flex w-[78px] shrink-0 flex-col items-center justify-center border-r border-dashed border-line-strong bg-sunken/60 py-3">
-        <span className="font-serif text-[24px] leading-none text-fg">{at}</span>
-        <span className="mt-1 font-mono text-[9px] tracking-[0.1em] text-fg-faint uppercase">
-          {when}
-        </span>
-      </div>
-      <div className="min-w-0 flex-1 px-3.5 py-3">
-        <p className="truncate font-serif text-[18px] leading-tight text-fg">{name}</p>
-        <p className="mt-0.5 truncate text-[11px] text-fg-muted">{line}</p>
-        <div className="mt-2 flex items-center gap-1.5">
-          <span className="relative h-3 w-5 rounded-full bg-accent">
-            <span className="absolute top-0.5 right-0.5 size-2 rounded-full bg-surface" />
-          </span>
-          <span className="font-mono text-[9px] tracking-[0.08em] text-fg-faint uppercase">
-            Next in 14h
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-  return (
-    <div className="relative h-[200px] w-[300px]">
-      <div className="absolute top-2 left-6 rotate-[4deg] opacity-70">
-        {ticket("17:00", "Fridays", "What shipped", "Summarise merged PRs and closed issues")}
-      </div>
-      <div className="absolute top-[78px] left-0 rotate-[-2deg]">
-        {ticket(
-          "8:00",
-          "Weekdays",
-          "Morning brief",
-          "Unread email, today's Linear, anything urgent",
-        )}
-      </div>
     </div>
   );
 }
@@ -855,5 +836,162 @@ function EventStub({ trigger, enabled }: { trigger: AutomationTrigger; enabled: 
         {trigger.type === "gmail" ? "On email" : "On webhook"}
       </span>
     </div>
+  );
+}
+
+// ---------- Gallery ----------
+
+const REQUIREMENT_NAMES: Record<TemplateRequirement, string> = {
+  google: "Google",
+  github: "GitHub",
+  linear: "Linear",
+};
+
+function triggerLabel(t: AutomationTemplate) {
+  if (t.trigger.type === "gmail") return "When email arrives";
+  if (t.trigger.type === "webhook") return "On a webhook";
+  return describeCron(t.schedule ?? "") ?? "On a schedule";
+}
+
+/**
+ * Ready-made automations, grouped by what they're for. "Use" opens the normal form,
+ * prefilled; ones that need something you haven't connected say what and link to it.
+ */
+function Gallery({ first, onUse }: { first: boolean; onUse: (t: AutomationTemplate) => void }) {
+  const data = useApi(() => api.automationTemplates());
+  const [category, setCategory] = useState<string | null>(null);
+  const templates = data.data?.templates;
+  const categories = data.data?.categories ?? [];
+  const shown = categories.filter((c) => category === null || c === category);
+
+  return (
+    <section className={first ? "" : "mt-14"} aria-labelledby="gallery-h">
+      <SectionTitle>
+        <span id="gallery-h">{first ? "Start with a template" : "More ideas"}</span>
+      </SectionTitle>
+      <p className="mb-5 max-w-[36rem] text-14 text-fg-muted">
+        Starting points you can edit before they run. They work as you, under your approval rules:
+        drafts are saved for you to review, and with the default rules nothing is sent, changed or
+        deleted until you approve it.
+      </p>
+      {data.error ? <ErrorNote>{errorMessage(data.error)}</ErrorNote> : null}
+      {!templates ? (
+        data.loading ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Skeleton className="h-40 rounded-card" />
+            <Skeleton className="h-40 rounded-card" />
+          </div>
+        ) : null
+      ) : (
+        <>
+          <fieldset aria-label="Category" className="mb-6 flex flex-wrap gap-1.5">
+            {[null, ...categories].map((c) => {
+              const on = category === c;
+              return (
+                <button
+                  key={c ?? "all"}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setCategory(c)}
+                  className={cx(
+                    "h-8 rounded-full border px-3 text-13 transition-colors duration-150",
+                    on
+                      ? "border-accent bg-accent-soft text-accent"
+                      : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+                  )}
+                >
+                  {c ?? "All"}
+                </button>
+              );
+            })}
+          </fieldset>
+          <div className="space-y-9">
+            {shown.map((c) => (
+              <div key={c}>
+                <h3 className="eyebrow mb-3">{c}</h3>
+                <ul className="grid gap-3 sm:grid-cols-2">
+                  {templates
+                    .filter((t) => t.category === c)
+                    .map((t) => (
+                      <li key={t.id} className="flex">
+                        <TemplateCard
+                          template={t}
+                          googleAvailable={data.data?.googleAvailable ?? false}
+                          onUse={() => onUse(t)}
+                        />
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function TemplateCard({
+  template: t,
+  googleAvailable,
+  onUse,
+}: {
+  template: AutomationTemplate;
+  googleAvailable: boolean;
+  onUse: () => void;
+}) {
+  const Icon = t.trigger.type === "gmail" ? Mail : t.trigger.type === "webhook" ? Webhook : Repeat;
+  const missing = t.missing[0];
+  const blocked = missing === "google" && !googleAvailable;
+  return (
+    <article className="flex w-full flex-col rounded-[16px] border border-line bg-surface p-4">
+      <p className="flex items-center gap-1.5 font-mono text-[10.5px] tracking-[0.1em] text-fg-faint uppercase">
+        <Icon className="size-3.5" />
+        {triggerLabel(t)}
+      </p>
+      <h4 className="mt-2.5 font-serif text-[21px] leading-[1.1] text-fg">{t.name}</h4>
+      <p className="mt-1 flex-1 text-13 text-fg-muted">{t.outcome}</p>
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        <span className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {t.requires.map((r) => {
+            const have = !t.missing.includes(r);
+            return (
+              <span
+                key={r}
+                className={cx(
+                  "inline-flex h-5 items-center gap-1 rounded-full px-2 text-12",
+                  have ? "bg-ok-soft text-ok" : "border border-line text-fg-muted",
+                )}
+                title={have ? "Connected" : "Not connected"}
+              >
+                {have ? <Check className="size-3" strokeWidth={2.5} /> : null}
+                {REQUIREMENT_NAMES[r]}
+              </span>
+            );
+          })}
+        </span>
+        {missing ? (
+          blocked ? (
+            <span className="text-12 text-fg-muted">Needs Google on this server</span>
+          ) : (
+            <Link
+              href={missing === "google" ? "/connections" : "/connections?add=1"}
+              className="btn btn-sm"
+            >
+              Connect {REQUIREMENT_NAMES[missing]}
+            </Link>
+          )
+        ) : null}
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={Boolean(missing)}
+          title={missing ? `Connect ${REQUIREMENT_NAMES[missing]} first` : undefined}
+          onClick={onUse}
+        >
+          Use
+        </button>
+      </div>
+    </article>
   );
 }
