@@ -120,6 +120,10 @@ export const userSettings = pgTable("user_settings", {
   undoSeconds: integer("undo_seconds").notNull().default(10),
   /** Email the account address when something needs approval (needs SMTP configured). */
   emailAlerts: boolean("email_alerts").notNull().default(false),
+  /** Re-notify once about an approval nobody decided after this many minutes. 0 disables. */
+  remindMinutes: integer("remind_minutes").notNull().default(30),
+  /** Deny an approval nobody decided after this many hours. 0: never expires. */
+  expireHours: integer("expire_hours").notNull().default(24),
   updatedAt: updatedAt(),
 });
 
@@ -144,6 +148,9 @@ export const policyRules = pgTable(
 
 export type WorkspaceRole = "owner" | "admin" | "member";
 
+/** Which effects need two distinct people to approve in a team workspace. */
+export type TwoPersonRule = "destructive" | "destructive_send";
+
 /**
  * A team. Its rules apply to every member on top of their own; tasks, connections and
  * memory stay personal.
@@ -152,6 +159,15 @@ export const workspaces = pgTable("workspaces", {
   id: id(),
   name: text("name").notNull(),
   createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  /**
+   * A member's approval nobody decided after this many minutes also goes to the team's
+   * owners and admins, who may then decide it. 0 disables.
+   */
+  escalateMinutes: integer("escalate_minutes").notNull().default(60),
+  /** Team-wide expiry for members' approvals, in hours, instead of each person's own. */
+  expireHours: integer("expire_hours"),
+  /** Two-person sign-off: these actions need two distinct approvers. Null: off. */
+  twoPerson: text("two_person").$type<TwoPersonRule>(),
   createdAt: createdAt(),
 });
 
@@ -323,6 +339,16 @@ export const toolCalls = pgTable(
     decidedVia: text("decided_via"),
     /** When notification channels were told this call needs a person. */
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    /** When the one reminder went out (claimed with a compare-and-set, like `notifiedAt`). */
+    remindedAt: timestamp("reminded_at", { withTimezone: true }),
+    /** When it was escalated to the requester's team admins, who may then decide it too. */
+    escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+    /** Denied as expired if nobody decides by then. Null: never. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /** Two-person sign-off: the first of two approvals (the second is `decidedBy`). */
+    firstApprovedBy: text("first_approved_by"),
+    firstApprovedAt: timestamp("first_approved_at", { withTimezone: true }),
+    firstApprovedVia: text("first_approved_via"),
     /** Undo window: an approved call does not run before this time. */
     executeAfter: timestamp("execute_after", { withTimezone: true }),
     output: jsonb("output").$type<ToolOutput>(),

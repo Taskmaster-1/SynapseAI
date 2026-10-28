@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import nodemailer from "nodemailer";
 import { log } from "../log";
 import type { Services } from "../services";
+import { detailLines, TITLE } from "./text";
 import type { NotificationChannel, PendingApproval } from "./types";
 
 export interface MailMessage {
@@ -59,14 +60,21 @@ export class EmailChannel implements NotificationChannel {
 
 export function render(items: PendingApproval[]): Pick<MailMessage, "subject" | "text" | "html"> {
   const first = items[0]!;
+  const title = TITLE[first.kind];
   const subject =
     items.length === 1
-      ? `Synapse needs your OK: ${oneLine(first.preview ?? first.name, 80)}`
-      : `Synapse needs your OK on ${items.length} actions`;
+      ? `${title}: ${oneLine(first.preview ?? first.name, 80)}`
+      : `${title} on ${items.length} actions`;
   const intro =
-    items.length === 1
-      ? "A task is waiting for you before it acts."
-      : `${items.length} actions are waiting for you before they run.`;
+    first.kind === "reminder"
+      ? "Still waiting for you: nobody has decided this yet."
+      : first.kind === "escalated"
+        ? "Nobody decided this in time, so it was escalated to your team's admins. You can decide it now."
+        : first.kind === "second"
+          ? "This needs two people to approve it. One has; it needs another."
+          : items.length === 1
+            ? "A task is waiting for you before it acts."
+            : `${items.length} actions are waiting for you before they run.`;
   const footer =
     "Open the task to approve, edit or deny. For your safety this email has no approve " +
     "buttons: mail scanners open links, and an approval should always be yours.";
@@ -79,6 +87,7 @@ export function render(items: PendingApproval[]): Pick<MailMessage, "subject" | 
       `  Action: ${a.name} (${a.effect})`,
       ...(a.chatTitle ? [`  Task: ${a.chatTitle}`] : []),
       `  Why it's asking: ${why(a)}`,
+      ...detailLines(a).map((l) => `  ${l}`),
       `  Open: ${a.url}`,
       "",
     ]),
@@ -94,6 +103,9 @@ ${items
 <p style="margin:0 0 6px;font-weight:600">${esc(a.preview ?? a.name)}</p>
 <p style="margin:0;color:#5f5a4f;font-size:13px">${esc(a.name)} · ${esc(a.effect)}${a.chatTitle ? ` · ${esc(a.chatTitle)}` : ""}</p>
 <p style="margin:6px 0 10px;color:#5f5a4f;font-size:13px">Why it's asking: ${esc(why(a))}</p>
+${detailLines(a)
+  .map((l) => `<p style="margin:0 0 10px;color:#9a5b12;font-size:13px">${esc(l)}</p>`)
+  .join("\n")}
 <a href="${esc(a.url)}" style="color:#3b48cc">Open the task</a>
 </div>`,
   )

@@ -1,6 +1,7 @@
 import { type Effect, type PlanGrant, UNDO_DENIAL } from "@synapse/core";
 import type { JSONValue } from "ai";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { approvalsNeeded } from "./approvals";
 import type { Db } from "./client";
 import {
   chats,
@@ -10,6 +11,7 @@ import {
   toolCalls,
   userSettings,
   workspaceMembers,
+  workspaces,
 } from "./schema";
 
 export class NotFoundError extends Error {}
@@ -220,6 +222,11 @@ export interface ToolCallDecision {
 export interface DecisionOutcome {
   /** End of the undo window each approval opened, by tool call id (only calls that wait). */
   executeAfter: Record<string, Date>;
+  /**
+   * Two-person sign-off: approvals recorded as the first of two. These calls stay awaiting
+   * until a second, different person approves (or anyone denies).
+   */
+  partial: string[];
   /** The run was re-queued (no approvals left)... */
   requeued: boolean;
   /** ...and no worker may take it before this time (null: now). */
@@ -231,12 +238,17 @@ export interface DecisionOutcome {
 /** The person may not decide this (e.g. a team rule says an admin must). */
 export class ForbiddenError extends Error {}
 
+/** Two-person sign-off: this person already approved; the other approval must be someone else's. */
+export class AlreadyApprovedError extends ConflictError {}
+
 /**
  * Who may decide which call. The requester decides their own calls, except those a team
  * rule reserves for an admin (`approver = 'admin'`): only an owner or admin of the
  * requester's current workspace may decide those, which includes a requester who is an
- * admin themselves. If the requester has since left the workspace, its rules no longer
- * govern them and they decide it themselves. Anyone else gets "not found", as before.
+ * admin themselves. Team owners and admins may also decide a member's call once it was
+ * escalated to them (nobody decided in time) or when the team's two-person rule needs a
+ * second approver for it. If the requester has since left the workspace, its rules no
+ * longer govern them and they decide it themselves. Anyone else gets "not found".
  */
 export async function assertMayDecide(
   tx: Db,
@@ -246,19 +258,24 @@ export async function assertMayDecide(
   const ids = args.decisions.map((d) => d.toolCallId);
   const calls = ids.length
     ? await tx
-        .select({ id: toolCalls.id, approver: toolCalls.approver })
+        .select({
+          id: toolCalls.id,
+          approver: toolCalls.approver,
+          effect: toolCalls.effect,
+          escalatedAt: toolCalls.escalatedAt,
+        })
         .from(toolCalls)
         .where(and(eq(toolCalls.runId, run.id), inArray(toolCalls.id, ids)))
     : [];
   const own = run.userId === args.userId;
   const needsAdmin = calls.some((c) => c.approver === "admin");
-  if (!own && !needsAdmin) throw new NotFoundError("run not found");
-  if (!needsAdmin) return;
+  if (own && !needsAdmin) return;
 
   const [requester, decider] = await Promise.all([
     tx
-      .select({ workspaceId: workspaceMembers.workspaceId })
+      .select({ workspaceId: workspaceMembers.workspaceId, twoPerson: workspaces.twoPerson })
       .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
       .where(eq(workspaceMembers.userId, run.userId)),
     tx
       .select({ workspaceId: workspaceMembers.workspaceId, role: workspaceMembers.role })
@@ -272,9 +289,13 @@ export async function assertMayDecide(
     (decider[0].role === "owner" || decider[0].role === "admin");
 
   if (!own) {
+    // An admin decides only what the team put in front of admins, never a member's own.
+    const forAdmins = (c: (typeof calls)[number]) =>
+      c.approver === "admin" ||
+      c.escalatedAt !== null ||
+      approvalsNeeded(c.effect, requester[0]?.twoPerson) === 2;
     if (!deciderIsAdmin) throw new NotFoundError("run not found");
-    // An admin decides only the calls reserved for an admin, never the member's own.
-    if (calls.length !== ids.length || calls.some((c) => c.approver !== "admin"))
+    if (calls.length !== ids.length || !calls.every(forAdmins))
       throw new NotFoundError("action not found");
     return;
   }
@@ -301,11 +322,33 @@ export async function decideToolCall(
   };
 }
 
+/** Same JSON, whatever the key order. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const canon = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canon)
+      : v && typeof v === "object"
+        ? Object.fromEntries(
+            Object.keys(v as object)
+              .sort()
+              .map((k) => [k, canon((v as Record<string, unknown>)[k])]),
+          )
+        : v;
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+
 /**
  * Decides several awaiting calls of one run at once, all or nothing: if any call is not
  * awaiting approval (already decided, someone else's, unknown), nothing changes and a
  * ConflictError is thrown. Each approved send or destructive call opens its undo window.
  * The run is re-queued once, when none remain awaiting.
+ *
+ * Two-person sign-off (a team rule for destructive actions, optionally sends): the first
+ * approval is recorded (`first_approved_by`) and the call stays awaiting; a second,
+ * different person's approval completes it, and only then does the undo window start. Any
+ * deny ends it. An approval with edited input stores the edit and counts as the editor's
+ * approval only: an earlier approval of the old input is set aside, so both approvals
+ * always cover exactly the input that runs.
  */
 export async function decideToolCalls(
   db: Db,
@@ -326,21 +369,69 @@ export async function decideToolCalls(
     if (!run) throw new NotFoundError("run not found");
     await assertMayDecide(tx as unknown as Db, run, args);
 
-    // The requester's undo window applies, whoever approves.
-    const [settings] = await tx
-      .select({ undoSeconds: userSettings.undoSeconds })
-      .from(userSettings)
-      .where(eq(userSettings.userId, run.userId));
+    // The requester's undo window applies, whoever approves; their team's two-person rule too.
+    const [[settings], [team]] = await Promise.all([
+      tx
+        .select({ undoSeconds: userSettings.undoSeconds })
+        .from(userSettings)
+        .where(eq(userSettings.userId, run.userId)),
+      tx
+        .select({ twoPerson: workspaces.twoPerson })
+        .from(workspaceMembers)
+        .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+        .where(eq(workspaceMembers.userId, run.userId)),
+    ]);
 
+    const now = new Date();
+    const via = args.via ?? "web";
     const executeAfter: Record<string, Date> = {};
+    const partial: string[] = [];
     for (const d of args.decisions) {
+      const where = and(
+        eq(toolCalls.runId, run.id),
+        eq(toolCalls.id, d.toolCallId),
+        eq(toolCalls.userId, run.userId),
+        eq(toolCalls.status, "awaiting_approval"),
+      );
+      const [call] = await tx
+        .select({
+          effect: toolCalls.effect,
+          input: toolCalls.input,
+          firstApprovedBy: toolCalls.firstApprovedBy,
+        })
+        .from(toolCalls)
+        .where(where);
+      if (!call) throw new ConflictError("this action is no longer awaiting approval");
+
+      if (d.approved && approvalsNeeded(call.effect, team?.twoPerson) === 2) {
+        const edited = d.editedInput !== undefined && !sameJson(d.editedInput, call.input);
+        if (call.firstApprovedBy === args.userId && !edited)
+          throw new AlreadyApprovedError(
+            "You already approved this. It needs a second person to approve it too.",
+          );
+        if (!call.firstApprovedBy || edited) {
+          // First of two (or an edit, which restarts the count with the editor's approval).
+          await tx
+            .update(toolCalls)
+            .set({
+              firstApprovedBy: args.userId,
+              firstApprovedAt: now,
+              firstApprovedVia: via,
+              ...(edited ? { input: d.editedInput, inputEdited: true } : {}),
+            })
+            .where(where);
+          partial.push(d.toolCallId);
+          continue;
+        }
+      }
+
       const updated = await tx
         .update(toolCalls)
         .set({
           status: d.approved ? "approved" : "denied",
           decidedBy: args.userId,
-          decidedAt: new Date(),
-          decidedVia: args.via ?? "web",
+          decidedAt: now,
+          decidedVia: via,
           ...(d.approved && d.editedInput !== undefined
             ? { input: d.editedInput, inputEdited: true }
             : {}),
@@ -355,14 +446,7 @@ export async function decideToolCalls(
                 },
               }),
         })
-        .where(
-          and(
-            eq(toolCalls.runId, run.id),
-            eq(toolCalls.id, d.toolCallId),
-            eq(toolCalls.userId, run.userId),
-            eq(toolCalls.status, "awaiting_approval"),
-          ),
-        )
+        .where(where)
         .returning({ id: toolCalls.id, effect: toolCalls.effect });
       if (updated.length === 0)
         throw new ConflictError("this action is no longer awaiting approval");
@@ -383,9 +467,9 @@ export async function decideToolCalls(
         .update(runs)
         .set({ status: "queued", leaseExpiresAt: at })
         .where(eq(runs.id, run.id));
-      return { executeAfter, requeued: true, runnableAt: at, ownerId: run.userId };
+      return { executeAfter, partial, requeued: true, runnableAt: at, ownerId: run.userId };
     }
-    return { executeAfter, requeued: false, runnableAt: null, ownerId: run.userId };
+    return { executeAfter, partial, requeued: false, runnableAt: null, ownerId: run.userId };
   });
 }
 

@@ -231,7 +231,7 @@ describe("configured: push and email", () => {
     expect(sent.ttlSeconds).toBeGreaterThan(0);
     expect(sent.message).toEqual({
       title: "Synapse needs your OK",
-      body: "Remember: likes tea",
+      body: "Remember: likes tea\nExpires in 24 h",
       tag: "p1",
       data: { url: `${ORIGIN}/t/${chatId}`, runId, toolCallId: "p1", effect: "write" },
       actions: [
@@ -341,6 +341,11 @@ describe("configured: push and email", () => {
         input: {},
         reason: null,
         tainted: false,
+        kind: "new",
+        facts: [],
+        expiresAt: null,
+        escalated: false,
+        signoffs: { needed: 1, first: null },
         createdAt: new Date(),
         url: `${ORIGIN}/t/c`,
       },

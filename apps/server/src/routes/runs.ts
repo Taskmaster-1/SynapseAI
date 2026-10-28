@@ -1,8 +1,10 @@
 import { readEvents, requestCancel, schema } from "@synapse/db";
 import { and, asc, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { listApprovals } from "../approval-list";
 import { type Decision, DecisionInputError, decide, undo } from "../decisions";
 import { type AppEnv, apiError, body } from "../http";
 
@@ -39,6 +41,8 @@ export const runs = new Hono<AppEnv>()
   .get("/:id", async (c) => {
     const { db } = c.var.services.database;
     const run = await ownRun(c, c.req.param("id"));
+    const decider = alias(schema.user, "decider");
+    const first = alias(schema.user, "first_approver");
     const toolCalls = await db
       .select({
         id: schema.toolCalls.id,
@@ -53,10 +57,21 @@ export const runs = new Hono<AppEnv>()
         decidedBy: schema.toolCalls.decidedBy,
         approver: schema.toolCalls.approver,
         decidedAt: schema.toolCalls.decidedAt,
+        decidedVia: schema.toolCalls.decidedVia,
+        decidedByName: decider.name,
+        // Two-person sign-off: the first of the two approvals.
+        firstApprovedBy: schema.toolCalls.firstApprovedBy,
+        firstApprovedByName: first.name,
+        firstApprovedAt: schema.toolCalls.firstApprovedAt,
+        remindedAt: schema.toolCalls.remindedAt,
+        escalatedAt: schema.toolCalls.escalatedAt,
+        expiresAt: schema.toolCalls.expiresAt,
         executeAfter: schema.toolCalls.executeAfter,
         createdAt: schema.toolCalls.createdAt,
       })
       .from(schema.toolCalls)
+      .leftJoin(decider, eq(decider.id, schema.toolCalls.decidedBy))
+      .leftJoin(first, eq(first.id, schema.toolCalls.firstApprovedBy))
       .where(eq(schema.toolCalls.runId, run.id))
       .orderBy(asc(schema.toolCalls.createdAt));
     const { leaseOwner: _l, leaseExpiresAt: _e, ...publicRun } = run;
@@ -147,8 +162,12 @@ export const runs = new Hono<AppEnv>()
     );
     const toolCallId = c.req.param("toolCallId");
     const { via, ...decision } = input;
-    const { executeAfter } = await decided(c, [{ toolCallId, ...decision }], via);
-    return c.json({ executeAfter: executeAfter[toolCallId] ?? null });
+    const { executeAfter, partial } = await decided(c, [{ toolCallId, ...decision }], via);
+    // `partial`: the first of two approvals is in; it waits for a second person.
+    return c.json({
+      executeAfter: executeAfter[toolCallId] ?? null,
+      partial: partial.includes(toolCallId),
+    });
   })
 
   .post("/:id/tool-calls/:toolCallId/undo", async (c) => {
@@ -193,31 +212,10 @@ export const runs = new Hono<AppEnv>()
   });
 
 export const approvals = new Hono<AppEnv>().get("/", async (c) => {
-  const rows = await c.var.services.database.db
-    .select({
-      runId: schema.toolCalls.runId,
-      chatId: schema.runs.chatId,
-      chatTitle: schema.chats.title,
-      toolCallId: schema.toolCalls.id,
-      name: schema.toolCalls.name,
-      effect: schema.toolCalls.effect,
-      input: schema.toolCalls.input,
-      reason: schema.toolCalls.decisionReason,
-      preview: schema.toolCalls.preview,
-      /** "admin": the person's team requires an admin to decide; they only wait. */
-      approver: schema.toolCalls.approver,
-      createdAt: schema.toolCalls.createdAt,
-    })
-    .from(schema.toolCalls)
-    .innerJoin(schema.runs, eq(schema.runs.id, schema.toolCalls.runId))
-    .innerJoin(schema.chats, eq(schema.chats.id, schema.runs.chatId))
-    .where(
-      and(
-        eq(schema.toolCalls.userId, c.var.user.id),
-        eq(schema.toolCalls.status, "awaiting_approval"),
-      ),
-    )
-    .orderBy(desc(schema.toolCalls.createdAt));
+  const rows = await listApprovals(
+    c.var.services.database.db,
+    eq(schema.toolCalls.userId, c.var.user.id),
+  );
   return c.json({ approvals: rows });
 });
 

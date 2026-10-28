@@ -1,13 +1,25 @@
-import { membershipOf, schema, workspaceAdminIds } from "@synapse/db";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { orgDomain, riskFacts } from "@synapse/core";
+import {
+  approvalsNeeded,
+  approvalTiming,
+  claimAnnouncement,
+  type DueCall,
+  membershipOf,
+  schema,
+  workspaceAdminIds,
+} from "@synapse/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { log } from "../log";
 import type { Services } from "../services";
-import type { NotificationChannel, PendingApproval, ResolvedApproval } from "./types";
+import type { NoticeKind, NotificationChannel, PendingApproval, ResolvedApproval } from "./types";
 
 /**
- * Tells people about new approvals through every registered channel. Each awaiting call is
- * announced once: `notified_at` is claimed with a compare-and-set, so several workers
- * finishing steps of the same run never double-notify.
+ * Tells people about approvals through every registered channel: when they start waiting,
+ * once more as a reminder, when they escalate to team admins, and when a two-person
+ * sign-off needs its second approver. Each of those is claimed with a compare-and-set on its
+ * own timestamp (`notified_at`, `reminded_at`, `escalated_at`) or happens inside the single
+ * decision that caused it, so several workers never double-notify.
  */
 export class Notifier {
   private readonly channels: NotificationChannel[] = [];
@@ -22,26 +34,54 @@ export class Notifier {
     return this.channels.map((c) => c.name);
   }
 
-  /** Announces the run's awaiting calls that haven't been announced yet. */
+  /** Announces the run's awaiting calls that haven't been announced yet, and sets their expiry. */
   async announce(runId: string): Promise<PendingApproval[]> {
+    const claimed = await claimAnnouncement(this.services().database.db, runId);
+    return this.deliver(runId, claimed, "new");
+  }
+
+  /** The one reminder for calls nobody decided (already claimed by the sweeper). */
+  async remind(calls: DueCall[]): Promise<PendingApproval[]> {
+    return this.byRun(calls, "reminder");
+  }
+
+  /** Calls escalated to the requester's team admins (already claimed by the sweeper). */
+  async escalate(calls: DueCall[]): Promise<PendingApproval[]> {
+    return this.byRun(calls, "escalated");
+  }
+
+  /** Two-person sign-off: one person approved; ask the others who may give the second. */
+  async askSecond(runId: string, toolCallIds: string[]): Promise<PendingApproval[]> {
+    return this.deliver(runId, toolCallIds, "second");
+  }
+
+  async resolved(decided: ResolvedApproval[]) {
+    if (decided.length === 0) return;
+    await this.each("resolved", (c) => c.resolved?.(decided));
+  }
+
+  private async byRun(calls: DueCall[], kind: NoticeKind) {
+    const runs = new Map<string, string[]>();
+    for (const c of calls) runs.set(c.runId, [...(runs.get(c.runId) ?? []), c.toolCallId]);
+    const out: PendingApproval[] = [];
+    for (const [runId, ids] of runs) out.push(...(await this.deliver(runId, ids, kind)));
+    return out;
+  }
+
+  /** Loads the calls, works out who should hear about them, and hands them to the channels. */
+  private async deliver(
+    runId: string,
+    toolCallIds: string[],
+    kind: NoticeKind,
+  ): Promise<PendingApproval[]> {
+    if (toolCallIds.length === 0) return [];
     const { database, config } = this.services();
     const { db } = database;
-    const claimed = await db
-      .update(schema.toolCalls)
-      .set({ notifiedAt: new Date() })
-      .where(
-        and(
-          eq(schema.toolCalls.runId, runId),
-          eq(schema.toolCalls.status, "awaiting_approval"),
-          isNull(schema.toolCalls.notifiedAt),
-        ),
-      )
-      .returning({ id: schema.toolCalls.id });
-    if (claimed.length === 0) return [];
-
+    const first = alias(schema.user, "first_approver");
     const rows = await db
       .select({
         userId: schema.toolCalls.userId,
+        email: schema.user.email,
         runId: schema.toolCalls.runId,
         chatId: schema.runs.chatId,
         chatTitle: schema.chats.title,
@@ -53,47 +93,84 @@ export class Notifier {
         reason: schema.toolCalls.decisionReason,
         tainted: schema.runs.tainted,
         approver: schema.toolCalls.approver,
+        escalatedAt: schema.toolCalls.escalatedAt,
+        expiresAt: schema.toolCalls.expiresAt,
+        firstId: schema.toolCalls.firstApprovedBy,
+        firstName: first.name,
         createdAt: schema.toolCalls.createdAt,
       })
       .from(schema.toolCalls)
       .innerJoin(schema.runs, eq(schema.runs.id, schema.toolCalls.runId))
       .innerJoin(schema.chats, eq(schema.chats.id, schema.runs.chatId))
+      .innerJoin(schema.user, eq(schema.user.id, schema.toolCalls.userId))
+      .leftJoin(first, eq(first.id, schema.toolCalls.firstApprovedBy))
       .where(
         and(
           eq(schema.toolCalls.runId, runId),
-          inArray(
-            schema.toolCalls.id,
-            claimed.map((c) => c.id),
-          ),
+          inArray(schema.toolCalls.id, toolCallIds),
+          eq(schema.toolCalls.status, "awaiting_approval"),
         ),
       );
-    // Team workspaces: a call a team rule reserves for an admin goes to the requester's
-    // workspace owners and admins (the requester too, if they are one), not to the
-    // requester. Everything else goes to the requester. Admins open it from their inbox.
-    // If the requester has left the team since, its rules no longer govern them: theirs again.
-    const recipientsFor = async (userId: string, approver: "admin" | null): Promise<string[]> => {
-      if (approver !== "admin") return [userId];
-      const membership = await membershipOf(db, userId);
-      return membership ? workspaceAdminIds(db, membership.workspaceId) : [userId];
-    };
-    const approvals: PendingApproval[] = await Promise.all(
-      rows.map(async ({ approver, ...r }) => ({
-        ...r,
-        recipients: await recipientsFor(r.userId, approver),
-        // Admins can't open a member's task (tasks stay personal); they decide in the inbox.
-        url:
-          approver === "admin"
-            ? `${config.PUBLIC_URL}/inbox`
-            : `${config.PUBLIC_URL}/t/${r.chatId}`,
-      })),
-    );
-    await this.each("notify", (c) => c.notify(approvals));
-    return approvals;
-  }
+    if (rows.length === 0) return [];
 
-  async resolved(decided: ResolvedApproval[]) {
-    if (decided.length === 0) return;
-    await this.each("resolved", (c) => c.resolved?.(decided));
+    // All calls of a run belong to one person: their team decides who else may sign.
+    const owner = rows[0]!.userId;
+    const [membership, timing] = await Promise.all([
+      membershipOf(db, owner),
+      approvalTiming(db, owner),
+    ]);
+    const admins = membership ? await workspaceAdminIds(db, membership.workspaceId) : [];
+
+    const approvals: PendingApproval[] = [];
+    for (const { approver, escalatedAt, firstId, firstName, email, ...r } of rows) {
+      const needed = approvalsNeeded(r.effect, timing.twoPerson);
+      const escalated = escalatedAt !== null;
+      // Team workspaces: a call a team rule reserves for an admin goes to the requester's
+      // workspace owners and admins (the requester too, if they are one). Escalated calls
+      // and two-person sign-offs may be decided by admins as well as the requester. If the
+      // requester has left the team since, its rules no longer govern them: theirs again.
+      const deciders =
+        approver === "admin"
+          ? membership
+            ? admins
+            : [r.userId]
+          : membership && (escalated || needed === 2)
+            ? [r.userId, ...admins]
+            : [r.userId];
+      const who =
+        kind === "new"
+          ? approver === "admin"
+            ? deciders
+            : [r.userId]
+          : kind === "escalated"
+            ? admins.filter((id) => id !== r.userId)
+            : deciders;
+      const recipients = [...new Set(who)].filter((id) => id !== firstId);
+      if (recipients.length === 0) continue;
+      approvals.push({
+        ...r,
+        kind,
+        recipients,
+        facts: riskFacts({
+          name: r.name,
+          effect: r.effect,
+          input: r.input,
+          tainted: r.tainted,
+          domain: orgDomain(email),
+        }),
+        escalated,
+        signoffs: {
+          needed,
+          first: firstId ? { id: firstId, name: firstName ?? "Someone" } : null,
+        },
+        // Admins can't open a member's task (tasks stay personal); they decide in the inbox.
+        url: recipients.every((id) => id === r.userId)
+          ? `${config.PUBLIC_URL}/t/${r.chatId}`
+          : `${config.PUBLIC_URL}/inbox?id=${encodeURIComponent(r.toolCallId)}`,
+      });
+    }
+    if (approvals.length) await this.each("notify", (c) => c.notify(approvals));
+    return approvals;
   }
 
   private async each(what: string, fn: (c: NotificationChannel) => Promise<void> | undefined) {

@@ -1,5 +1,13 @@
 import { unsafePatternReason } from "@synapse/core";
-import { DEFAULT_UNDO_SECONDS, MAX_UNDO_SECONDS, schema } from "@synapse/db";
+import {
+  DEFAULT_EXPIRE_HOURS,
+  DEFAULT_REMIND_MINUTES,
+  DEFAULT_UNDO_SECONDS,
+  MAX_EXPIRE_HOURS,
+  MAX_REMIND_MINUTES,
+  MAX_UNDO_SECONDS,
+  schema,
+} from "@synapse/db";
 import { ingestDocument, searchKnowledge } from "@synapse/tools";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -246,6 +254,8 @@ export const settings = new Hono<AppEnv>()
           .optional(),
         undoSeconds: z.number().int().min(0).max(MAX_UNDO_SECONDS).optional(),
         emailAlerts: z.boolean().optional(),
+        remindMinutes: z.number().int().min(0).max(MAX_REMIND_MINUTES).optional(),
+        expireHours: z.number().int().min(0).max(MAX_EXPIRE_HOURS).optional(),
       }),
     );
     const { db } = c.var.services.database;
@@ -265,6 +275,8 @@ export const settings = new Hono<AppEnv>()
       ...(input.budgets ? { budgets: input.budgets } : {}),
       ...(input.undoSeconds !== undefined ? { undoSeconds: input.undoSeconds } : {}),
       ...(input.emailAlerts !== undefined ? { emailAlerts: input.emailAlerts } : {}),
+      ...(input.remindMinutes !== undefined ? { remindMinutes: input.remindMinutes } : {}),
+      ...(input.expireHours !== undefined ? { expireHours: input.expireHours } : {}),
       providerKeys: keys,
     };
     await db
@@ -290,6 +302,8 @@ async function loadSettings(c: { var: AppEnv["Variables"] }) {
     providerKeys: Object.fromEntries(PROVIDERS.map((p) => [p, Boolean(s?.providerKeys?.[p])])),
     undoSeconds: s?.undoSeconds ?? DEFAULT_UNDO_SECONDS,
     emailAlerts: s?.emailAlerts ?? false,
+    remindMinutes: s?.remindMinutes ?? DEFAULT_REMIND_MINUTES,
+    expireHours: s?.expireHours ?? DEFAULT_EXPIRE_HOURS,
   };
 }
 
