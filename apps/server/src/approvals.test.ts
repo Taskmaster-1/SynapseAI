@@ -412,6 +412,7 @@ describe("two-person sign-off", () => {
     // The requester can't be both approvers.
     const again = await decide(member, runId, "s1", { approved: true });
     expect(again.status).toBe(409);
+    expect(again.json.error).toMatchObject({ code: "already_approved" });
     expect(again.json.error.message).toContain("second person");
 
     // Admins see it in the team inbox with the first approval.
