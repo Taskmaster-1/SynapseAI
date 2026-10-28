@@ -15,7 +15,7 @@ Agent products that act in your tools share three problems: approvals that live 
 | | |
 |---|---|
 | **Policy in code** | Every tool declares an effect — `read`, `write`, `send`, `destructive`. A rule engine decides allow / ask / block per tool and per argument (e.g. *"email to @mycompany.com: allow; anyone else: ask"*). The model never sees or edits the policy. |
-| **Taint tracking (Rule of Two)** | When a run reads untrusted content — an email body, a web page, an MCP result — it is marked tainted, and from then on no write or send is auto-approved, whatever the rules say. Prompt injection can still mislead the model, but it can't act without you. |
+| **Taint tracking (Rule of Two)** | When a run reads untrusted content — an email body, a web page, an MCP result — it is marked tainted, and from then on no write or send is auto-approved, whatever the rules say. And a read never widens the write: a recipient, site or channel that first showed up in that content is named on the approval card, and no plan or learned rule can wave it through. Prompt injection can still mislead the model, but it can't act without you. |
 | **Approvals you can edit** | Approval cards show the full payload. Edit the email before it goes, deny with a reason the agent sees, or approve from the inbox later — paused runs live in Postgres, not in a process. |
 | **Durable runs** | Runs are leased to workers and checkpointed at every step. Restart a server mid-run and another worker picks it up; side-effecting calls interrupted mid-flight are reported as *unknown*, never silently retried. |
 | **Works when you're not looking** | Automations fire on a schedule, on new email, or on a webhook from GitHub, Linear, Stripe or anything else. Each event becomes its own task, starts tainted, and lands in your inbox only when it needs a signature. |
@@ -30,13 +30,14 @@ Agent products that act in your tools share three problems: approvals that live 
 - Automations triggered by a cron schedule, new Gmail messages matching a search, or a secret webhook URL
 - MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
 - Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
-- Approve a plan, not every step: the agent proposes the exact actions it will take, you untick what you don't want, and the kept actions run without asking again (even after the task read outside content, because you saw each one)
+- Approve a plan, not every step: the agent proposes the exact actions it will take, you untick what you don't want, and the kept actions run without asking again (even after the task read outside content, because you saw each one, unless a step names a recipient that first appeared in that content)
 - Several pending actions from one step can be ticked and signed off together
 - Approvals that learn: after you approve the same kind of action unchanged a few times, Synapse offers a visible, removable rule ("emails where every address is @acme.com"). Tasks that read outside content still ask
 - Approve from your phone: install Synapse as an app and get push notifications with Approve and Deny buttons (the undo window still applies), or opt in to email alerts ([setup](docs/notifications.md))
 - Approve from Slack: approvals arrive as a DM with Approve and Deny buttons, and the message updates wherever you decide ([setup](docs/slack.md))
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
+- Skills in the open Agent Skills format: six built in (inbox triage, meeting prep, follow-ups, weekly calendar review, polite declines, status updates), plus your own, written on the Skills page, imported as a `SKILL.md`, or saved from a chat. The agent sees one line per skill and loads the rest only when a task needs it; every use is recorded with the skill's version. Skills are instructions, never permissions ([how they work](docs/skills.md))
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
@@ -109,7 +110,7 @@ Defaults: `read` → allow, `write`/`send`/`destructive` → ask. Rules are eval
 ]
 ```
 
-Taint overrides `allow` for anything but reads. In a [team workspace](docs/teams.md), the team's rules are evaluated alongside yours and the strictest answer wins. MCP tools inherit effects from their annotations (`readOnlyHint`, `destructiveHint`); tools that declare nothing are treated as destructive until you say otherwise on the Connections page.
+Taint overrides `allow` for anything but reads. On top of that, **a read never widens the write**: in a tainted task, a send, a delete, or a write to a named destination (`to`, `channel`, `repo`, a URL…) whose recipient, site or destination never appeared in your own messages, your instructions and memory, or what the task did before it read outside content, asks with a reason that names it — *"New recipient attacker@evil.example appeared only after reading outside content."* A plan grant or a learned rule can't stand in for that approval; block rules still win. In a [team workspace](docs/teams.md), the team's rules are evaluated alongside yours and the strictest answer wins. MCP tools inherit effects from their annotations (`readOnlyHint`, `destructiveHint`); tools that declare nothing are treated as destructive until you say otherwise on the Connections page.
 
 ## Evals
 

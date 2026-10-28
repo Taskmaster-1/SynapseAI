@@ -1,5 +1,6 @@
 import type { JSONValue } from "ai";
-import { type ArgMatcher, emailsIn, getPath, globMatch, type PolicyRule } from "./policy";
+import { type ArgMatcher, getPath, globMatch, type PolicyRule } from "./policy";
+import { emailsIn } from "./targets";
 import type { Effect } from "./types";
 
 /**

@@ -1,4 +1,4 @@
-import { type ModelSpec, nextUndoWaitMs, runAgent } from "@synapse/core";
+import { type ModelSpec, nextUndoWaitMs, runAgent, skillsPromptBlock } from "@synapse/core";
 import {
   claimRun,
   continuePendingInputs,
@@ -230,6 +230,7 @@ export class Worker {
         memory: await loadMemoryBlock(db, run.userId),
         writingStyle: await loadWritingStyle(db, run.userId),
         connections: conns.map((c) => c.name),
+        skills: skillsPromptBlock(toolset.skills),
       });
 
       const summary = this.modelOverride

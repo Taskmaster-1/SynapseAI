@@ -56,7 +56,9 @@ Every tool declares an effect. The policy engine (`packages/core/src/policy.ts`)
 
 1. any matching `block` rule wins;
 2. otherwise the first matching rule, else the tool's own default, else the effect default;
-3. if the run is **tainted** and the result is `allow` for a non-read effect, it becomes `ask`.
+3. if the run is **tainted** and the result is `allow` for a non-read effect, it becomes `ask`;
+4. if the run is tainted and the call names a destination that only showed up after the
+   taint, it asks with a reason that names it, and no plan grant can cover it (below).
 
 A run becomes tainted the first time a tool with `untrustedOutput` returns: web search
 and fetch, knowledge search, every MCP tool. This is a pragmatic form of the "Rule of Two":
@@ -70,6 +72,22 @@ SHA-256 of the canonical, key-sorted input JSON). A later call whose tool and in
 match an unused grant is allowed with "Part of the plan you approved", even in a tainted
 run, because the person signed off on that exact payload. Each grant is used once, block
 rules still win, and anything that differs goes through normal policy.
+
+**A read never widens the write** (`packages/core/src/targets.ts`). Taint says *that* outside
+content was read; this says *what it may have changed*. Before judging the calls of a step
+in a tainted run, the runtime walks the chat's stored history once and collects the
+destinations already in play: everything in the user's own messages (wherever they sit),
+the system prompt (instructions, memory, the skills listing), and every assistant message
+and trusted tool result up to the first successful result of an untrusted tool. User rows
+that quote third-party content (an event trigger's email or webhook payload, marked
+`messages.untrusted`) taint instead; handover summaries never count. Each call's
+destinations are then extracted: for sends and destructive calls every email address
+anywhere in the input, and for any non-read call the values of destination fields (`to`,
+`cc`, `channel`, `repo`, `owner`, `*_url`, `webhook`…), as recipients, sites (URL hosts) or
+plain destinations. Any the trusted set never named are passed to the policy as
+`newTargets`: the call asks with "New recipient … appeared only after reading outside
+content", `planGrantMaySatisfy` refuses it, block rules still win, and an admin who must
+decide sees the reason after the team's.
 
 ## Streaming
 

@@ -219,6 +219,11 @@ waiting: `{ title, body, tag: toolCallId, data: { url, runId, toolCallId, effect
 several at once for one person become one summary without buttons. Email alerts are a user
 setting (`emailAlerts` in `/api/settings`).
 
+## Skills
+
+Built-in and your own skills, in the Agent Skills format. Endpoints, limits and how runs
+use them: [skills.md](skills.md#api).
+
 ## Automations
 
 Prompts that run when their trigger fires. Anything that needs approval waits in the

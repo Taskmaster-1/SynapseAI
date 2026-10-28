@@ -5,6 +5,7 @@ import type {
   PlanGrant,
   PolicyDefaults,
   RunStatus,
+  SkillUse,
   ToolCallStatus,
   ToolOutput,
 } from "@synapse/core";
@@ -120,6 +121,8 @@ export const userSettings = pgTable("user_settings", {
   undoSeconds: integer("undo_seconds").notNull().default(10),
   /** Email the account address when something needs approval (needs SMTP configured). */
   emailAlerts: boolean("email_alerts").notNull().default(false),
+  /** Built-in skills the user switched off, by name. Their own skills carry `enabled`. */
+  disabledSkills: text("disabled_skills").array().notNull().default([]),
   updatedAt: updatedAt(),
 });
 
@@ -256,6 +259,8 @@ export const runs = pgTable(
      * A matching call runs once without asking; `usedBy` marks a spent grant.
      */
     planGrants: jsonb("plan_grants").$type<PlanGrant[]>().notNull().default([]),
+    /** Skills loaded with `load_skill` in this run (name + content hash), in load order. */
+    skills: jsonb("skills").$type<SkillUse[]>().notNull().default([]),
     /** Worker lease. A run with an expired lease is picked up again by another worker. */
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
@@ -290,6 +295,8 @@ export const messages = pgTable(
     kind: text("kind").$type<"message" | "handover">().notNull().default("message"),
     cutoffSeq: integer("cutoff_seq"),
     message: jsonb("message").$type<ModelMessage>().notNull(),
+    /** A user-role row quoting third-party content (an event trigger's email or payload). */
+    untrusted: boolean("untrusted").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [index("messages_chat_seq_idx").on(t.chatId, t.seq)],
@@ -325,6 +332,8 @@ export const toolCalls = pgTable(
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
     /** Undo window: an approved call does not run before this time. */
     executeAfter: timestamp("execute_after", { withTimezone: true }),
+    /** Skills loaded in the run when this call was proposed, with their versions (audit). */
+    skills: jsonb("skills").$type<SkillUse[]>(),
     output: jsonb("output").$type<ToolOutput>(),
     fullOutput: jsonb("full_output").$type<ToolOutput>(),
     createdAt: createdAt(),
@@ -556,6 +565,31 @@ export const chunks = pgTable(
     index("chunks_tsv_idx").using("gin", t.tsv),
     index("chunks_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
   ],
+);
+
+// ── Skills ──────────────────────────────────────────────────────────────────
+
+/**
+ * A user's own skill, in the Agent Skills shape: SKILL.md frontmatter fields, a markdown
+ * body and optional reference files. Built-in skills ship with the server, not in here.
+ */
+export const skills = pgTable(
+  "skills",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    body: text("body").notNull(),
+    /** Reference files by relative path. */
+    files: jsonb("files").$type<Record<string, string>>().notNull().default({}),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("skills_user_name_idx").on(t.userId, t.name)],
 );
 
 // ── Automations ────────────────────────────────────────────────────────────

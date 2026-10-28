@@ -42,7 +42,7 @@ describe("landing hack demo", () => {
     const send = calls("insider").find((c) => c.tool === "gmail_send")!;
     expect(send.untainted.decision).toBe("allow");
     expect(send.verdict.decision).toBe("ask");
-    expect(send.verdict.reason).toContain("read outside content");
+    expect(send.verdict.reason).toContain("appeared only after reading outside content");
   });
 
   test("a harmless email only reads", () => {

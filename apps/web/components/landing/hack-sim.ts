@@ -10,9 +10,13 @@
 import type { Effect } from "@synapse/core";
 import {
   type ComposedPolicyResult,
+  callTargets,
   emailsIn,
+  emptyTrustedTargets,
   evaluateComposedPolicy,
   type PolicyRule,
+  trustText,
+  unseenTargets,
 } from "@synapse/core/policy";
 
 /** The Gmail tools the demo uses, with the effects and flags the real ones declare. */
@@ -111,8 +115,12 @@ const DELETE_WORDS = /\b(delete|trash|remove|erase|wipe)\b/i;
 
 /** Runs the scripted agent over one email and judges every call with the real policy. */
 export function simulate(email: DemoEmail, rules: PolicyRule[] = DEMO_RULES): Step[] {
-  const steps: Step[] = [{ kind: "task", text: "Summarize my unread email." }];
+  const task = "Summarize my unread email.";
+  const steps: Step[] = [{ kind: "task", text: task }];
   let tainted = false;
+  // What the visitor's own words name, as the runtime collects it from trusted context.
+  const trusted = emptyTrustedTargets();
+  trustText(trusted, task);
 
   const call = (
     tool: DemoTool,
@@ -121,8 +129,14 @@ export function simulate(email: DemoEmail, rules: PolicyRule[] = DEMO_RULES): St
     output?: string,
   ): CallStep => {
     const { effect, untrustedOutput } = DEMO_TOOLS[tool];
-    const judge = (t: boolean) =>
-      evaluateComposedPolicy({ tool, effect, input: input as never, tainted: t }, { rules }, []);
+    const judge = (t: boolean) => {
+      const newTargets = t ? unseenTargets(callTargets(input as never, effect), trusted) : [];
+      return evaluateComposedPolicy(
+        { tool, effect, input: input as never, tainted: t, newTargets },
+        { rules },
+        [],
+      );
+    };
     const step: CallStep = {
       kind: "call",
       tool,

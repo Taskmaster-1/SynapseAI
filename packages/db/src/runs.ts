@@ -1,4 +1,4 @@
-import { type Effect, type PlanGrant, UNDO_DENIAL } from "@synapse/core";
+import { type Effect, type PlanGrant, type SkillUse, UNDO_DENIAL } from "@synapse/core";
 import type { JSONValue } from "ai";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "./client";
@@ -460,6 +460,15 @@ export async function addPlanGrants(db: Db, runId: string, grants: PlanGrant[]):
     .where(eq(runs.id, runId));
 }
 
+/** Records a skill the agent loaded in a run, once per name and version. */
+export async function addRunSkill(db: Db, runId: string, use: SkillUse): Promise<void> {
+  const one = JSON.stringify([use]);
+  await db
+    .update(runs)
+    .set({ skills: sql`${runs.skills} || ${one}::jsonb` })
+    .where(and(eq(runs.id, runId), sql`not (${runs.skills} @> ${one}::jsonb)`));
+}
+
 export async function requestCancel(
   db: Db,
   args: { userId: string; runId: string; mode: "now" | "after_step" },
@@ -582,6 +591,8 @@ export async function startTriggeredTask(
       chatId: chat!.id,
       runId,
       message: { role: "user", content: args.content },
+      // Quotes an email or webhook payload: names no trusted destinations (see targets.ts).
+      untrusted: true,
     });
     return { chatId: chat!.id, runId };
   });

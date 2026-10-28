@@ -10,6 +10,7 @@ import { models } from "./routes/models";
 import { onboarding } from "./routes/onboarding";
 import { push } from "./routes/push";
 import { approvals, runs } from "./routes/runs";
+import { skills } from "./routes/skills";
 import { slackIntegration, slackInteractions } from "./routes/slack";
 import { writingStyle } from "./routes/style";
 import { suggestions } from "./routes/suggestions";
@@ -87,6 +88,7 @@ export function createApp(services: Services) {
   api.route("/usage", usage);
   api.route("/models", models);
   api.route("/automations", automations);
+  api.route("/skills", skills);
   api.route("/push", push);
   api.route("/workspace", workspace);
   api.route("/writing-style", writingStyle);
