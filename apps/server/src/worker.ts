@@ -5,6 +5,7 @@ import {
   type ProviderKeys,
   parseModelRef,
   runAgent,
+  skillsPromptBlock,
 } from "@synapse/core";
 import {
   claimRun,
@@ -235,6 +236,7 @@ export class Worker {
         instructions: settings?.instructions ?? null,
         memory: await loadMemoryBlock(db, run.userId),
         connections: conns.map((c) => c.name),
+        skills: skillsPromptBlock(toolset.skills),
       });
 
       const summary = this.modelOverride

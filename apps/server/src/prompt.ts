@@ -23,6 +23,8 @@ export function buildSystemPrompt(args: {
   instructions: string | null;
   memory: string | null;
   connections: string[];
+  /** The enabled skills' listing (`skillsPromptBlock`): names and descriptions only. */
+  skills?: string | null;
   now?: Date;
 }): string {
   const date = (args.now ?? new Date()).toISOString().slice(0, 10);
@@ -32,6 +34,7 @@ export function buildSystemPrompt(args: {
   );
   if (args.instructions?.trim())
     parts.push(`The user's standing instructions:\n${args.instructions.trim()}`);
+  if (args.skills) parts.push(args.skills);
   if (args.memory) {
     parts.push(
       `Notes you saved about the user in earlier conversations (save new durable preferences with memory_save):\n${args.memory}`,

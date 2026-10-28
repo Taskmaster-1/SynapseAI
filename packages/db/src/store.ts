@@ -32,6 +32,7 @@ function toStored(r: MessageRow): StoredMessage {
     message: r.message,
     kind: r.kind,
     cutoffSeq: r.cutoffSeq,
+    ...(r.untrusted ? { untrusted: true } : {}),
   };
 }
 
@@ -52,6 +53,7 @@ function toRecord(r: ToolCallRow): ToolCallRecord {
     approver: r.approver ?? null,
     preview: r.preview,
     executeAfter: r.executeAfter?.toISOString() ?? null,
+    skills: r.skills ?? null,
   };
 }
 
@@ -89,6 +91,7 @@ export class PgRunStore implements RunStore {
       error: r.error,
       cancelRequested: r.cancelRequested,
       planGrants: r.planGrants,
+      skills: r.skills,
     };
   }
 

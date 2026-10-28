@@ -9,6 +9,7 @@ import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
 import { push } from "./routes/push";
 import { approvals, runs } from "./routes/runs";
+import { skills } from "./routes/skills";
 import { slackIntegration, slackInteractions } from "./routes/slack";
 import { suggestions } from "./routes/suggestions";
 import { workspace } from "./routes/workspace";
@@ -85,6 +86,7 @@ export function createApp(services: Services) {
   api.route("/usage", usage);
   api.route("/models", models);
   api.route("/automations", automations);
+  api.route("/skills", skills);
   api.route("/push", push);
   api.route("/workspace", workspace);
   api.get("/me", (c) => c.json({ user: c.var.user }));

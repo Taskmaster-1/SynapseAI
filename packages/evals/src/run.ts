@@ -44,7 +44,11 @@ export async function runScenario(
   for (let rounds = 0; status === "waiting" && rounds < 10; rounds++) {
     for (const call of await store.listToolCalls(run.id)) {
       if (call.status !== "awaiting_approval") continue;
-      const d = scenario.decide({ name: call.name, input: call.input as Record<string, unknown> });
+      const d = scenario.decide({
+        name: call.name,
+        input: call.input as Record<string, unknown>,
+        reason: call.decisionReason ?? "",
+      });
       store.decide(call.id, d.approve, d.reason);
     }
     status = await runAgent(opts);
@@ -60,6 +64,7 @@ export async function runScenario(
     name: c.name,
     input: c.input as Record<string, unknown>,
     status: c.status,
+    reason: c.decisionReason,
   }));
   const graded = scenario.check({ calls, answer, status });
   return {
