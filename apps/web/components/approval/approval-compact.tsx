@@ -7,7 +7,9 @@ import { useToast } from "@/components/toast";
 import { EffectPill, Monogram } from "@/components/ui";
 import { ApiError, type Approval, api, errorMessage } from "@/lib/api";
 import { cx, formatDateTime, formatRelative, splitToolName } from "@/lib/format";
+import { useWorkspace } from "@/lib/workspace";
 import { approvalTitle, MiniStamp } from "./approval-card";
+import { useExpiresIn } from "./signals";
 import { UndoCountdown, UndoFuse, type UndoTarget, useTimeLeft } from "./undo-window";
 
 /** How long the stamp sits on the slip before the row leaves. */
@@ -36,6 +38,10 @@ export function ApprovalCompact({
   const left = useTimeLeft(undo?.executeAfter);
   const settle = useRef<(() => void) | null>(null);
   const { source } = splitToolName(a.name);
+  const { user } = useWorkspace();
+  const signedByMe = !!user && a.signoffs?.first?.id === user.id;
+  const expires = useExpiresIn(a.expiresAt);
+  const fact = a.facts?.[0];
 
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
@@ -63,9 +69,15 @@ export function ApprovalCompact({
     setBusy(true);
     setError(null);
     try {
-      const { executeAfter } = (await api.decide(a.runId, a.toolCallId, { approved: true })) ?? {
-        executeAfter: null,
-      };
+      const { executeAfter, partial } = (await api.decide(a.runId, a.toolCallId, {
+        approved: true,
+      })) ?? { executeAfter: null };
+      if (partial) {
+        // Two-person sign-off: yours was the first approval; it waits for someone else.
+        toast("Approved. It needs a second person to approve it too.", "success");
+        onDone();
+        return;
+      }
       if (executeAfter) onHold?.();
       settle.current = () => {
         toast("Approved", "success");
@@ -111,6 +123,15 @@ export function ApprovalCompact({
               {formatRelative(a.createdAt)}
             </span>
           </p>
+          {fact || expires || a.signoffs?.needed === 2 ? (
+            <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 text-12 text-fg-muted">
+              {fact ? <span className="font-medium text-attention">{fact}</span> : null}
+              {a.signoffs?.needed === 2 ? (
+                <span>{a.signoffs.first ? "1 of 2 approvals" : "Needs 2 approvals"}</span>
+              ) : null}
+              {expires ? <span>Expires in {expires}</span> : null}
+            </p>
+          ) : null}
           {error ? <p className="mt-1 text-12 text-danger">{error}</p> : null}
         </div>
       </div>
@@ -136,8 +157,8 @@ export function ApprovalCompact({
           </Link>
           <button
             type="button"
-            className="btn btn-primary btn-sm"
-            disabled={busy || stamped}
+            className={cx("btn btn-primary btn-sm", signedByMe && "hidden")}
+            disabled={busy || stamped || signedByMe}
             onClick={() => void approve()}
           >
             {busy ? (

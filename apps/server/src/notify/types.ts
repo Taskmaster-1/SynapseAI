@@ -1,8 +1,18 @@
 import type { Effect } from "@synapse/core";
 import type { JSONValue } from "ai";
 
+/**
+ * Why channels are told about an approval:
+ * - `new`: it just started waiting;
+ * - `reminder`: nobody decided yet (sent once);
+ * - `escalated`: nobody decided, so the requester's team admins may decide it now;
+ * - `second`: two-person sign-off, one person approved and it needs another.
+ */
+export type NoticeKind = "new" | "reminder" | "escalated" | "second";
+
 /** One action waiting for a person, as notification channels see it. */
 export interface PendingApproval {
+  kind: NoticeKind;
   /** Whose task it is. */
   userId: string;
   /**
@@ -23,6 +33,14 @@ export interface PendingApproval {
   reason: string | null;
   /** The task had read outside content when this was proposed. */
   tainted: boolean;
+  /** Plain-language risk facts, e.g. "Sends to 2 people outside acme.com" (at most 3). */
+  facts: string[];
+  /** It is denied as expired if nobody decides by then. */
+  expiresAt: Date | null;
+  /** Escalated to the requester's team admins. */
+  escalated: boolean;
+  /** Two-person sign-off: how many approvals it needs, and the first one if given. */
+  signoffs: { needed: 1 | 2; first: { id: string; name: string } | null };
   createdAt: Date;
   /** Where to open it in the web app. */
   url: string;
@@ -41,9 +59,12 @@ export interface ResolvedApproval {
   via: DecisionSource;
   /** Set when a send or delete waits out its undo window. */
   executeAfter: Date | null;
+  /** Two-person sign-off: the first of two approvals; it still waits for another person. */
+  partial?: boolean;
 }
 
-export type DecisionSource = "web" | "push" | "slack" | "email";
+/** Where a decision was made; `expiry` is nobody deciding in time. */
+export type DecisionSource = "web" | "push" | "slack" | "email" | "expiry";
 
 /**
  * A way to reach a person about approvals: web push, Slack, email. Channels decide for

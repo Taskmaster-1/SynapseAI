@@ -4,6 +4,7 @@ export * from "./models";
 export * from "./plan";
 export * from "./policy";
 export * from "./prices";
+export * from "./risk";
 export * from "./runtime";
 export * from "./skills";
 export type * from "./store";

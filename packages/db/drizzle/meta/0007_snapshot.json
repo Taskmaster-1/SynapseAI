@@ -1,5 +1,5 @@
 {
-  "id": "312be6fb-1c37-4795-99b0-0cf93e458a19",
+  "id": "ba623400-c929-4cc8-8024-495646dd1810",
   "prevId": "35861aaf-dd74-4d0f-800f-29fec4888393",
   "version": "7",
   "dialect": "postgresql",
@@ -2130,6 +2130,42 @@
           "primaryKey": false,
           "notNull": false
         },
+        "reminded_at": {
+          "name": "reminded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "escalated_at": {
+          "name": "escalated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "first_approved_by": {
+          "name": "first_approved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "first_approved_at": {
+          "name": "first_approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "first_approved_via": {
+          "name": "first_approved_via",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "execute_after": {
           "name": "execute_after",
           "type": "timestamp with time zone",
@@ -2389,6 +2425,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'"
+        },
+        "remind_minutes": {
+          "name": "remind_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
+        },
+        "expire_hours": {
+          "name": "expire_hours",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 24
         },
         "updated_at": {
           "name": "updated_at",
@@ -2843,6 +2893,25 @@
         },
         "created_by": {
           "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "escalate_minutes": {
+          "name": "escalate_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 60
+        },
+        "expire_hours": {
+          "name": "expire_hours",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "two_person": {
+          "name": "two_person",
           "type": "text",
           "primaryKey": false,
           "notNull": false

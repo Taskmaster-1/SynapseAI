@@ -8,6 +8,8 @@ import {
   api,
   errorMessage,
   isTeamAdmin,
+  type TwoPersonRule,
+  type WorkspaceApprovalSettings,
   type WorkspaceInfo,
   type WorkspaceInvite,
   type WorkspaceRole,
@@ -15,6 +17,7 @@ import {
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useWorkspace } from "@/lib/workspace";
+import { ChoiceRow } from "./notifications";
 import { PolicyEditor } from "./policy-editor";
 
 const ROLE_LABEL: Record<WorkspaceRole, string> = {
@@ -59,6 +62,7 @@ export function TeamSettings() {
       />
       {admin ? <Invites /> : null}
       <PolicyEditor scope="team" />
+      <TeamApprovals info={info.data} onChanged={changed} />
       {admin ? <AuditExport /> : null}
     </div>
   );
@@ -393,6 +397,113 @@ function Invites() {
           ))}
         </ul>
       ) : null}
+    </section>
+  );
+}
+
+const ESCALATE: [number, string][] = [
+  [0, "Off"],
+  [15, "15 minutes"],
+  [30, "30 minutes"],
+  [60, "1 hour"],
+  [120, "2 hours"],
+  [240, "4 hours"],
+  [1440, "1 day"],
+];
+const TEAM_EXPIRE: [string, string][] = [
+  ["own", "Each person's own"],
+  ["1", "1 hour"],
+  ["4", "4 hours"],
+  ["8", "8 hours"],
+  ["24", "24 hours"],
+  ["72", "3 days"],
+  ["168", "7 days"],
+  ["0", "Never"],
+];
+const TWO_PERSON: [string, string][] = [
+  ["off", "Off"],
+  ["destructive", "Irreversible actions"],
+  ["destructive_send", "Irreversible and sends"],
+];
+
+/**
+ * Settings -> Team -> Approvals: when members' undecided approvals go to admins, a team-wide
+ * expiry, and two-person sign-off. Members see the settings; owners and admins change them.
+ */
+function TeamApprovals({
+  info,
+  onChanged,
+}: {
+  info: WorkspaceInfo;
+  onChanged: (info: WorkspaceInfo) => void;
+}) {
+  const toast = useToast();
+  const ws = info.workspace!;
+  const admin = isTeamAdmin(info.role);
+  const admins = info.members.filter((m) => isTeamAdmin(m.role)).length;
+  async function save(patch: Partial<WorkspaceApprovalSettings>, message: string) {
+    try {
+      onChanged(await api.updateWorkspace(patch));
+      toast(message, "success");
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    }
+  }
+  return (
+    <section aria-label="Approvals">
+      <h3 className="font-serif text-[24px] leading-tight text-fg">Approvals</h3>
+      <p className="mt-1 mb-4 text-13 text-fg-muted">
+        What happens when a member's approval waits, and which actions need two people.
+        {admin ? "" : " Owners and admins can change these."}
+      </p>
+      <div className="divide-y divide-line rounded-[16px] border border-line bg-surface">
+        <ChoiceRow
+          id="team-escalate"
+          label="Escalate to admins after"
+          hint="Owners and admins are told, and can decide it too. The member still can."
+          value={ws.escalateMinutes}
+          options={ESCALATE}
+          disabled={!admin}
+          onChange={(v) => void save({ escalateMinutes: v }, "Escalation saved")}
+        />
+        <ChoiceRow
+          id="team-expire"
+          label="Expire after"
+          hint="Replaces each member's own setting. The agent is told nobody decided in time."
+          value={ws.expireHours === null ? "own" : String(ws.expireHours)}
+          options={TEAM_EXPIRE}
+          disabled={!admin}
+          onChange={(v) =>
+            void save({ expireHours: v === "own" ? null : Number(v) }, "Team expiry saved")
+          }
+        />
+        <ChoiceRow
+          id="team-two-person"
+          label="Two-person sign-off"
+          hint={
+            <>
+              Two different people must approve: the member and an admin, or two admins when a rule
+              says an admin decides. Any deny ends it; the undo window starts after the second
+              approval.
+              {ws.twoPerson && admins < 2 ? (
+                <span className="mt-1 block text-attention">
+                  Your team has one owner or admin, so their own actions can't get a second approval
+                  and will expire. Make someone else an admin.
+                </span>
+              ) : null}
+            </>
+          }
+          value={ws.twoPerson ?? "off"}
+          options={TWO_PERSON}
+          disabled={!admin}
+          onChange={(v) =>
+            void save(
+              { twoPerson: v === "off" ? null : (v as TwoPersonRule) },
+              v === "off" ? "Two-person sign-off off" : "Two-person sign-off on",
+            )
+          }
+        />
+      </div>
     </section>
   );
 }

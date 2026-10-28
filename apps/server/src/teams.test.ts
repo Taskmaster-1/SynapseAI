@@ -365,7 +365,7 @@ describe("workspaces", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]!.userId).toBe(member.id);
     expect(seen[0]!.recipients.sort()).toEqual([owner.id, admin.id].sort());
-    expect(seen[0]!.url).toBe(`${ORIGIN}/inbox`);
+    expect(seen[0]!.url).toBe(`${ORIGIN}/inbox?id=t1`);
 
     // The member sees it waiting; they can't decide it.
     const mine = (await member.call("/api/approvals")).json.approvals;
@@ -461,7 +461,7 @@ describe("workspaces", () => {
     expect(csv.headers.get("content-disposition")).toContain("attachment");
     const lines = csv.text.split("\r\n");
     expect(lines[0]).toBe(
-      "time,member,task,tool,effect,decision,status,decided_by,decided_via,reason",
+      "time,member,task,tool,effect,decision,status,decided_by,decided_via,reason,first_approved_by,first_approved_via,reminded_at,escalated_at",
     );
     const t1 = lines.find((l) => l.includes("memory_save") && l.includes("lead@team.com"))!;
     expect(t1).toContain("dev@team.com");
@@ -471,7 +471,7 @@ describe("workspaces", () => {
     expect(lines.filter((l) => l.includes("dev@team.com"))).toHaveLength(2);
     expect(csv.text).not.toContain("x@other.com");
     expect((await admin.call("/api/workspace/audit.csv?from=2020-01-01&to=2020-01-02")).text).toBe(
-      "time,member,task,tool,effect,decision,status,decided_by,decided_via,reason\r\n",
+      "time,member,task,tool,effect,decision,status,decided_by,decided_via,reason,first_approved_by,first_approved_via,reminded_at,escalated_at\r\n",
     );
     expect((await admin.call("/api/workspace/audit.csv?from=nope")).status).toBe(422);
   });

@@ -1,8 +1,17 @@
-import { type Db, isAdminRole, loadTeamRules, membershipOf, schema } from "@synapse/db";
+import {
+  type Db,
+  isAdminRole,
+  loadTeamRules,
+  MAX_ESCALATE_MINUTES,
+  MAX_EXPIRE_HOURS,
+  membershipOf,
+  schema,
+} from "@synapse/db";
 import { and, asc, count, desc, eq, gt, gte, isNull, lt, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Hono } from "hono";
 import { z } from "zod";
+import { listApprovals, teamDecidable } from "../approval-list";
 import { type AppEnv, apiError, body } from "../http";
 import { assertSafePatterns, Rule } from "./account";
 
@@ -41,6 +50,10 @@ async function loadWorkspace(c: Ctx, workspaceId: string, role: Role) {
       id: schema.workspaces.id,
       name: schema.workspaces.name,
       createdAt: schema.workspaces.createdAt,
+      /** Approvals: escalate to admins after (minutes), team-wide expiry (hours), two-person rule. */
+      escalateMinutes: schema.workspaces.escalateMinutes,
+      expireHours: schema.workspaces.expireHours,
+      twoPerson: schema.workspaces.twoPerson,
     })
     .from(schema.workspaces)
     .where(eq(schema.workspaces.id, workspaceId));
@@ -109,12 +122,22 @@ export const workspace = new Hono<AppEnv>()
   })
 
   .patch("/", async (c) => {
-    const { name } = await body(c, z.object({ name: Name }));
+    const input = await body(
+      c,
+      z.object({
+        name: Name.optional(),
+        escalateMinutes: z.number().int().min(0).max(MAX_ESCALATE_MINUTES).optional(),
+        expireHours: z.number().int().min(0).max(MAX_EXPIRE_HOURS).nullable().optional(),
+        twoPerson: z.enum(["destructive", "destructive_send"]).nullable().optional(),
+      }),
+    );
     const m = await adminMembership(c);
-    await c.var.services.database.db
-      .update(schema.workspaces)
-      .set({ name })
-      .where(eq(schema.workspaces.id, m.workspaceId));
+    const patch = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
+    if (Object.keys(patch).length)
+      await c.var.services.database.db
+        .update(schema.workspaces)
+        .set(patch)
+        .where(eq(schema.workspaces.id, m.workspaceId));
     return c.json(await loadWorkspace(c, m.workspaceId, m.role));
   })
 
@@ -358,43 +381,14 @@ export const workspace = new Hono<AppEnv>()
   // ── Admin inbox ──────────────────────────────────────────────────────────
   .get("/approvals", async (c) => {
     const m = await adminMembership(c);
-    const rows = await c.var.services.database.db
-      .select({
-        runId: schema.toolCalls.runId,
-        chatId: schema.runs.chatId,
-        chatTitle: schema.chats.title,
-        toolCallId: schema.toolCalls.id,
-        name: schema.toolCalls.name,
-        effect: schema.toolCalls.effect,
-        input: schema.toolCalls.input,
-        reason: schema.toolCalls.decisionReason,
-        preview: schema.toolCalls.preview,
-        approver: schema.toolCalls.approver,
-        createdAt: schema.toolCalls.createdAt,
-        requester: {
-          id: schema.user.id,
-          name: schema.user.name,
-          email: schema.user.email,
-        },
-      })
-      .from(schema.toolCalls)
-      .innerJoin(
-        schema.workspaceMembers,
-        and(
-          eq(schema.workspaceMembers.userId, schema.toolCalls.userId),
-          eq(schema.workspaceMembers.workspaceId, m.workspaceId),
-        ),
-      )
-      .innerJoin(schema.user, eq(schema.user.id, schema.toolCalls.userId))
-      .innerJoin(schema.runs, eq(schema.runs.id, schema.toolCalls.runId))
-      .innerJoin(schema.chats, eq(schema.chats.id, schema.runs.chatId))
-      .where(
-        and(
-          eq(schema.toolCalls.status, "awaiting_approval"),
-          eq(schema.toolCalls.approver, "admin"),
-        ),
-      )
-      .orderBy(desc(schema.toolCalls.createdAt));
+    const { db } = c.var.services.database;
+    const [ws] = await db
+      .select({ twoPerson: schema.workspaces.twoPerson })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, m.workspaceId));
+    const rows = await listApprovals(db, teamDecidable(m.workspaceId, ws?.twoPerson ?? null), {
+      withRequester: true,
+    });
     return c.json({ approvals: rows });
   })
 
@@ -403,6 +397,7 @@ export const workspace = new Hono<AppEnv>()
     const m = await adminMembership(c);
     const { from, to } = auditRange(c.req.query("from"), c.req.query("to"));
     const decider = alias(schema.user, "decider");
+    const firstApprover = alias(schema.user, "first_approver");
     const { db } = c.var.services.database;
     const where = and(
       gte(schema.toolCalls.createdAt, from),
@@ -437,6 +432,10 @@ export const workspace = new Hono<AppEnv>()
         decidedBy: decider.email,
         decidedVia: schema.toolCalls.decidedVia,
         reason: schema.toolCalls.decisionReason,
+        firstApprovedBy: firstApprover.email,
+        firstApprovedVia: schema.toolCalls.firstApprovedVia,
+        remindedAt: schema.toolCalls.remindedAt,
+        escalatedAt: schema.toolCalls.escalatedAt,
       })
       .from(schema.toolCalls)
       .innerJoin(schema.workspaceMembers, membersJoin)
@@ -444,6 +443,7 @@ export const workspace = new Hono<AppEnv>()
       .innerJoin(schema.runs, eq(schema.runs.id, schema.toolCalls.runId))
       .innerJoin(schema.chats, eq(schema.chats.id, schema.runs.chatId))
       .leftJoin(decider, eq(decider.id, schema.toolCalls.decidedBy))
+      .leftJoin(firstApprover, eq(firstApprover.id, schema.toolCalls.firstApprovedBy))
       .where(where)
       .orderBy(asc(schema.toolCalls.createdAt), sql`${schema.toolCalls.id}`);
     const csv = toCsv(
@@ -458,6 +458,10 @@ export const workspace = new Hono<AppEnv>()
         "decided_by",
         "decided_via",
         "reason",
+        "first_approved_by",
+        "first_approved_via",
+        "reminded_at",
+        "escalated_at",
       ],
       rows.map((r) => [
         r.time.toISOString(),
@@ -470,6 +474,10 @@ export const workspace = new Hono<AppEnv>()
         r.decidedBy,
         r.decidedVia,
         r.reason,
+        r.firstApprovedBy,
+        r.firstApprovedVia,
+        r.remindedAt?.toISOString(),
+        r.escalatedAt?.toISOString(),
       ]),
     );
     const day = (d: Date) => d.toISOString().slice(0, 10);

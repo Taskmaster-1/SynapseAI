@@ -1,5 +1,11 @@
 import type { Effect } from "@synapse/core";
-import { ConflictError, ForbiddenError, NotFoundError, schema } from "@synapse/db";
+import {
+  AlreadyApprovedError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  schema,
+} from "@synapse/db";
 import type { JSONValue } from "ai";
 import { and, eq, inArray } from "drizzle-orm";
 import { DecisionInputError, decide } from "../decisions";
@@ -81,13 +87,42 @@ export class SlackChannel implements NotificationChannel {
         const token = await this.services().box.open(account.botToken);
         const channel = await openDm(app, token, account.slackUserId);
         for (const a of mine) {
+          const [prev] = await db
+            .select({ channel: schema.slackMessages.channel, ts: schema.slackMessages.ts })
+            .from(schema.slackMessages)
+            .where(
+              and(
+                eq(schema.slackMessages.runId, a.runId),
+                eq(schema.slackMessages.toolCallId, a.toolCallId),
+                eq(schema.slackMessages.userId, account.userId),
+              ),
+            );
+          if (prev) {
+            // Already asked this person: bring the original up to date (its buttons stay) and
+            // nudge in its thread, so there is still one message to act on.
+            await slackCall(app, token, "chat.update", {
+              channel: prev.channel,
+              ts: prev.ts,
+              text: `Synapse needs your OK: ${a.preview ?? humanize(a.name)}`,
+              blocks: approvalBlocks(a),
+            });
+            await slackCall(app, token, "chat.postMessage", {
+              channel: prev.channel,
+              thread_ts: prev.ts,
+              reply_broadcast: true,
+              text: nudgeText(a),
+              unfurl_links: false,
+              unfurl_media: false,
+            });
+            continue;
+          }
           const posted = await slackCall<{ channel: string; ts: string }>(
             app,
             token,
             "chat.postMessage",
             {
               channel,
-              text: `Synapse needs your OK: ${a.preview ?? humanize(a.name)}`,
+              text: `${HEADER[a.kind]}: ${a.preview ?? humanize(a.name)}`,
               blocks: approvalBlocks(a),
               unfurl_links: false,
               unfurl_media: false,
@@ -111,7 +146,19 @@ export class SlackChannel implements NotificationChannel {
   }
 
   async resolved(decided: ResolvedApproval[]) {
-    for (const d of decided)
+    for (const d of decided) {
+      if (d.partial) {
+        // First of two approvals: only the approver's own message stops asking; the others
+        // are refreshed by the "needs a second approval" notice.
+        await this.rewrite(
+          d.runId,
+          d.toolCallId,
+          () =>
+            `You approved ${d.via === "slack" ? "here" : PLACE[d.via]} · waiting for a second approval`,
+          (recipient) => recipient === d.decidedBy,
+        );
+        continue;
+      }
       await this.rewrite(d.runId, d.toolCallId, (recipient) =>
         outcomeText({
           approved: d.approved,
@@ -120,6 +167,7 @@ export class SlackChannel implements NotificationChannel {
           executeAfter: d.executeAfter,
         }),
       );
+    }
   }
 
   /** Rewrites a call's messages to show where it stands now (after "already decided"). */
@@ -143,7 +191,12 @@ export class SlackChannel implements NotificationChannel {
     );
   }
 
-  private async rewrite(runId: string, toolCallId: string, text: (recipient: string) => string) {
+  private async rewrite(
+    runId: string,
+    toolCallId: string,
+    text: (recipient: string) => string,
+    only: (recipient: string) => boolean = () => true,
+  ) {
     const app = this.app;
     if (!app) return;
     const { db } = this.services().database;
@@ -163,6 +216,7 @@ export class SlackChannel implements NotificationChannel {
     const call = await loadCall(this.services(), runId, toolCallId);
     if (!call) return;
     for (const m of sent) {
+      if (!only(m.userId)) continue;
       const line = text(m.userId);
       try {
         await slackCall(app, await this.services().box.open(m.botToken), "chat.update", {
@@ -231,6 +285,8 @@ export class SlackChannel implements NotificationChannel {
         via: "slack",
       });
     } catch (error) {
+      // Two-person sign-off: the same person can't give both approvals.
+      if (error instanceof AlreadyApprovedError) return refuse(error.message);
       if (error instanceof ConflictError) return this.refresh(ref.r, ref.t);
       // e.g. sent to someone who may see it but not decide it here (not the task's owner).
       if (error instanceof NotFoundError)
@@ -348,7 +404,45 @@ const PLACE: Record<DecisionSource, string> = {
   push: "from your phone",
   slack: "in Slack",
   email: "by email",
+  expiry: "",
 };
+
+const HEADER: Record<PendingApproval["kind"], string> = {
+  new: "Synapse needs your OK",
+  reminder: "Reminder: Synapse still needs your OK",
+  escalated: "Escalated: a teammate's action needs an admin",
+  second: "Needs a second approval",
+};
+
+/** Slack renders this in the reader's own time zone. */
+function slackTime(at: Date) {
+  const secs = Math.floor(at.getTime() / 1000);
+  return `<!date^${secs}^{date_short_pretty} at {time}|${at.toISOString().slice(0, 16).replace("T", " ")} UTC>`;
+}
+
+/** The thread reply that nudges someone already holding the approval message. */
+export function nudgeText(a: PendingApproval): string {
+  const expires = a.expiresAt ? ` It expires ${slackTime(a.expiresAt)}.` : "";
+  if (a.kind === "second")
+    return `${esc(a.signoffs.first?.name ?? "Someone")} approved this. It needs a second approval from someone else.${expires}`;
+  if (a.kind === "escalated")
+    return `Nobody decided this yet, so it was escalated to the team's admins.${expires}`;
+  return `Reminder: this is still waiting for you.${expires}`;
+}
+
+/** Status lines under an approval: two-person progress, escalation, expiry. */
+export function statusLine(a: PendingApproval): string | null {
+  const parts: string[] = [];
+  if (a.signoffs.needed === 2)
+    parts.push(
+      a.signoffs.first
+        ? `1 of 2 approvals · ${esc(a.signoffs.first.name)} approved`
+        : "Needs 2 approvals from different people",
+    );
+  if (a.escalated) parts.push("Escalated to admins");
+  if (a.expiresAt) parts.push(`Expires ${slackTime(a.expiresAt)}`);
+  return parts.length ? parts.join(" · ") : null;
+}
 
 /** The status line that replaces the buttons, e.g. "Approved by you · sending in 10s". */
 export function outcomeText(o: {
@@ -359,6 +453,7 @@ export function outcomeText(o: {
   done?: "done" | "failed" | null;
   now?: number;
 }): string {
+  if (o.via === "expiry") return "Expired: nobody decided in time";
   const where = o.byYou ? "by you" : (PLACE[o.via] ?? "elsewhere");
   if (!o.approved) return `Denied ${where}`;
   let line = `Approved ${where}`;
@@ -440,12 +535,15 @@ export function renderInput(input: JSONValue): string | null {
 export function approvalBlocks(a: PendingApproval): Block[] {
   const value = JSON.stringify({ r: a.runId, t: a.toolCallId } satisfies ActionRef);
   const input = renderInput(a.input);
+  const status = statusLine(a);
   return [
-    { type: "header", text: { type: "plain_text", text: "Synapse needs your OK" } },
+    { type: "header", text: { type: "plain_text", text: HEADER[a.kind] } },
     section(`*${esc(a.preview ?? humanize(a.name))}*`),
     context(
       `Task: ${esc(clip(a.chatTitle ?? "Untitled task", 150))} · \`${esc(a.name)}\` (${a.effect})`,
     ),
+    ...(a.facts.length ? [context(a.facts.map((f) => `:warning: ${esc(f)}`).join("   "))] : []),
+    ...(status ? [context(status)] : []),
     ...(input ? [section(input)] : []),
     ...(a.reason ? [context(`Why it asks: ${esc(clip(a.reason, 300))}`)] : []),
     ...(a.tainted

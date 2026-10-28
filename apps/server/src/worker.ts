@@ -15,6 +15,7 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { log } from "./log";
 import { buildSystemPrompt } from "./prompt";
 import { RUNS_CHANNEL, type Services } from "./services";
+import { sweepApprovals } from "./sweeper";
 import { pollGmailTriggers } from "./triggers";
 import { resolveModels } from "./user-models";
 
@@ -57,6 +58,13 @@ export class Worker {
   }
 
   private async fireAutomations() {
+    try {
+      const swept = await sweepApprovals(this.s);
+      if (swept.expired || swept.reminded || swept.escalated || swept.announced)
+        log.info("approvals swept", { ...swept });
+    } catch (error) {
+      log.error("approval sweep failed", { error: String(error) });
+    }
     try {
       const fired = await fireDueAutomations(this.s.database.db);
       for (const runId of fired) await this.s.wake(runId);

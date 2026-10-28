@@ -5,6 +5,7 @@ import webpush from "web-push";
 import type { PushConfig } from "../config";
 import { log } from "../log";
 import type { Services } from "../services";
+import { detailLines, TITLE } from "./text";
 import type { NotificationChannel, PendingApproval } from "./types";
 
 /** What the service worker receives (public/sw.js reads exactly these fields). */
@@ -175,8 +176,8 @@ export class PushChannel implements NotificationChannel {
       const risky = first.effect === "send" || first.effect === "destructive";
       const approvable = !risky || (undo.get(first.userId) ?? DEFAULT_UNDO_SECONDS) > 0;
       return {
-        title: "Synapse needs your OK",
-        body: clip(first.preview ?? describe(first)),
+        title: TITLE[first.kind],
+        body: clip([first.preview ?? describe(first), ...detailLines(first)].join("\n"), 300),
         tag: first.toolCallId,
         data: {
           url: first.url,
@@ -194,7 +195,10 @@ export class PushChannel implements NotificationChannel {
     }
     const sameTask = items.every((a) => a.chatId === first.chatId);
     return {
-      title: `Synapse needs your OK on ${items.length} actions`,
+      title:
+        first.kind === "new"
+          ? `Synapse needs your OK on ${items.length} actions`
+          : `${TITLE[first.kind]} (${items.length} actions)`,
       body: clip(items.map((a) => `• ${a.preview ?? describe(a)}`).join("\n"), 300),
       tag: sameTask ? `run:${first.runId}` : "approvals",
       data: { url: sameTask ? first.url : `${config.PUBLIC_URL}/approvals` },

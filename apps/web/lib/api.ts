@@ -165,6 +165,16 @@ export interface AuditToolCall {
   inputEdited?: boolean;
   decidedBy: string | null;
   decidedAt: string | null;
+  /** Where it was decided: web, push, slack, email, or expiry (nobody did in time). */
+  decidedVia?: string | null;
+  decidedByName?: string | null;
+  /** Two-person sign-off: the first of the two approvals. */
+  firstApprovedBy?: string | null;
+  firstApprovedByName?: string | null;
+  firstApprovedAt?: string | null;
+  remindedAt?: string | null;
+  escalatedAt?: string | null;
+  expiresAt?: string | null;
   /** Undo window: when an approved call runs (ISO), if it had to wait. */
   executeAfter?: string | null;
   createdAt: string;
@@ -187,7 +197,32 @@ export interface Approval {
   approver?: "admin" | null;
   /** Team inbox only: the member whose task asked. */
   requester?: { id: string; name: string; email: string };
+  /** The input was changed by whoever approved first (two-person sign-off). */
+  inputEdited?: boolean;
+  /** The task had read outside content when this was proposed. */
+  tainted?: boolean;
+  /** Plain-language risk facts, e.g. "Sends to 2 people outside acme.com". */
+  facts?: string[];
+  /** Denied as expired if nobody decides by then (ISO); null: never. */
+  expiresAt?: string | null;
+  /** When nobody decided in time and it went to the team's admins too. */
+  escalatedAt?: string | null;
+  /** Two-person sign-off: approvals needed, and the first one if given. */
+  signoffs?: ApprovalSignoffs;
 }
+
+export interface ApprovalSignoffs {
+  needed: 1 | 2;
+  first: { id: string; name: string; at?: string | null } | null;
+}
+
+/** What the inbox knows about an approval beyond the call itself. */
+export type ApprovalMeta = Pick<
+  Approval,
+  "facts" | "expiresAt" | "escalatedAt" | "signoffs" | "approver"
+>;
+
+export type TwoPersonRule = "destructive" | "destructive_send";
 
 // ---------- Team workspaces ----------
 
@@ -201,8 +236,17 @@ export interface WorkspaceMember {
   joinedAt: string;
 }
 
+export interface WorkspaceApprovalSettings {
+  /** Minutes before a member's undecided approval also goes to admins; 0 is off. */
+  escalateMinutes: number;
+  /** Team-wide expiry in hours, instead of each person's own; null: each person's own. */
+  expireHours: number | null;
+  /** Which actions need two different people to approve; null: off. */
+  twoPerson: TwoPersonRule | null;
+}
+
 export interface WorkspaceInfo {
-  workspace: { id: string; name: string; createdAt: string } | null;
+  workspace: ({ id: string; name: string; createdAt: string } & WorkspaceApprovalSettings) | null;
   role: WorkspaceRole | null;
   members: WorkspaceMember[];
 }
@@ -287,9 +331,15 @@ export interface Settings {
   undoSeconds: number;
   /** Email the account address when something needs approval. */
   emailAlerts: boolean;
+  /** Re-notify once about an undecided approval after this many minutes; 0 is off. */
+  remindMinutes: number;
+  /** Deny an undecided approval after this many hours; 0 is never. */
+  expireHours: number;
 }
 
 export interface SettingsUpdate {
+  remindMinutes?: number;
+  expireHours?: number;
   instructions?: string | null;
   models?: { chain: string[] };
   budgets?: { perRunUsd: number | null; perDayUsd: number | null };
@@ -452,7 +502,8 @@ export const api = {
     toolCallId: string,
     body: { approved: boolean; reason?: string; input?: unknown },
   ) =>
-    post<{ executeAfter: string | null }>(
+    /** `partial`: the first of two approvals is in; it waits for a second person. */
+    post<{ executeAfter: string | null; partial?: boolean }>(
       `/api/runs/${enc(runId)}/tool-calls/${enc(toolCallId)}/decision`,
       body,
     ),
@@ -550,6 +601,8 @@ export const api = {
   workspace: () => get<WorkspaceInfo>("/api/workspace"),
   createWorkspace: (name: string) => post<WorkspaceInfo>("/api/workspace", { name }),
   renameWorkspace: (name: string) => patch<WorkspaceInfo>("/api/workspace", { name }),
+  updateWorkspace: (body: Partial<WorkspaceApprovalSettings>) =>
+    patch<WorkspaceInfo>("/api/workspace", body),
   /** The link holds the token and is only returned here, once. */
   createInvite: (role: "admin" | "member") =>
     post<{ invite: WorkspaceInvite; link: string }>("/api/workspace/invites", { role }),

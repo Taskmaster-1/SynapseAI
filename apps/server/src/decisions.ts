@@ -31,7 +31,7 @@ export interface Decision {
 export async function decide(
   services: Services,
   args: { userId: string; runId: string; decisions: Decision[]; via: DecisionSource },
-): Promise<{ executeAfter: Record<string, string> }> {
+): Promise<{ executeAfter: Record<string, string>; partial: string[] }> {
   const { userId, runId, decisions, via } = args;
   if (new Set(decisions.map((d) => d.toolCallId)).size !== decisions.length)
     throw new DecisionInputError(400, "duplicate", "Each action can be decided once.");
@@ -61,8 +61,9 @@ export async function decide(
     // Parked until the undo window ends: it is queued, not waiting on anyone.
     await emitNow(services, runId, { type: "run.status", status: "queued" });
     wakeAt(services, runId, decided.runnableAt);
-  } else await services.wake(runId);
+  } else if (decided.partial.length < decisions.length) await services.wake(runId);
 
+  const partial = new Set(decided.partial);
   await services.notifier.resolved(
     decisions.map((d) => ({
       // Whose task it is; a team admin may have decided it for them.
@@ -73,12 +74,16 @@ export async function decide(
       approved: d.approved,
       via,
       executeAfter: decided.executeAfter[d.toolCallId] ?? null,
+      ...(partial.has(d.toolCallId) ? { partial: true } : {}),
     })),
   );
+  // Two-person sign-off: the first approval is in; ask the people who can give the second.
+  if (decided.partial.length) await services.notifier.askSecond(runId, decided.partial);
   return {
     executeAfter: Object.fromEntries(
       Object.entries(decided.executeAfter).map(([id, at]) => [id, at.toISOString()]),
     ),
+    partial: decided.partial,
   };
 }
 

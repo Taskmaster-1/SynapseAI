@@ -38,6 +38,8 @@ Agent products that act in your tools share three problems: approvals that live 
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
 - Skills in the open Agent Skills format: six built in (inbox triage, meeting prep, follow-ups, weekly calendar review, polite declines, status updates), plus your own, written on the Skills page, imported as a `SKILL.md`, or saved from a chat. The agent sees one line per skill and loads the rest only when a task needs it; every use is recorded with the skill's version. Skills are instructions, never permissions ([how they work](docs/skills.md))
+- Approvals that don't wait forever: one reminder, escalation to team admins, then expiry as an ordinary deny the agent sees. Optional two-person sign-off for irreversible actions (and sends): two different people, any deny ends it
+- Plain-language risk facts on every approval, in the app and in push, Slack and email ("Sends to 2 people outside acme.com", "Can't be undone", "After reading outside content")
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
