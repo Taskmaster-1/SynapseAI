@@ -173,6 +173,66 @@ export async function newMessagesSince(
   };
 }
 
+/** Where the quoted part of a reply or forward starts, in the common clients and languages. */
+const QUOTE_START = [
+  /^On .{4,200}wrote:\s*$/i,
+  /^Am .{4,200}schrieb .*:\s*$/i,
+  /^Le .{4,200}a écrit\s*:\s*$/i,
+  /^El .{4,200}escribió:\s*$/i,
+  /^-{2,}\s*(Original Message|Forwarded message)\s*-{2,}/i,
+  /^_{10,}\s*$/,
+  /^From:\s.+$/,
+  /^Sent from my /i,
+  /^Get Outlook for /i,
+];
+
+/**
+ * The part of a sent email the user actually wrote: quoted replies, forwarded text and the
+ * signature (after the standard "-- " delimiter) are dropped. Best effort; never perfect.
+ */
+export function ownText(body: string): string {
+  const out: string[] = [];
+  for (const line of body.replace(/\r\n?/g, "\n").split("\n")) {
+    const t = line.trim();
+    if (line === "-- " || t === "--" || QUOTE_START.some((re) => re.test(t))) break;
+    if (t.startsWith(">")) continue;
+    out.push(line.trimEnd());
+  }
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export interface SentSample {
+  subject: string;
+  body: string;
+}
+
+/**
+ * The user's own words from their most recent sent emails, for learning how they write.
+ * Each body is cut to `maxChars`; emails with nothing of their own (bare forwards) are skipped.
+ */
+export async function sentSamples(
+  g: GoogleClient,
+  opts: { limit?: number; maxChars?: number } = {},
+): Promise<SentSample[]> {
+  const { limit = 25, maxChars = 1200 } = opts;
+  const ids = await listIds(g, "in:sent", limit);
+  const msgs = await Promise.all(
+    ids.map((m) =>
+      g.request<GmailMessage>(`${API}/messages/${m.id}`, { query: { format: "full" } }),
+    ),
+  );
+  const out: SentSample[] = [];
+  for (const m of msgs) {
+    const body = ownText(bodyText(m.payload));
+    if (body.length < 2) continue;
+    out.push({ subject: header(m, "Subject"), body: body.slice(0, maxChars) });
+  }
+  return out;
+}
+
 async function labelIds(g: GoogleClient, names: string[], signal: AbortSignal) {
   if (names.length === 0) return [];
   const { labels = [] } = await g.request<{ labels?: { id: string; name: string }[] }>(

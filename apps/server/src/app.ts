@@ -7,9 +7,11 @@ import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
 import { googleCallback, integrations } from "./routes/integrations";
 import { models } from "./routes/models";
+import { onboarding } from "./routes/onboarding";
 import { push } from "./routes/push";
 import { approvals, runs } from "./routes/runs";
 import { slackIntegration, slackInteractions } from "./routes/slack";
+import { writingStyle } from "./routes/style";
 import { suggestions } from "./routes/suggestions";
 import { workspace } from "./routes/workspace";
 import type { Services } from "./services";
@@ -87,6 +89,8 @@ export function createApp(services: Services) {
   api.route("/automations", automations);
   api.route("/push", push);
   api.route("/workspace", workspace);
+  api.route("/writing-style", writingStyle);
+  api.route("/onboarding", onboarding);
   api.get("/me", (c) => c.json({ user: c.var.user }));
   app.route("/api", api);
 

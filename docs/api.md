@@ -155,10 +155,24 @@ formula.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/memories` | | `{ memories: { id, content, source: "user" \| "agent", createdAt }[] }` |
+| GET | `/api/memories` | | `{ memories: { id, content, source: "user" \| "agent" \| "style", createdAt }[] }` |
 | POST | `/api/memories` | `{ content }` | `{ memory }` |
 | PATCH | `/api/memories/:id` | `{ content }` | `{ memory }` |
 | DELETE | `/api/memories/:id` | | `204` |
+| POST | `/api/writing-style/learn` | | `{ memory, samples }` — learns how you write from your ~25 latest sent emails (`422 google_not_connected`, `422 not_enough_mail`, `422 no_model`, `503 model_failed`) |
+
+The writing style is one memory with `source: "style"`: a short profile (tone, greetings,
+sign-offs, length, language) written by your model. Only the profile is stored, never the
+emails; quoted replies and signatures are dropped before the model sees them, and the
+profile is stripped of addresses and links. Relearning replaces it; edit or delete it like
+any note. It goes into the system prompt as a style block for drafting, separate from the
+other notes.
+
+## Getting started
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/onboarding` | | `{ googleAvailable, steps: { google, writingStyle, automation, approved } }` — the Home checklist, from real state |
 
 ## Documents (knowledge base)
 
@@ -226,3 +240,4 @@ so no write, send or destructive call is auto-allowed, whatever your rules say.
 | PATCH | `/api/automations/:id` | any of the above, plus `rotateWebhook: true` for a new URL; omitted fields keep their value | `{ automation }` |
 | DELETE | `/api/automations/:id` | | `204` |
 | POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now |
+| GET | `/api/automations/templates` | | `{ categories, googleAvailable, templates: { id, name, outcome, category, trigger, schedule?, prompt, requires, missing }[] }` — the gallery; `requires` is `google`, `github` or `linear` (MCP connections match by name or URL), `missing` what you haven't connected |

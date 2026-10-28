@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { type AppEnv, apiError, body } from "../http";
 import type { Services } from "../services";
+import { TEMPLATE_CATEGORIES, TEMPLATES, type TemplateRequirement } from "../templates";
 import { webhookTaskMessage } from "../triggers";
 
 const Trigger = z.discriminatedUnion("type", [
@@ -22,7 +23,7 @@ const Fields = z.object({
   enabled: z.boolean(),
 });
 
-const Create = Fields.extend({
+export const Create = Fields.extend({
   trigger: Trigger.default({ type: "schedule" }),
   schedule: Fields.shape.schedule.default(""),
   timezone: Fields.shape.timezone.default("UTC"),
@@ -75,7 +76,36 @@ async function publicRow(s: Services, row: Row) {
 const newToken = () =>
   Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64url");
 
+/** Which template requirements the user has connected: Google, or an active MCP server. */
+async function connected(s: Services, userId: string): Promise<Set<TemplateRequirement>> {
+  const { db } = s.database;
+  const [google] = await db
+    .select({ status: schema.integrations.status })
+    .from(schema.integrations)
+    .where(and(eq(schema.integrations.userId, userId), eq(schema.integrations.provider, "google")));
+  const conns = await db
+    .select({ name: schema.connections.name, url: schema.connections.url })
+    .from(schema.connections)
+    .where(and(eq(schema.connections.userId, userId), eq(schema.connections.status, "active")));
+  const out = new Set<TemplateRequirement>();
+  if (s.config.google && google?.status === "active") out.add("google");
+  for (const key of ["github", "linear"] as const) {
+    if (conns.some((c) => `${c.name} ${c.url}`.toLowerCase().includes(key))) out.add(key);
+  }
+  return out;
+}
+
 export const automations = new Hono<AppEnv>()
+  .get("/templates", async (c) => {
+    const s = c.var.services;
+    const have = await connected(s, c.var.user.id);
+    return c.json({
+      categories: TEMPLATE_CATEGORIES,
+      googleAvailable: Boolean(s.config.google),
+      templates: TEMPLATES.map((t) => ({ ...t, missing: t.requires.filter((r) => !have.has(r)) })),
+    });
+  })
+
   .get("/", async (c) => {
     const s = c.var.services;
     const rows = await s.database.db
