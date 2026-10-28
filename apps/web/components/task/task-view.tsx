@@ -39,10 +39,12 @@ const PANEL_KEY = "synapse-run-panel";
 export function TaskView({ taskId }: { taskId: string }) {
   const router = useRouter();
   const toast = useToast();
-  const { reload: reloadWorkspace, tasks, teamRole } = useWorkspace();
+  const { reload: reloadWorkspace, tasks, teamRole, approvals } = useWorkspace();
   // A call the team reserves for an admin: members only watch it; admins sign it here.
   const waitsForAdmin = (p: ToolPart) =>
     p.approver === "admin" && teamRole !== null && !isTeamAdmin(teamRole);
+  /** Expiry, escalation, two-person progress and risk facts, from the inbox. */
+  const metaOf = (toolCallId: string) => approvals?.find((a) => a.toolCallId === toolCallId);
   const [title, setTitle] = useState("");
   const [state, setState] = useState<State | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -270,7 +272,8 @@ export function TaskView({ taskId }: { taskId: string }) {
             p.status === "awaiting_approval" &&
             p.name !== PLAN_TOOL &&
             !decided[p.toolCallId] &&
-            !waitsForAdmin(p),
+            !waitsForAdmin(p) &&
+            metaOf(p.toolCallId)?.signoffs?.needed !== 2,
         )
       : [];
     if (runId && group.length >= 2 && group.some((p) => p.toolCallId === part.toolCallId)) {
@@ -325,6 +328,8 @@ export function TaskView({ taskId }: { taskId: string }) {
         tainted={tainted}
         glow={initialAwaiting !== null && !initialAwaiting.has(part.toolCallId)}
         waitingForAdmin={waitsForAdmin(part)}
+        meta={metaOf(part.toolCallId)}
+        onPartial={() => void reloadWorkspace()}
         onDecided={(approved, info) => {
           setDecided((m) => ({ ...m, [part.toolCallId]: { approved, ...info } }));
           follow(runId);

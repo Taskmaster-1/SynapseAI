@@ -14,9 +14,15 @@ import {
 } from "react";
 import { useToast } from "@/components/toast";
 import { EffectPill, Monogram, Pill, TAINT_SENTENCE } from "@/components/ui";
-import { ApiError, api, errorMessage } from "@/lib/api";
+import { ApiError, type ApprovalMeta, api, errorMessage } from "@/lib/api";
 import { cx, humanize, humanToolName, prettyJson, splitToolName } from "@/lib/format";
+import { useWorkspace } from "@/lib/workspace";
 import { asPlan, PLAN_TOOL, PlanSteps } from "./checklist";
+import { ApprovalStatusLine, factsFor, RiskChips } from "./signals";
+
+/** The risk fact for outside content; the card says it in a full sentence instead. */
+const TAINT_FACT = "After reading outside content";
+
 import {
   type Drafts,
   fromDrafts,
@@ -61,6 +67,10 @@ export interface ApprovalCardProps {
   waitingForAdmin?: boolean;
   /** A team admin is deciding a member's call: whose task asked. */
   requester?: { name: string; email: string } | null;
+  /** Risk facts, expiry, escalation and two-person progress, when the inbox knows them. */
+  meta?: ApprovalMeta | null;
+  /** Two-person sign-off: this approval was the first of two; it still waits. */
+  onPartial?: () => void;
 }
 
 /** How long the stamp sits on the slip before the card resolves into a receipt. */
@@ -106,6 +116,23 @@ export function ApprovalCard(props: ApprovalCardProps) {
   const plan = asPlan(name, input);
   const [kept, setKept] = useState<boolean[]>(() => plan?.steps.map(() => true) ?? []);
   const keptCount = kept.filter(Boolean).length;
+  const { user } = useWorkspace();
+  /** Two-person sign-off: you gave the first approval (here, or earlier anywhere). */
+  const [signedHere, setSignedHere] = useState(false);
+  const signedByMe = signedHere || (!!user && props.meta?.signoffs?.first?.id === user.id);
+  /** Nothing for you to sign: an admin must, or you already gave the first of two. */
+  const waiting: "admin" | "second" | null = props.waitingForAdmin
+    ? "admin"
+    : signedByMe
+      ? "second"
+      : null;
+  /** A team rule says an admin decides: both approvals of a two-person sign-off are admins'. */
+  const approverIsAdmin = props.meta?.approver === "admin" || !!props.waitingForAdmin;
+  const facts = factsFor(
+    { name, effect, input, tainted },
+    props.meta,
+    props.requester?.email ?? user?.email,
+  );
 
   /** The input as currently edited, or an error. */
   function edited(): { value: unknown } | { error: string } {
@@ -174,7 +201,8 @@ export function ApprovalCard(props: ApprovalCardProps) {
   );
 
   async function decide(approved: boolean) {
-    if (busy || stamped || props.waitingForAdmin) return;
+    // Having given the first of two approvals, you can still deny (any deny ends it).
+    if (busy || stamped || waiting === "admin" || (waiting === "second" && approved)) return;
     setError(null);
     const body: { approved: boolean; reason?: string; input?: unknown } = { approved };
     const invalid = "error" in current ? String(current.error) : null;
@@ -184,6 +212,14 @@ export function ApprovalCard(props: ApprovalCardProps) {
     setBusy(approved ? "approve" : "deny");
     try {
       const res = await api.decide(runId, toolCallId, body);
+      if (res?.partial) {
+        // The first of two approvals: it keeps waiting for someone else.
+        setSignedHere(true);
+        setMode("view");
+        toast("Approved. It needs a second person to approve it too.", "success");
+        props.onPartial?.();
+        return;
+      }
       const info = {
         reason: body.reason,
         edited: approved && isEdited,
@@ -198,7 +234,11 @@ export function ApprovalCard(props: ApprovalCardProps) {
         pending?.();
       }, STAMP_MS);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err instanceof ApiError && err.code === "already_approved") {
+        // Two-person sign-off: you already gave the first approval.
+        setSignedHere(true);
+        toast(err.message, "info");
+      } else if (err instanceof ApiError && err.status === 409) {
         toast("Already decided, or the task moved on. Refreshing.", "info");
         props.onConflict();
       } else {
@@ -210,7 +250,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   }
 
   function openDeny() {
-    if (stamped || props.waitingForAdmin) return;
+    if (stamped || waiting === "admin") return;
     setDenying(true);
     setTimeout(() => denyInput.current?.focus(), 0);
   }
@@ -218,8 +258,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
   useImperativeHandle(props.handle, () => ({
     approve: () => void decide(true),
     deny: openDeny,
-    edit: () =>
-      mode === "edit" || stamped || plan || props.waitingForAdmin ? undefined : startEdit(),
+    edit: () => (mode === "edit" || stamped || plan || waiting ? undefined : startEdit()),
   }));
 
   const title = approvalTitle(preview, name);
@@ -247,10 +286,10 @@ export function ApprovalCard(props: ApprovalCardProps) {
 
       {/* The slip's header: what kind of paper this is and where it goes. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-dashed border-line-strong px-4 py-3 sm:px-6">
-        {props.waitingForAdmin ? (
+        {waiting ? (
           <span className="flex items-center gap-2 text-13 font-medium text-fg-muted">
             <span aria-hidden="true" className="size-2 rounded-full bg-fg-faint" />
-            Waiting for an admin
+            {waiting === "admin" ? "Waiting for an admin" : "Waiting for a second approval"}
           </span>
         ) : (
           <span className="flex items-center gap-2 text-13 font-medium text-attention">
@@ -260,7 +299,17 @@ export function ApprovalCard(props: ApprovalCardProps) {
               )}
               <span className="size-2 rounded-full bg-attention" />
             </span>
-            {props.requester ? `Needs an admin · ${props.requester.name}` : "Needs your sign-off"}
+            {props.requester
+              ? `${
+                  approverIsAdmin
+                    ? "Needs an admin"
+                    : props.meta?.escalatedAt
+                      ? "Escalated to admins"
+                      : "Needs a second approval"
+                } · ${props.requester.name}`
+              : props.meta?.signoffs?.first
+                ? "Needs your approval too"
+                : "Needs your sign-off"}
           </span>
         )}
         <span className="ml-auto flex min-w-0 items-center gap-2">
@@ -276,6 +325,11 @@ export function ApprovalCard(props: ApprovalCardProps) {
         >
           {title}
         </h3>
+        {/* The taint fact is said in full just below. */}
+        <RiskChips
+          facts={tainted ? facts.filter((f) => f !== TAINT_FACT) : facts}
+          className="mt-3"
+        />
         {tainted || reason ? (
           <div className="mt-2.5 space-y-1">
             {tainted ? (
@@ -380,21 +434,67 @@ export function ApprovalCard(props: ApprovalCardProps) {
         ) : null}
       </div>
 
-      {props.waitingForAdmin ? (
+      {waiting ? (
         <div className="px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
+          <ApprovalStatusLine
+            meta={props.meta}
+            me={user?.id}
+            admin={approverIsAdmin}
+            className="mb-3"
+          />
           <p className="text-13 text-fg-muted">
-            Your team requires an admin to approve this. It's in their inbox; the task picks up as
-            soon as they decide.
+            {waiting === "admin"
+              ? "Your team requires an admin to approve this. It's in their inbox; the task picks up as soon as they decide."
+              : `You approved. Your team needs a second ${approverIsAdmin ? "admin" : "person"} to approve it too before it runs; any deny ends it.`}
           </p>
+          {waiting === "second" ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {denying ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    disabled={locked}
+                    onClick={() => void decide(false)}
+                  >
+                    {busy === "deny" ? "Denying…" : "Deny"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={locked}
+                    onClick={() => setDenying(false)}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm text-danger"
+                  disabled={locked}
+                  onClick={openDeny}
+                >
+                  Changed your mind? Deny…
+                </button>
+              )}
+            </div>
+          ) : null}
           <div className="mt-3 border-t border-fg/25 pt-1.5">
             <span className="font-mono text-[10.5px] tracking-[0.14em] text-fg-faint uppercase">
-              An admin's signature
+              {waiting === "admin" ? "An admin's signature" : "Signed by you · one more to go"}
             </span>
           </div>
         </div>
       ) : (
         /* The signature line: the buttons sit on it like a pen on paper. */
         <div className="relative px-4 pt-6 pb-4 sm:px-6 sm:pb-5">
+          <ApprovalStatusLine
+            meta={props.meta}
+            me={user?.id}
+            admin={approverIsAdmin}
+            className={cx("mb-3", stamped && "opacity-40")}
+          />
           <div className={cx("flex flex-wrap items-center gap-2", stamped && "opacity-40")}>
             <button
               type="button"

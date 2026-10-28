@@ -30,6 +30,7 @@ import {
   plural,
 } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
+import { useWorkspace } from "@/lib/workspace";
 
 const TRIGGER: Record<string, string> = { chat: "You", schedule: "Schedule", manual: "Run now" };
 
@@ -333,16 +334,41 @@ function SpendChart({ days, loading }: { days: UsageDay[]; loading: boolean }) {
   );
 }
 
-function decidedBy(c: AuditToolCall) {
+function decidedBy(c: AuditToolCall, me: string | null | undefined) {
   if (c.decision === "block") return "Blocked by a rule";
   if (c.decision === "allow") return "Allowed automatically";
-  if (c.status === "awaiting_approval") return "Waiting for you";
-  if (c.status === "denied") return c.decidedBy ? "Denied by you" : "Denied";
-  return c.decidedBy ? "Approved by you" : "Approved";
+  const who = (id: string | null | undefined, name: string | null | undefined) =>
+    id && id === me ? "you" : (name ?? "you");
+  if (c.status === "awaiting_approval")
+    return c.firstApprovedBy
+      ? `Approved by ${who(c.firstApprovedBy, c.firstApprovedByName)} · waiting for a second approval`
+      : "Waiting for you";
+  if (c.decidedVia === "expiry") return "Expired: nobody decided in time";
+  const second = who(c.decidedBy, c.decidedByName);
+  const approved = c.firstApprovedBy
+    ? `Approved by ${who(c.firstApprovedBy, c.firstApprovedByName)} and ${second}`
+    : `Approved by ${second}`;
+  if (c.status === "denied") {
+    // Approved, then undone or stopped before it ran: the person didn't deny it.
+    const why = c.output?.type === "denied" ? c.output.reason : "";
+    if (c.decidedBy && why && !why.startsWith("The user denied")) return `${approved} · didn't run`;
+    return c.decidedBy ? `Denied by ${second}` : "Denied";
+  }
+  return c.decidedBy ? approved : "Approved";
+}
+
+/** Reminders and escalation, for the audit trail. */
+function followUps(c: AuditToolCall): string | null {
+  const parts = [
+    c.remindedAt ? `reminded ${formatDateTime(c.remindedAt)}` : null,
+    c.escalatedAt ? `escalated to admins ${formatDateTime(c.escalatedAt)}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 function RunDetail({ run }: { run: RunRow }) {
   const detail = useApi(() => api.run(run.id), run.id);
+  const { user } = useWorkspace();
   const r = detail.data?.run ?? run;
   const calls = detail.data?.toolCalls;
   const duration =
@@ -406,7 +432,7 @@ function RunDetail({ run }: { run: RunRow }) {
                         {approvalTitle(null, c.name)}
                       </span>
                       <span className="block text-12 text-fg-muted">
-                        {decidedBy(c)}
+                        {decidedBy(c, user?.id)}
                         {c.decidedAt ? ` · ${formatDateTime(c.decidedAt)}` : ""}
                       </span>
                     </span>
@@ -421,7 +447,8 @@ function RunDetail({ run }: { run: RunRow }) {
                     ) : null}
                     <p className="text-12 text-fg-faint">
                       {humanToolName(c.name)} · proposed {formatDateTime(c.createdAt)}
-                      {c.inputEdited ? " · input edited by you" : ""}
+                      {c.inputEdited ? " · input edited when approved" : ""}
+                      {followUps(c) ? ` · ${followUps(c)}` : ""}
                     </p>
                     <div>
                       <div className="eyebrow mb-1.5">Input</div>

@@ -31,7 +31,116 @@ export function Notifications({
     <div className="space-y-10">
       <PushSection />
       <EmailAlerts settings={settings} save={save} configured={emailConfigured} />
+      <WhenNobodyDecides settings={settings} save={save} />
     </div>
+  );
+}
+
+const REMIND: [number, string][] = [
+  [0, "Off"],
+  [15, "15 minutes"],
+  [30, "30 minutes"],
+  [60, "1 hour"],
+  [120, "2 hours"],
+  [240, "4 hours"],
+];
+const EXPIRE: [number, string][] = [
+  [0, "Never"],
+  [1, "1 hour"],
+  [4, "4 hours"],
+  [8, "8 hours"],
+  [24, "24 hours"],
+  [72, "3 days"],
+  [168, "7 days"],
+];
+
+/** A labelled choice from a short list; a value outside it (set over the API) is kept. */
+export function ChoiceRow<T extends string | number>({
+  id,
+  label,
+  hint,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint: ReactNode;
+  value: T;
+  options: [T, string][];
+  disabled?: boolean;
+  onChange: (v: T) => void;
+}) {
+  const list = options.some(([v]) => v === value) ? options : [...options, [value, String(value)]];
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0">
+        <label htmlFor={id} className="text-14 text-fg">
+          {label}
+        </label>
+        <p className="hint mt-0.5">{hint}</p>
+      </div>
+      <select
+        id={id}
+        className="input w-full shrink-0 sm:w-48"
+        value={String(value)}
+        disabled={disabled}
+        onChange={(e) => {
+          const picked = list.find(([v]) => String(v) === e.target.value);
+          if (picked) onChange(picked[0] as T);
+        }}
+      >
+        {list.map(([v, text]) => (
+          <option key={String(v)} value={String(v)}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function WhenNobodyDecides({ settings, save }: { settings: Settings; save: SaveFn }) {
+  const [remind, setRemind] = useState(settings.remindMinutes);
+  const [expire, setExpire] = useState(settings.expireHours);
+  useEffect(() => setRemind(settings.remindMinutes), [settings.remindMinutes]);
+  useEffect(() => setExpire(settings.expireHours), [settings.expireHours]);
+  return (
+    <section className="border-t border-line pt-8">
+      <h3 className="font-serif text-[24px] leading-tight text-fg">When nobody decides</h3>
+      <p className="mt-1 mb-4 text-13 text-fg-muted">
+        An approval that waits too long gets one reminder, through the same channels. If it still
+        isn't decided, it expires: the agent is told nobody approved it in time, and the task
+        carries on without it. A team can set its own expiry.
+      </p>
+      <div className="divide-y divide-line rounded-[16px] border border-line bg-surface">
+        <ChoiceRow
+          id="remind-after"
+          label="Remind me after"
+          hint="One reminder per approval."
+          value={remind}
+          options={REMIND}
+          onChange={async (v) => {
+            const before = remind;
+            setRemind(v);
+            if (!(await save({ remindMinutes: v }, "Reminder saved"))) setRemind(before);
+          }}
+        />
+        <ChoiceRow
+          id="expire-after"
+          label="Expire after"
+          hint="Applies to approvals that start waiting from now on."
+          value={expire}
+          options={EXPIRE}
+          onChange={async (v) => {
+            const before = expire;
+            setExpire(v);
+            if (!(await save({ expireHours: v }, "Expiry saved"))) setExpire(before);
+          }}
+        />
+      </div>
+    </section>
   );
 }
 
