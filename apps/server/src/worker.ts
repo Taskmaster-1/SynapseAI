@@ -9,7 +9,13 @@ import {
   resetAttempts,
   schema,
 } from "@synapse/db";
-import { buildToolset, loadMemoryBlock, loadWritingStyle } from "@synapse/tools";
+import {
+  buildToolset,
+  isViewable,
+  loadFiles,
+  loadMemoryBlock,
+  loadWritingStyle,
+} from "@synapse/tools";
 import type { LanguageModel } from "ai";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { log } from "./log";
@@ -253,6 +259,10 @@ export class Worker {
         ...(summary[0] ? { summaryModel: summary[0] } : {}),
         system,
         signal: controller.signal,
+        loadImage: async (userId, fileId) => {
+          const [file] = await loadFiles(db, userId, [fileId]);
+          return file && isViewable(file.mimeType, file.bytes) ? file : null;
+        },
         limits: {
           maxSteps: config.RUN_MAX_STEPS,
           maxCostUsd: capBudget(settings?.budgets?.perRunUsd, config.RUN_MAX_COST_USD),

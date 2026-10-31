@@ -8,6 +8,7 @@ export function capToolOutput(
   output: ToolOutput,
   maxChars = DEFAULT_TOOL_OUTPUT_CHARS,
 ): ToolOutput {
+  if (output.type === "image") return output;
   const text =
     output.type === "json"
       ? JSON.stringify(output.value)
@@ -32,7 +33,95 @@ export function toModelOutput(output: ToolOutput): ToolResultPart["output"] {
       return { type: "error-text", value: output.value };
     case "denied":
       return { type: "execution-denied", reason: output.reason };
+    case "image":
+      return {
+        type: "content",
+        value: [
+          { type: "text", text: `Image ${output.name} (file ${output.fileId}):` },
+          {
+            type: "file",
+            mediaType: output.mimeType,
+            filename: output.name,
+            // Filled in by `attachImages` right before the model call.
+            data: { type: "text", text: "" },
+            providerOptions: { synapse: { fileId: output.fileId } },
+          },
+        ],
+      };
   }
+}
+
+/** Images sent per model call. Older ones are replaced by a note; the model can look again. */
+export const MAX_IMAGES_IN_CONTEXT = 4;
+
+export type ImageLoader = (fileId: string) => Promise<{ data: Uint8Array } | null>;
+
+type FilePart = { type: "file"; providerOptions?: { synapse?: { fileId?: unknown } } };
+const imageFileId = (p: { type: string }): string | null => {
+  const id = (p as FilePart).providerOptions?.synapse?.fileId;
+  return p.type === "file" && typeof id === "string" ? id : null;
+};
+
+/**
+ * Loads the images that tool results refer to, newest first, up to `max`. Images past the
+ * limit, missing ones, and all of them when the runtime has no loader become a short note.
+ */
+export async function attachImages(
+  messages: ModelMessage[],
+  load: ImageLoader | undefined,
+  max = MAX_IMAGES_IN_CONTEXT,
+): Promise<ModelMessage[]> {
+  const ids: string[] = [];
+  for (const m of messages)
+    if (m.role === "tool")
+      for (const r of m.content)
+        if (r.type === "tool-result" && r.output.type === "content")
+          for (const p of r.output.value) {
+            const id = imageFileId(p);
+            if (id) ids.push(id);
+          }
+  if (ids.length === 0) return messages;
+
+  const keep = new Set(ids.slice(-max));
+  const loaded = new Map<string, Uint8Array | null>();
+  if (load)
+    await Promise.all(
+      [...keep].map(async (id) => {
+        const file = await load(id).catch(() => null);
+        loaded.set(id, file?.data ?? null);
+      }),
+    );
+
+  const note = (id: string) =>
+    !load
+      ? "[Image not shown here.]"
+      : keep.has(id)
+        ? "[The image is no longer available.]"
+        : "[Image shown earlier; call file_read again to look at it.]";
+  return messages.map((m) =>
+    m.role !== "tool"
+      ? m
+      : {
+          ...m,
+          content: m.content.map((r) => {
+            if (r.type !== "tool-result" || r.output.type !== "content") return r;
+            return {
+              ...r,
+              output: {
+                ...r.output,
+                value: r.output.value.map((p) => {
+                  const id = p.type === "file" ? imageFileId(p) : null;
+                  if (p.type !== "file" || !id) return p;
+                  const data = loaded.get(id);
+                  return data
+                    ? { ...p, data: { type: "data" as const, data } }
+                    : { type: "text" as const, text: note(id) };
+                }),
+              },
+            };
+          }),
+        },
+  );
 }
 
 /** Rough token estimate (~4 chars/token). Only used to decide when to compact. */

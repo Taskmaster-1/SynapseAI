@@ -68,7 +68,12 @@ export type ToolOutput =
   | { type: "text"; value: string }
   | { type: "json"; value: JSONValue }
   | { type: "error"; value: string }
-  | { type: "denied"; reason: string };
+  | { type: "denied"; reason: string }
+  /**
+   * A photo the model looks at. Only the file id is stored; the runtime loads the image
+   * right before each model call (see `RunAgentOptions.loadImage`).
+   */
+  | { type: "image"; fileId: string; name: string; mimeType: string; bytes: number };
 
 export interface RunRecord {
   id: string;
