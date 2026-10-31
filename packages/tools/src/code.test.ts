@@ -70,7 +70,8 @@ describe("sandbox", () => {
   });
 
   test("a memory blowup and runaway recursion are contained", async () => {
-    expect(await fails("const a = []; while (true) a.push('x'.repeat(1000) + a.length)")).toBe(
+    // Big chunks, so memory runs out well before the time limit even on a slow CI machine.
+    expect(await fails("const a = []; while (true) a.push('x'.repeat(1e6) + a.length)")).toBe(
       "Stopped: the code ran out of memory (64 MB)",
     );
     expect(await fails("'a'.repeat(1e9).length")).toContain("out of memory");
