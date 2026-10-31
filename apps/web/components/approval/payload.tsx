@@ -387,26 +387,35 @@ const REPEAT_LABELS: Record<string, string> = {
   monthly: "Every month",
 };
 
-/** When it fires, in the zone given or the offset the agent wrote (else this device's). */
+/**
+ * When it fires, in the zone given, else at the offset the agent wrote, so it matches the
+ * card's title (which the server writes in the user's zone).
+ */
 function scheduledTime(when: unknown, timezone: unknown): string {
   const s = typeof when === "string" ? when : "";
   const d = new Date(s);
   if (!s || Number.isNaN(d.getTime())) return s || "—";
-  const tz = typeof timezone === "string" && timezone ? timezone : undefined;
-  try {
-    return d.toLocaleString(undefined, {
-      timeZone: tz,
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
-    });
-  } catch {
-    return s;
+  const parts = {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  } as const;
+  if (typeof timezone === "string" && timezone) {
+    try {
+      return d.toLocaleString(undefined, { ...parts, timeZone: timezone, timeZoneName: "short" });
+    } catch {}
   }
+  const m = /([+-])(\d{2}):?(\d{2})$/.exec(s);
+  const offset = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+  const local = new Date(d.getTime() + offset * 60_000).toLocaleString(undefined, {
+    ...parts,
+    timeZone: "UTC",
+  });
+  return `${local} ${offset === 0 ? "UTC" : `UTC${m![1]}${m![2]}:${m![3]}`}`;
 }
 
 /** Scheduling for later: what kind, when, how often, then the instructions as a page. */
