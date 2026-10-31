@@ -114,7 +114,7 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Tools"
         title="Connections"
-        description="Where the agent can work. Gmail and Calendar are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
+        description="Where the agent can work. Google (Gmail, Calendar, Drive, Contacts) and Slack are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus />
