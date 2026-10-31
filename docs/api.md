@@ -195,7 +195,7 @@ other notes.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean, remindMinutes: number, expireHours: number }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured; `remindMinutes` (0–1440, default 30, 0 is off) sends one reminder about an undecided approval; `expireHours` (0–336, default 24, 0 is never) denies it as expired |
+| GET | `/api/settings` | | `{ instructions: string \| null, models: { chain: string[] }, budgets: { perRunUsd, perDayUsd }, providerKeys: Record<"anthropic"\|"openai"\|"google"\|"gateway", boolean>, undoSeconds: number, emailAlerts: boolean, remindMinutes: number, expireHours: number, timezone: string \| null }` — keys are write-only; `undoSeconds` (0–60, default 10, 0 is off) is the undo window for sends and deletes; `emailAlerts` (default false) emails the account address about new approvals when SMTP is configured; `remindMinutes` (0–1440, default 30, 0 is off) sends one reminder about an undecided approval; `expireHours` (0–336, default 24, 0 is never) denies it as expired; `timezone` (IANA name or null) is used for scheduled reminders and tasks |
 | PUT | `/api/settings` | partial of the above; `providerKeys` values are strings to set, `null` to clear | same as GET |
 | GET | `/api/usage?days=30` | | `{ days: { date, costUsd, runs, inputTokens, outputTokens }[] }` |
 | GET | `/api/models` | | `{ models: ModelEntry[], updatedAt: string \| null }` |
@@ -239,7 +239,7 @@ approvals inbox.
 
 | `trigger` | Fires | Where it runs |
 |---|---|---|
-| `{ type: "schedule" }` | On the 5-field cron in `schedule` (≥ 15 min apart), in `timezone` | The automation's own chat |
+| `{ type: "schedule" }` | On the 5-field cron in `schedule` (≥ 15 min apart), in `timezone`; or once, at `runAt`, after which it turns itself off | The automation's chat (for ones scheduled from chat, that chat) |
 | `{ type: "gmail", query }` | For each new Gmail message matching `query` (Gmail search syntax; empty = inbox). Polled every `TRIGGER_POLL_SECONDS` (120). Mail you send and mail that was there before the trigger was created never fire it. | A new task per email |
 | `{ type: "webhook" }` | On `POST webhookUrl` | A new task per delivery |
 
@@ -248,9 +248,44 @@ so no write, send or destructive call is auto-allowed, whatever your rules say.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/automations` | | `{ automations: { id, name, prompt, trigger, schedule, timezone, enabled, chatId, nextRunAt, lastRunAt, lastError, webhookUrl }[] }` |
-| POST | `/api/automations` | `{ name, prompt, trigger?, schedule?, timezone?, enabled? }` — `trigger` defaults to schedule | `{ automation }` (`422 invalid_schedule`, `422 google_not_connected`) |
+| GET | `/api/automations` | | `{ automations: { id, name, prompt, kind, trigger, schedule, runAt, timezone, enabled, chatId, nextRunAt, lastRunAt, lastError, webhookUrl }[] }` |
+| POST | `/api/automations` | `{ name, prompt, kind?, trigger?, schedule?, runAt?, timezone?, enabled? }` — `trigger` defaults to schedule; `runAt` (ISO 8601 with offset, in the future, within a year) makes it a one-off and `schedule` is ignored; `kind` is `task` (default: runs the prompt) or `reminder` (only notifies) | `{ automation }` (`422 invalid_schedule`, `422 google_not_connected`) |
 | PATCH | `/api/automations/:id` | any of the above, plus `rotateWebhook: true` for a new URL; omitted fields keep their value | `{ automation }` |
 | DELETE | `/api/automations/:id` | | `204` |
-| POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now |
+| POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now (`422 reminder` for reminders) |
 | GET | `/api/automations/templates` | | `{ categories, googleAvailable, templates: { id, name, outcome, category, trigger, schedule?, prompt, requires, missing }[] }` — the gallery; `requires` is `google`, `github` or `linear` (MCP connections match by name or URL), `missing` what you haven't connected |
+
+### Scheduled from chat
+
+The agent schedules reminders and follow-ups with three built-in tools. Each creates or
+changes an ordinary schedule automation, so everything above applies, and they show on the
+Automations page (one-offs with a "Once" label and their time, cancellable there).
+
+| Tool | Effect | What it does |
+|---|---|---|
+| `schedule_task` | write, allowed by default | `{ title, instructions, when, kind, repeat?, timezone? }`. `when` is ISO 8601 with an offset (the model resolves "Friday at 9" itself), in the future and within a year. `repeat` is `none` (default), `daily`, `weekdays`, `weekly` or `monthly`, anchored on the day and wall-clock time of `when` in the user's time zone (so 09:00 stays 09:00 across DST), or a five-field cron (≥ 15 min apart) whose first run is at or after `when`. At most 100 active automations per person. The approval card reads "Remind you Fri 7 Nov, 09:00: Send the report" or "Schedule for Mon 3 Nov, 09:00 (weekly): Plan the week". |
+| `list_scheduled` | read | Upcoming schedule automations with id, next time and repeat, plus the current time in the user's zone (how the agent learns what "now" is). |
+| `cancel_scheduled` | write, allowed by default | Pauses one by id. Nothing is deleted: it can be turned back on under Automations. |
+
+**Where it runs.** The automation belongs to the chat it was asked in. A `task` posts
+`[Scheduled: title]` and the instructions into that chat as a new turn, so the agent picks up
+with the whole conversation (who Sam is, which email) as context. A `reminder` makes no model
+call: it adds "Reminder: …" to the chat as the assistant and notifies the person on every
+channel they set up (push, Slack DM, and email if email alerts are on). Deleting the chat
+deletes its scheduled items. If the chat has a turn in progress, or one waiting on an
+approval, when a one-off task is due, it retries every minute until the chat is free; a
+reminder is still sent on time, without the chat note.
+
+**Why scheduling doesn't ask.** It only touches the person's own account, they can see and
+cancel everything under Automations, and a fired task is a new run in which every action
+goes through policy again (a chat that read outside content stays tainted). The safety rule
+that matters is kept: once a run has read untrusted content (an email, web page, document),
+`schedule_task` and `cancel_scheduled` ask like any other write, so an email cannot plant a
+scheduled instruction or switch off your automations. A rule like
+`{ tool: "schedule_task", decision: "ask" }` makes it always ask.
+
+**Time zone.** `timezone` in `/api/settings` (an IANA name; the web app fills it from the
+browser the first time, and Settings → General changes it). It sets the default zone for
+scheduled items, how times are shown to the agent and on approval cards, and the date in
+the system prompt ("Today is Friday 2026-11-06, time zone Europe/London"). Without one,
+UTC is used.

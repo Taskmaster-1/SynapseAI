@@ -318,7 +318,61 @@ function General({ settings, save }: { settings: Settings; save: SaveFn }) {
         }}
       />
       <UndoWindow settings={settings} save={save} />
+      <TimeZone settings={settings} save={save} />
     </div>
+  );
+}
+
+function deviceZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** Saved on change: reminders and the agent's "today" follow it. */
+function TimeZone({ settings, save }: { settings: Settings; save: SaveFn }) {
+  const device = deviceZone();
+  const zones = useMemo(() => {
+    let all: string[] = [];
+    try {
+      all = Intl.supportedValuesOf("timeZone");
+    } catch {}
+    const current = settings.timezone ?? device;
+    return all.includes(current) ? all : [current, ...all];
+  }, [settings.timezone, device]);
+  return (
+    <Field
+      label="Time zone"
+      htmlFor="set-timezone"
+      hint="Used when the agent schedules reminders and follow-ups for you, and for what “today” means."
+      className="border-t border-line pt-6"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          id="set-timezone"
+          className="input max-w-xs"
+          value={settings.timezone ?? device}
+          onChange={(e) => void save({ timezone: e.target.value }, "Time zone saved")}
+        >
+          {zones.map((z) => (
+            <option key={z} value={z}>
+              {z.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+        {settings.timezone && settings.timezone !== device ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => void save({ timezone: device }, "Time zone saved")}
+          >
+            Use this device's ({device.replace(/_/g, " ")})
+          </button>
+        ) : null}
+      </div>
+    </Field>
   );
 }
 

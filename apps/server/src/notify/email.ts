@@ -4,7 +4,7 @@ import nodemailer from "nodemailer";
 import { log } from "../log";
 import type { Services } from "../services";
 import { detailLines, TITLE } from "./text";
-import type { NotificationChannel, PendingApproval } from "./types";
+import type { NotificationChannel, PendingApproval, UserNotice } from "./types";
 
 export interface MailMessage {
   from: string;
@@ -52,6 +52,44 @@ export class EmailChannel implements NotificationChannel {
           await this.transport.sendMail({ from: this.from, to: person.email, ...render(items) });
         } catch (error) {
           log.warn("alert email failed", { userId: person.id, error: String(error) });
+        }
+      }),
+    );
+  }
+
+  /** Reminders go out on the same opt-in as approval alerts. */
+  async notice(notices: UserNotice[]): Promise<void> {
+    if (notices.length === 0) return;
+    const people = await this.services()
+      .database.db.select({ id: schema.user.id, email: schema.user.email })
+      .from(schema.user)
+      .innerJoin(schema.userSettings, eq(schema.userSettings.userId, schema.user.id))
+      .where(
+        and(
+          inArray(schema.user.id, [...new Set(notices.map((n) => n.userId))]),
+          eq(schema.userSettings.emailAlerts, true),
+        ),
+      );
+    const to = new Map(people.map((p) => [p.id, p.email]));
+    await Promise.all(
+      notices.map(async (n) => {
+        const address = to.get(n.userId);
+        if (!address) return;
+        try {
+          await this.transport.sendMail({
+            from: this.from,
+            to: address,
+            subject: oneLine(n.title, 100),
+            text: `${n.body}\n\nOpen: ${n.url}`,
+            html: `<!doctype html><html><body style="margin:0;padding:24px;background:#f4f1ea;color:#15140f;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<div style="max-width:560px;margin:0 auto;background:#fffdf8;border:1px solid #e2dccf;border-radius:12px;padding:24px">
+<p style="margin:0 0 8px;font-weight:600">${esc(n.title)}</p>
+<p style="margin:0 0 16px;white-space:pre-wrap">${esc(n.body)}</p>
+<a href="${esc(n.url)}" style="color:#3b48cc">Open the conversation</a>
+</div></body></html>`,
+          });
+        } catch (error) {
+          log.warn("reminder email failed", { userId: n.userId, error: String(error) });
         }
       }),
     );

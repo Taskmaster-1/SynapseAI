@@ -2,6 +2,8 @@
 
 import {
   ArrowRight,
+  Bell,
+  CalendarClock,
   Check,
   Copy,
   LoaderCircle,
@@ -56,6 +58,22 @@ function humanSchedule(cron: string, tz: string) {
   return d ? `${d} (${tz})` : `Custom schedule (${tz})`;
 }
 
+/** "Fri 7 Nov, 09:00" in the automation's own zone. */
+function onceLabel(iso: string, tz: string) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      timeZone: tz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return formatDateTime(iso);
+  }
+}
+
 type Editing = Automation | "new" | "new-email" | { template: AutomationTemplate };
 
 const editingKey = (e: Editing) =>
@@ -70,6 +88,9 @@ export default function AutomationsPage() {
     const q = new URLSearchParams(window.location.search);
     if (q.has("new")) setEditing(q.get("new") === "email" ? "new-email" : "new");
   }, []);
+
+  const remove = (id: string) =>
+    autos.setData((d) => (d ? { automations: d.automations.filter((x) => x.id !== id) } : d));
 
   const upsert = (a: Automation) =>
     autos.setData((d) => {
@@ -86,7 +107,7 @@ export default function AutomationsPage() {
       <PageHeader
         eyebrow="Runs on its own"
         title="Automations"
-        description="Prompts that run on a schedule, when an email arrives, or when another app calls a webhook. Anything that needs your OK waits in the Inbox."
+        description="Prompts that run on a schedule, when an email arrives, or when another app calls a webhook, plus the reminders and follow-ups you asked for in chat. Anything that needs your OK waits in the Inbox."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
             <Plus />
@@ -105,7 +126,12 @@ export default function AutomationsPage() {
         <ul className="space-y-3">
           {list.map((a) => (
             <li key={a.id}>
-              <AutomationCard automation={a} onChange={upsert} onEdit={() => setEditing(a)} />
+              <AutomationCard
+                automation={a}
+                onChange={upsert}
+                onEdit={() => setEditing(a)}
+                onDeleted={remove}
+              />
             </li>
           ))}
         </ul>
@@ -142,9 +168,7 @@ export default function AutomationsPage() {
               setEditing(null);
             }}
             onDeleted={(id) => {
-              autos.setData((d) =>
-                d ? { automations: d.automations.filter((x) => x.id !== id) } : d,
-              );
+              remove(id);
               setEditing(null);
             }}
           />
@@ -158,10 +182,12 @@ function AutomationCard({
   automation: a,
   onChange,
   onEdit,
+  onDeleted,
 }: {
   automation: Automation;
   onChange: (a: Automation) => void;
   onEdit: () => void;
+  onDeleted: (id: string) => void;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -186,7 +212,9 @@ function AutomationCard({
         !a.enabled && "bg-surface/60",
       )}
     >
-      {a.trigger.type === "schedule" ? (
+      {a.trigger.type === "schedule" && a.runAt ? (
+        <OnceStub automation={a} />
+      ) : a.trigger.type === "schedule" ? (
         <ScheduleStub cron={a.schedule} enabled={a.enabled} />
       ) : (
         <EventStub trigger={a.trigger} enabled={a.enabled} />
@@ -202,6 +230,12 @@ function AutomationCard({
             >
               {a.name}
             </h2>
+            {a.kind === "reminder" || a.runAt ? (
+              <p className="mt-1.5 flex flex-wrap gap-1.5">
+                {a.runAt ? <Tag>Once</Tag> : null}
+                {a.kind === "reminder" ? <Tag>Reminder</Tag> : null}
+              </p>
+            ) : null}
             <p className="mt-1 line-clamp-2 text-14 text-fg-muted">{a.prompt}</p>
           </div>
           <Switch
@@ -243,34 +277,55 @@ function AutomationCard({
             )}
           </span>
           <span className="ml-auto flex items-center gap-1.5">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              disabled={busy !== null}
-              onClick={onEdit}
-            >
-              <Pencil className="size-3.5" />
-              Edit
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={busy !== null}
-              onClick={() =>
-                void act("run", async () => {
-                  const res = await api.runAutomation(a.id);
-                  void reload();
-                  router.push(`/t/${res.chatId}`);
-                })
-              }
-            >
-              {busy === "run" ? (
-                <LoaderCircle className="anim-spin size-3.5" />
-              ) : (
-                <Play className="size-3.5" />
-              )}
-              Run now
-            </button>
+            {a.runAt ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm text-danger"
+                disabled={busy !== null}
+                onClick={() => {
+                  if (!window.confirm(`Cancel “${a.name}”? It is removed for good.`)) return;
+                  void act("cancel", async () => {
+                    await api.deleteAutomation(a.id);
+                    onDeleted(a.id);
+                    toast(a.enabled ? "Cancelled" : "Removed", "success");
+                  });
+                }}
+              >
+                <Trash className="size-3.5" />
+                {a.enabled ? "Cancel" : "Remove"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={busy !== null}
+                onClick={onEdit}
+              >
+                <Pencil className="size-3.5" />
+                Edit
+              </button>
+            )}
+            {a.kind === "reminder" ? null : (
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={busy !== null}
+                onClick={() =>
+                  void act("run", async () => {
+                    const res = await api.runAutomation(a.id);
+                    void reload();
+                    router.push(`/t/${res.chatId}`);
+                  })
+                }
+              >
+                {busy === "run" ? (
+                  <LoaderCircle className="anim-spin size-3.5" />
+                ) : (
+                  <Play className="size-3.5" />
+                )}
+                Run now
+              </button>
+            )}
           </span>
         </div>
       </div>
@@ -534,6 +589,42 @@ function splitSchedule(cron: string): [string, string | null] {
   return at ? [when!, at] : [d, null];
 }
 
+function Tag({ children }: { children: string }) {
+  return (
+    <span className="rounded-full bg-sunken px-2 py-px font-mono text-[10px] tracking-[0.1em] text-fg-muted uppercase">
+      {children}
+    </span>
+  );
+}
+
+/** The stub of a one-off: its date and time, in its own zone. */
+function OnceStub({ automation: a }: { automation: Automation }) {
+  const at = new Date(a.runAt ?? "");
+  const part = (o: Intl.DateTimeFormatOptions) => {
+    try {
+      return at.toLocaleString(undefined, { timeZone: a.timezone, ...o });
+    } catch {
+      return at.toLocaleString(undefined, o);
+    }
+  };
+  return (
+    <div
+      aria-hidden="true"
+      className={cx(
+        "hidden w-[112px] shrink-0 flex-col items-center justify-center border-r border-dashed border-line-strong bg-sunken/60 px-3 text-center sm:flex",
+        !a.enabled && "opacity-60",
+      )}
+    >
+      <span className="tabular font-serif text-[34px] leading-none text-fg">
+        {part({ hour: "2-digit", minute: "2-digit" })}
+      </span>
+      <span className="mt-1.5 font-mono text-[10px] leading-tight tracking-[0.1em] text-fg-faint uppercase">
+        {part({ weekday: "short", day: "numeric", month: "short" })}
+      </span>
+    </div>
+  );
+}
+
 /** The tear-off stub on the left of a schedule ticket. */
 function ScheduleStub({ cron, enabled }: { cron: string; enabled: boolean }) {
   const [when, at] = splitSchedule(cron);
@@ -781,6 +872,25 @@ function CopyField({ value }: { value: string }) {
 
 function TriggerLine({ automation: a }: { automation: Automation }) {
   const iconClass = a.enabled ? "text-accent" : "text-fg-faint";
+  if (a.trigger.type === "schedule" && a.runAt)
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">
+        <span className="inline-flex items-center gap-1.5 text-fg">
+          {a.kind === "reminder" ? (
+            <Bell className={iconClass} />
+          ) : (
+            <CalendarClock className={iconClass} />
+          )}
+          {a.kind === "reminder" ? "Reminds you" : "Runs once"} {onceLabel(a.runAt, a.timezone)} (
+          {a.timezone})
+        </span>
+        {a.chatId ? (
+          <Link href={`/t/${a.chatId}`} className="text-fg-muted hover:text-fg hover:underline">
+            From this conversation
+          </Link>
+        ) : null}
+      </div>
+    );
   if (a.trigger.type === "schedule")
     return (
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-13">

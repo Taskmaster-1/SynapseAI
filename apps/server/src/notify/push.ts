@@ -6,7 +6,7 @@ import type { PushConfig } from "../config";
 import { log } from "../log";
 import type { Services } from "../services";
 import { detailLines, TITLE } from "./text";
-import type { NotificationChannel, PendingApproval } from "./types";
+import type { NotificationChannel, PendingApproval, UserNotice } from "./types";
 
 /** What the service worker receives (public/sw.js reads exactly these fields). */
 export interface PushMessage {
@@ -116,6 +116,19 @@ export class PushChannel implements NotificationChannel {
     await Promise.all(
       [...byRecipient].map(([recipient, items]) =>
         this.sendToUser(recipient, this.message(items, undo)),
+      ),
+    );
+  }
+
+  async notice(notices: UserNotice[]): Promise<void> {
+    await Promise.all(
+      notices.map((n) =>
+        this.sendToUser(n.userId, {
+          title: n.title,
+          body: clip(n.body, 300),
+          tag: n.tag,
+          data: { url: n.url },
+        }),
       ),
     );
   }

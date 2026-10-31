@@ -3,6 +3,7 @@ import {
   claimRun,
   continuePendingInputs,
   fireDueAutomations,
+  fireDueReminders,
   PgRunStore,
   releaseRun,
   renewLease,
@@ -77,6 +78,13 @@ export class Worker {
       if (fired.length) log.info("automations fired", { count: fired.length });
     } catch (error) {
       log.error("automation scheduler failed", { error: String(error) });
+    }
+    try {
+      const reminded = await fireDueReminders(this.s.database.db);
+      await this.s.notifier.reminders(reminded);
+      if (reminded.length) log.info("reminders sent", { count: reminded.length });
+    } catch (error) {
+      log.error("reminder scheduler failed", { error: String(error) });
     }
     try {
       const fired = await pollGmailTriggers(this.s);
@@ -255,6 +263,7 @@ export class Worker {
         writingStyle: await loadWritingStyle(db, run.userId),
         connections: conns.map((c) => c.name),
         skills: skillsPromptBlock(toolset.skills),
+        timezone: settings?.timezone ?? null,
       });
 
       const summary = this.modelOverride
