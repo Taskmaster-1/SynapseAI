@@ -269,3 +269,51 @@ test("browser types with parameters are stored plain", async () => {
   ]);
   expect(splitAttachments(line).files[0]?.mimeType).toBe("text/plain");
 });
+
+test("the agent sees an attached photo; the stored history keeps only its id", async () => {
+  const ada = await signUp("looker@files.test");
+  const photo = (await upload(ada, "receipt.png", "image/png", PNG)).json.file;
+  const clip = (await upload(ada, "clip.mp4", "video/mp4", "not really a video")).json.file;
+  const chat = await ada("/api/chats", { method: "POST", json: { content: "What's this?" } });
+  script([
+    {
+      toolCalls: [
+        { name: "file_read", id: "p1", input: { file: photo.id } },
+        { name: "file_read", id: "v1", input: { file: clip.id } },
+      ],
+    },
+    { text: "A receipt." },
+  ]);
+  await worker.processNow(chat.json.runId);
+
+  expect((await toolCall(chat.json.runId, "p1")).output).toEqual({
+    type: "image",
+    fileId: photo.id,
+    name: "receipt.png",
+    mimeType: "image/png",
+    bytes: PNG.length,
+  });
+  expect(JSON.stringify((await toolCall(chat.json.runId, "v1")).output)).toContain(
+    "can be attached to an email",
+  );
+
+  // The second model call got the photo's bytes as an image part.
+  const prompt = model.calls[1]!.prompt as { role: string; content: unknown }[];
+  const result = prompt
+    .filter((m) => m.role === "tool")
+    .flatMap((m) => m.content as { toolCallId: string; output: { type: string; value: unknown } }[])
+    .find((r) => r.toolCallId === "p1")!;
+  expect(result.output.type).toBe("content");
+  const file = (result.output.value as { type: string; data?: unknown; mediaType?: string }[]).find(
+    (p) => p.type === "file" || p.type === "image-data" || p.type === "file-data",
+  )!;
+  expect(file.mediaType).toBe("image/png");
+  expect(file.data).toEqual({ type: "data", data: PNG });
+
+  // Neither the database nor the event stream carries the image itself.
+  const rows = await services.database.db
+    .select()
+    .from(schema.messages)
+    .where(eq(schema.messages.chatId, chat.json.chatId));
+  expect(JSON.stringify(rows)).not.toContain(Buffer.from(PNG).toString("base64"));
+});
