@@ -15,7 +15,7 @@ Types referenced below (`UiMessage`, `UiPart`, `SeqEvent`, `RunStatus`, `Effect`
 | Method | Path | Response |
 |---|---|---|
 | GET | `/api/health` | `{ ok: true }` |
-| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean }, features: { webSearch: boolean, embeddings: boolean, push: boolean, emailAlerts: boolean }, models: string[] }` — `push`/`emailAlerts`: the server has VAPID keys / SMTP configured |
+| GET | `/api/config` | `{ auth: { emailPassword: boolean, github: boolean, google: boolean }, integrations: { google: boolean, slack: boolean, github: boolean }, features: { webSearch: boolean, embeddings: boolean, push: boolean, emailAlerts: boolean }, models: string[] }` — `push`/`emailAlerts`: the server has VAPID keys / SMTP configured |
 | GET | `/oauth/client-metadata.json` | OAuth client metadata document for MCP servers |
 | POST | `/api/slack/interactions` | Slack's interactivity endpoint (button clicks). Authenticated by Slack's `X-Slack-Signature` over the raw body, rejected (`401`) when wrong or more than 5 minutes old. Answers `200` at once and decides in the background |
 | POST | `/api/hooks/:automationId/:token` | Starts a task for a webhook automation. Any body (JSON is pretty-printed for the agent, capped at 16 KB). `202 { ok, taskId }`; `404` for an unknown id or wrong token, `409` when paused, `413` over 256 KB, `429` over 60 per hour |
@@ -93,7 +93,7 @@ Gmail, Google Calendar, Drive, Sheets and Contacts, without an MCP server. Needs
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/integrations` | | `{ google: { available, tools: { name, group, effect, title }[], connection: { account, status, lastError, connectedAt, missing: { group, label }[] } \| null }, slack: { available, tools: { name, effect, title }[], connection: { team, status, lastError, connectedAt, agentTools } \| null } }` |
+| GET | `/api/integrations` | | `{ google: { available, tools: { name, group, effect, title }[], connection: { account, status, lastError, connectedAt, missing: { group, label }[] } \| null }, slack: { available, tools: { name, effect, title }[], connection: { team, status, lastError, connectedAt, agentTools } \| null }, github: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt, scopes } \| null } }` |
 | POST | `/api/integrations/google/connect` | | `{ url }` — open it in the browser; Google redirects back to the callback |
 | GET | `/api/integrations/google/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=google` or `?error=<message>` |
 | DELETE | `/api/integrations/google` | | `204` — revokes the grant at Google and deletes the tokens |
@@ -101,6 +101,9 @@ Gmail, Google Calendar, Drive, Sheets and Contacts, without an MCP server. Needs
 | GET | `/api/integrations/slack/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=slack` or `?error=<message>` |
 | POST | `/api/integrations/slack/test` | | `{ ok: true }` — sends a test DM (`422 slack_not_connected`, `422 slack_error`) |
 | DELETE | `/api/integrations/slack` | | `204` — revokes the user token (and the bot token, unless another user shares the workspace install) at Slack and deletes them |
+| POST | `/api/integrations/github/connect` | | `{ url }` — GitHub's consent page; needs `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (or the `GITHUB_TOOLS_*` pair) and the callback URL registered on the app ([setup](github.md)), else `422 not_configured` |
+| GET | `/api/integrations/github/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=github` or `?error=<message>` |
+| DELETE | `/api/integrations/github` | | `204` — revokes the token at GitHub (the whole grant for a dedicated tools app) and deletes it |
 
 With Slack connected, each approval addressed to you arrives as a Slack DM with Approve and
 Deny; decisions made there are recorded with `decidedVia: "slack"`. When the install also
@@ -108,6 +111,12 @@ granted a user token (`connection.agentTools`), the agent gets `slack_search`, `
 `slack_list_channels`, `slack_find_user` and `slack_post_message`, acting as you.
 `agentTools: false` means the connection predates them (or Slack revoked the user token) and
 needs a reconnect.
+
+With GitHub connected (`connection.account` is the GitHub login), the agent gets
+`github_search`, `github_read`, `github_my_work`, `github_read_file` (reads),
+`github_comment` (send) and `github_create_issue`, `github_update_issue` (writes), acting as
+you. `status: "needs_auth"` means GitHub stopped accepting the token; the tools are withheld
+until a reconnect.
 
 ## Policy
 
@@ -253,7 +262,7 @@ so no write, send or destructive call is auto-allowed, whatever your rules say.
 | PATCH | `/api/automations/:id` | any of the above, plus `rotateWebhook: true` for a new URL; omitted fields keep their value | `{ automation }` |
 | DELETE | `/api/automations/:id` | | `204` |
 | POST | `/api/automations/:id/run` | | `{ runId, queued, chatId }` — run it now (`422 reminder` for reminders) |
-| GET | `/api/automations/templates` | | `{ categories, googleAvailable, templates: { id, name, outcome, category, trigger, schedule?, prompt, requires, missing }[] }` — the gallery; `requires` is `google`, `github` or `linear` (MCP connections match by name or URL), `missing` what you haven't connected |
+| GET | `/api/automations/templates` | | `{ categories, googleAvailable, templates: { id, name, outcome, category, trigger, schedule?, prompt, requires, missing }[] }` — the gallery; `requires` is `google`, `github` or `linear` (the built-in GitHub connection counts; MCP connections match by name or URL), `missing` what you haven't connected |
 
 ### Scheduled from chat
 

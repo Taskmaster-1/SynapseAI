@@ -108,6 +108,11 @@ async function connected(s: Services, userId: string): Promise<Set<TemplateRequi
     .where(and(eq(schema.connections.userId, userId), eq(schema.connections.status, "active")));
   const out = new Set<TemplateRequirement>();
   if (s.config.google && google?.status === "active") out.add("google");
+  const [github] = await db
+    .select({ status: schema.integrations.status })
+    .from(schema.integrations)
+    .where(and(eq(schema.integrations.userId, userId), eq(schema.integrations.provider, "github")));
+  if (s.config.github && github?.status === "active") out.add("github");
   for (const key of ["github", "linear"] as const) {
     if (conns.some((c) => `${c.name} ${c.url}`.toLowerCase().includes(key))) out.add(key);
   }

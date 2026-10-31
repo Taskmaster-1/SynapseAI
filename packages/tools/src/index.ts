@@ -8,6 +8,8 @@ import { planTool } from "./builtin/plan";
 import { scheduleTools } from "./builtin/schedule";
 import { enabledSkills, skillTools } from "./builtin/skills";
 import { type WebSearchConfig, webFetchTool, webSearchTool } from "./builtin/web";
+import { type GitHubAppConfig, GitHubClient } from "./github/client";
+import { githubTools } from "./github/tools";
 import { calendarTools } from "./google/calendar";
 import {
   GOOGLE_SCOPE_GROUPS,
@@ -40,6 +42,8 @@ export {
   skillFromFiles,
 } from "./builtin/skills";
 export { htmlToText, type WebSearchConfig } from "./builtin/web";
+export * from "./github/client";
+export { parseIssueRef, parseRepo } from "./github/tools";
 export * from "./google/client";
 export {
   buildMime,
@@ -64,6 +68,8 @@ export interface ToolsetConfig {
   google: GoogleAppConfig | null;
   /** Set when the operator configured a Slack app (the server's Slack config fits). */
   slack: SlackToolsConfig | null;
+  /** Set when the operator configured a GitHub OAuth app for the tools. */
+  github?: GitHubAppConfig | null;
 }
 
 /**
@@ -110,6 +116,10 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     // Only with a user token: installs from before it existed reconnect first.
     const slack = await SlackUserClient.forUser(cfg.slack, cfg.db, cfg.box, userId);
     if (slack) builtin.push(...slackTools(async () => slack));
+  }
+  if (cfg.github) {
+    const gh = await GitHubClient.forUser(cfg.github, cfg.db, cfg.box, userId);
+    if (gh) builtin.push(...githubTools(async () => gh));
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {
