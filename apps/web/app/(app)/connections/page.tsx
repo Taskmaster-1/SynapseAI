@@ -632,12 +632,15 @@ function SampleConnections() {
 
 const GOOGLE_SETUP = "https://github.com/Taskmaster-1/SynapseAI/blob/main/docs/google.md";
 
-/** Gmail and Calendar, built in: one OAuth consent, no MCP server to run. */
+/** Gmail, Calendar, Drive and Contacts, built in: one OAuth consent, no MCP server to run. */
 function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
   const conn = google.connection;
   const connected = conn?.status === "active";
+  // A grant from before Drive and Contacts existed: those tools wait for a reconnect.
+  const missing = connected ? (conn.missing ?? []) : [];
+  const withheld = new Set(missing.map((m) => m.group));
 
   async function connect() {
     setBusy("connect");
@@ -653,7 +656,7 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
   async function disconnect() {
     if (
       !window.confirm(
-        "Disconnect Google? The agent loses access to Gmail and Calendar, and email automations stop.",
+        "Disconnect Google? The agent loses access to Gmail, Calendar, Drive and Contacts, and email automations stop.",
       )
     )
       return;
@@ -675,13 +678,14 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
         <span className="flex -space-x-1.5">
           <Monogram name="Gmail" size={40} className="ring-2 ring-surface" />
           <Monogram name="Calendar" size={40} className="ring-2 ring-surface" />
+          <Monogram name="Drive" size={40} className="ring-2 ring-surface" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="font-serif text-[24px] leading-[1.1] text-fg">Gmail and Calendar</div>
+          <div className="font-serif text-[24px] leading-[1.1] text-fg">Google</div>
           <div className="mt-0.5 truncate text-13 text-fg-muted">
             {conn
               ? conn.account
-              : "Read and answer email, organise your inbox, book and move meetings."}
+              : "Answer email, book meetings, read and write Docs, look up contacts."}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -717,6 +721,27 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
       {conn?.lastError && !connected ? (
         <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
       ) : null}
+      {missing.length > 0 && google.available ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed border-line px-5 py-3">
+          <p className="min-w-0 flex-1 text-13 text-fg-muted">
+            Reconnect to let the agent use {missing.map((m) => m.label).join(" and ")}. Gmail and
+            Calendar keep working until then.
+          </p>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={busy !== null}
+            onClick={() => void connect()}
+          >
+            {busy === "connect" ? (
+              <LoaderCircle className="anim-spin size-3.5" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Reconnect Google
+          </button>
+        </div>
+      ) : null}
       {!google.available ? (
         <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
           This server has no Google app yet. Whoever runs it sets{" "}
@@ -729,7 +754,12 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
           <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
             {google.tools.map((t) => (
               <li key={t.name} className="flex items-center justify-between gap-3 text-13">
-                <span className={connected ? "text-fg" : "text-fg-muted"}>{t.title}</span>
+                <span
+                  className={connected && !withheld.has(t.group) ? "text-fg" : "text-fg-muted"}
+                  title={withheld.has(t.group) ? "Reconnect Google to turn this on" : undefined}
+                >
+                  {t.title}
+                </span>
                 <EffectPill effect={t.effect} />
               </li>
             ))}
