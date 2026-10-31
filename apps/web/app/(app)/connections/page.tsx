@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
+import { LinearCard } from "@/components/linear-card";
 import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import {
@@ -86,6 +87,7 @@ export default function ConnectionsPage() {
     if (connected === "google") toast("Google connected", "success");
     else if (connected === "slack") toast("Slack connected", "success");
     else if (connected === "github") toast("GitHub connected", "success");
+    else if (connected === "linear") toast("Linear connected", "success");
     else if (connected) toast("Connection authorized", "success");
     if (error) toast(error.includes(" ") ? error : `Authorization failed: ${error}`, "error");
     if (q.has("add")) setAdding(true);
@@ -116,7 +118,7 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Tools"
         title="Connections"
-        description="Where the agent can work. Google (Gmail, Calendar, Drive, Sheets, Contacts), Slack and GitHub are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
+        description="Where the agent can work. Google (Gmail, Calendar, Drive, Sheets, Contacts), Slack, GitHub and Linear are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus />
@@ -140,6 +142,10 @@ export default function ConnectionsPage() {
             />
             <GitHubCard
               github={integrations.data.github}
+              onChange={() => void integrations.reload()}
+            />
+            <LinearCard
+              linear={integrations.data.linear}
               onChange={() => void integrations.reload()}
             />
           </div>

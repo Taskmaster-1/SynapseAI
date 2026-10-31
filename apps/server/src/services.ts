@@ -95,6 +95,7 @@ export async function createServices(
       google: config.google,
       slack: config.slack,
       github: config.github,
+      linear: config.linear,
     },
     notifier: new Notifier(() => services),
     slack: config.slack ? new SlackChannel(() => services) : null,

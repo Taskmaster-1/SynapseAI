@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { type AppEnv, apiError } from "../http";
 import { githubStatus } from "./github";
+import { linearStatus } from "./linear";
 import { slackStatus } from "./slack";
 
 /** What the Google integration adds, for the Connections page, by the scope group it needs. */
@@ -90,6 +91,7 @@ export const integrations = new Hono<AppEnv>()
       },
       slack: await slackStatus(c),
       github: await githubStatus(c),
+      linear: await linearStatus(c),
     });
   })
 

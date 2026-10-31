@@ -22,6 +22,8 @@ import { contactsTools } from "./google/contacts";
 import { driveTools } from "./google/drive";
 import { gmailTools } from "./google/gmail";
 import { sheetsTools } from "./google/sheets";
+import { type LinearAppConfig, LinearClient } from "./linear/client";
+import { linearTools } from "./linear/tools";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
@@ -56,6 +58,8 @@ export {
   type SentSample,
   sentSamples,
 } from "./google/gmail";
+export * from "./linear/client";
+export { linearIssueRef } from "./linear/tools";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
 export * from "./slack/client";
@@ -73,6 +77,8 @@ export interface ToolsetConfig {
   slack: SlackToolsConfig | null;
   /** Set when the operator configured a GitHub OAuth app for the tools. */
   github?: GitHubAppConfig | null;
+  /** Set when the operator configured a Linear OAuth app. Optional: older callers omit it. */
+  linear?: LinearAppConfig | null;
 }
 
 /**
@@ -124,6 +130,11 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
   if (cfg.github) {
     const gh = await GitHubClient.forUser(cfg.github, cfg.db, cfg.box, userId);
     if (gh) builtin.push(...githubTools(async () => gh));
+  }
+  if (cfg.linear) {
+    // Not offered while the integration needs a reconnect (status other than active).
+    const linear = await LinearClient.forUser(cfg.linear, cfg.db, cfg.box, userId);
+    if (linear) builtin.push(...linearTools(async () => linear));
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {

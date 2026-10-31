@@ -8,6 +8,7 @@ import { clientMetadataDocument, connections, oauthCallback } from "./routes/con
 import { files } from "./routes/files";
 import { githubIntegration } from "./routes/github";
 import { googleCallback, integrations } from "./routes/integrations";
+import { linearIntegration } from "./routes/linear";
 import { models } from "./routes/models";
 import { onboarding } from "./routes/onboarding";
 import { push } from "./routes/push";
@@ -59,6 +60,7 @@ export function createApp(services: Services) {
         google: Boolean(config.google),
         slack: Boolean(config.slack),
         github: Boolean(config.github),
+        linear: Boolean(config.linear),
       },
       features: {
         webSearch: Boolean(config.webSearch),
@@ -86,6 +88,7 @@ export function createApp(services: Services) {
   api.route("/integrations/google/callback", googleCallback);
   api.route("/integrations/slack", slackIntegration);
   api.route("/integrations/github", githubIntegration);
+  api.route("/integrations/linear", linearIntegration);
   api.route("/integrations", integrations);
   api.route("/policy/suggestions", suggestions);
   api.route("/policy", policy);

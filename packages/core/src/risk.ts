@@ -136,6 +136,22 @@ function githubFacts(call: RiskInput): string[] {
   return out;
 }
 
+/** A Linear comment or new issue goes out under the person's name, to everyone following. */
+function linearFact(call: RiskInput): string | null {
+  const i = (call.input ?? {}) as { issue?: unknown; team?: unknown };
+  const text = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 200) : "");
+  if (call.name === "linear_comment") {
+    // "ENG-123", also out of a link to the issue.
+    const ref = /\b[A-Za-z][A-Za-z0-9_]{0,9}-\d+\b/.exec(text(i.issue))?.[0];
+    return `Comments as you on ${ref?.toUpperCase() ?? "a Linear issue"}`;
+  }
+  if (call.name === "linear_create_issue") {
+    const team = text(i.team);
+    return `Files an issue as you in ${/^[A-Za-z0-9_]{1,10}$/.test(team) ? team.toUpperCase() : "Linear"}`;
+  }
+  return null;
+}
+
 /**
  * A spreadsheet write: how many cells an overwrite replaces, and whether any cell is a
  * formula (cells are entered as typed, so `=IMPORTDATA("https://…")` would fetch, and could
@@ -161,6 +177,7 @@ export function riskFacts(call: RiskInput): string[] {
   const facts: string[] = [];
   const domain = call.domain?.toLowerCase() || null;
   const recipients = recipientsIn(call.input as JSONValue);
+  const linear = call.name.startsWith("linear_") ? linearFact(call) : null;
 
   if (recipients.length > 0 && (call.effect === "send" || call.effect === "write")) {
     if (domain) {
@@ -174,6 +191,8 @@ export function riskFacts(call: RiskInput): string[] {
     facts.push(slackFact(call.input));
   } else if (GITHUB_WRITES.has(call.name)) {
     facts.push(...githubFacts(call));
+  } else if (linear) {
+    facts.push(linear);
   } else if (call.effect === "send") {
     facts.push("Reaches other people");
   }

@@ -124,6 +124,26 @@ describe("riskFacts", () => {
     ).toEqual(["Closes acme/web#3 as you"]);
   });
 
+  test("a Linear comment or new issue says it goes out as you, and where", () => {
+    expect(
+      riskFacts({
+        name: "linear_comment",
+        effect: "send",
+        input: { issue: "https://linear.app/acme/issue/eng-123/fix", body: "Shipped" },
+      }),
+    ).toEqual(["Comments as you on ENG-123", "Can't be unsent once it goes"]);
+    expect(
+      riskFacts({
+        name: "linear_create_issue",
+        effect: "write",
+        input: { team: "eng", title: "x" },
+      }),
+    ).toEqual(["Files an issue as you in ENG"]);
+    expect(
+      riskFacts({ name: "linear_update_issue", effect: "write", input: { issue: "ENG-1" } }),
+    ).toEqual([]);
+  });
+
   test("odd inputs don't throw", () => {
     for (const input of [null, "a@b.com", 3, [], [{ to: null }]])
       expect(() => riskFacts({ name: "x", effect: "send", input })).not.toThrow();

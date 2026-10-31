@@ -1,7 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseModelRef } from "@synapse/core";
-import type { GitHubAppConfig, GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
+import type {
+  GitHubAppConfig,
+  GoogleAppConfig,
+  LinearAppConfig,
+  WebSearchConfig,
+} from "@synapse/tools";
 import webpush from "web-push";
 import { z } from "zod";
 import type { SlackAppConfig } from "./notify/slack-api";
@@ -71,6 +76,9 @@ const Env = z.object({
   SLACK_CLIENT_ID: z.string().optional(),
   SLACK_CLIENT_SECRET: z.string().optional(),
   SLACK_SIGNING_SECRET: z.string().optional(),
+  /** Linear OAuth app for the built-in Linear tools (docs/linear.md). Both are needed. */
+  LINEAR_CLIENT_ID: optional(z.string()),
+  LINEAR_CLIENT_SECRET: optional(z.string()),
   /** How often email triggers check for new mail. */
   TRIGGER_POLL_SECONDS: z.coerce.number().int().min(30).default(120),
 
@@ -132,11 +140,21 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         }
       : null;
 
+  const linear: LinearAppConfig | null =
+    parsed.LINEAR_CLIENT_ID && parsed.LINEAR_CLIENT_SECRET
+      ? {
+          clientId: parsed.LINEAR_CLIENT_ID,
+          clientSecret: parsed.LINEAR_CLIENT_SECRET,
+          publicUrl: parsed.PUBLIC_URL,
+        }
+      : null;
+
   return {
     ...parsed,
     google,
     github,
     slack,
+    linear,
     push: pushConfig(parsed),
     email:
       parsed.SMTP_URL && parsed.EMAIL_FROM
