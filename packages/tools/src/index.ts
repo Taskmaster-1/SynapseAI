@@ -1,6 +1,7 @@
 import { type ToolDefinition, ToolRegistry } from "@synapse/core";
 import { type Db, type SecretBox, schema } from "@synapse/db";
 import { eq } from "drizzle-orm";
+import { runCodeTool } from "./builtin/code";
 import { fileReadTool, loadFiles, saveFile } from "./builtin/files";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
@@ -24,10 +25,12 @@ import type { OAuthAppConfig } from "./mcp/oauth";
 import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
 import { slackTools } from "./slack/tools";
 
+export { runCodeTool } from "./builtin/code";
 export * from "./builtin/files";
 export * from "./builtin/knowledge";
 export { loadMemoryBlock, loadWritingStyle } from "./builtin/memory";
 export { PLAN_TOOL } from "./builtin/plan";
+export { runInSandbox, runSandboxed, SANDBOX_LIMITS } from "./builtin/sandbox";
 export { formatWhen, MAX_SCHEDULED, schedulePreview } from "./builtin/schedule";
 export {
   BUILTIN_SKILL_FILES,
@@ -82,6 +85,7 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     webFetchTool(),
     knowledgeTool(cfg.db, cfg.embedder),
     fileReadTool(cfg.db),
+    runCodeTool(cfg.db, cfg.embedder),
     ...memoryTools(cfg.db),
     planTool(cfg.db),
     ...scheduleTools(cfg.db, settings?.timezone ?? null),

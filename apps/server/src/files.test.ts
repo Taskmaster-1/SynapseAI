@@ -317,3 +317,41 @@ test("the agent sees an attached photo; the stored history keeps only its id", a
     .where(eq(schema.messages.chatId, chat.json.chatId));
   expect(JSON.stringify(rows)).not.toContain(Buffer.from(PNG).toString("base64"));
 });
+
+test("run_code totals an attached CSV and saves a file the user can open", async () => {
+  const ada = await signUp("coder@files.test");
+  const eve = await signUp("eve3@files.test");
+  const csv = 'item,amount\n"Hotel, 2 nights",412.30\nTaxi,38.75\n';
+  const sheet = (await upload(ada, "expenses.csv", "text/csv", csv)).json.file;
+  const chat = await ada("/api/chats", { method: "POST", json: { content: "Total these up" } });
+  const code = [
+    "const rows = csv(files['expenses.csv']).slice(1);",
+    "const total = rows.reduce((s, r) => s + Math.round(Number(r[1]) * 100), 0) / 100;",
+    "saveFile('total.txt', 'Total: ' + total);",
+    "return total;",
+  ].join("\n");
+  script([
+    { toolCalls: [{ name: "run_code", id: "c1", input: { code, files: [sheet.id] } }] },
+    { text: "The total is 451.05." },
+  ]);
+  await worker.processNow(chat.json.runId);
+  const call = await toolCall(chat.json.runId, "c1");
+  expect(call.status).toBe("succeeded");
+  expect(call.preview).toBe("Run code: const rows = csv(files['expenses.csv']).slice(1);");
+  const value = (call.output as { value: unknown }).value as {
+    result: number;
+    files: { fileId: string }[];
+  };
+  expect(value.result).toBe(451.05);
+
+  const saved = value.files[0]!.fileId;
+  const content = await ada(`/api/files/${saved}/content`);
+  expect(new TextDecoder().decode(content.bytes)).toBe("Total: 451.05");
+  expect((await eve(`/api/files/${saved}`)).status).toBe(404);
+  // The CSV's content flowed through, so the run counts as having read outside content.
+  const [run] = await services.database.db
+    .select()
+    .from(schema.runs)
+    .where(eq(schema.runs.id, chat.json.runId));
+  expect(run!.tainted).toBe(true);
+});

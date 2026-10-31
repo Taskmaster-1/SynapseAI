@@ -78,9 +78,10 @@ A few details:
 - **Attachments.** `gmail_read_thread` lists each message's attachments (id, name, type and
   size). `gmail_save_attachment` downloads one into your files, the same place chat uploads go:
   text files and PDFs are extracted and indexed for `knowledge_search`, photos (PNG, JPEG, GIF,
-  WebP up to 5 MB) can be looked at with `file_read`, and any of them can be forwarded with
-  `gmail_send`. It's a read: the copy is private to you and nothing outside changes. Files over
-  25 MB are refused before they're downloaded. It needs no extra scope (`gmail.modify` covers it).
+  WebP up to 5 MB) can be looked at with `file_read`, a CSV can be totalled with `run_code`, and
+  any of them can be forwarded with `gmail_send`. It's a read: the copy is private to you and
+  nothing outside changes. Files over 25 MB are refused before they're downloaded. It needs no
+  extra scope (`gmail.modify` covers it).
 - **Sheets.** `sheets_read` takes a spreadsheet id or its link; without a range it lists the
   tabs and their sizes, with one (`Sheet1`, `'Q4 costs'!A1:F50`) it returns up to 200 rows and
   a `nextRange` for the rest. `sheets_append` adds rows after a table's last row,

@@ -45,6 +45,7 @@ Agent products that act in your tools share three problems: approvals that live 
 - Approvals that don't wait forever: one reminder, escalation to team admins, then expiry as an ordinary deny the agent sees. Optional two-person sign-off for irreversible actions (and sends): two different people, any deny ends it
 - Plain-language risk facts on every approval, in the app and in push, Slack and email ("Sends to 2 people outside acme.com", "Can't be undone", "After reading outside content")
 - Attach any file in chat (photos, videos, PDFs, documents; up to 25 MB each) with the paperclip, drag and drop, or paste. The agent reads text files and PDFs, looks at photos (PNG, JPEG, GIF, WebP up to 5 MB; text in a photo is treated as untrusted, like an email), and can attach any of your files to an email; the approval card shows exactly which files go out
+- Exact numbers: the agent runs JavaScript in a QuickJS WebAssembly sandbox (`run_code`: no network, no disk, 5 s and 64 MB limits, fresh each call) for totals, averages, date math and reshaping data, instead of doing arithmetic in its head. It can read your attached CSV, JSON, text and PDF files and save a result file you can open or have it attach to an email
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch

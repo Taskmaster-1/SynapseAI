@@ -11,11 +11,13 @@
   "dependencies": {
     "@ai-sdk/google": "4.0.82",
     "@ai-sdk/openai": "4.0.78",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@modelcontextprotocol/sdk": "1.30.1",
     "@synapse/core": "workspace:*",
     "@synapse/db": "workspace:*",
     "ai": "7.0.116",
     "drizzle-orm": "0.45.3",
+    "quickjs-emscripten-core": "0.32.0",
     "unpdf": "1.8.1",
     "zod": "4.6.5"
   }

@@ -458,7 +458,7 @@ function RunDetail({ run }: { run: RunRow }) {
                     </div>
                     <div>
                       <div className="eyebrow mb-1.5">Output</div>
-                      <OutputView output={c.output} reason={c.decisionReason} />
+                      <OutputView output={c.output} reason={c.decisionReason} tool={c.name} />
                     </div>
                   </div>
                 </details>
