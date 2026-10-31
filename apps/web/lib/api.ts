@@ -497,6 +497,21 @@ export interface SlackIntegration {
   } | null;
 }
 
+export interface LinearIntegration {
+  /** False when the server has no Linear OAuth app configured. */
+  available: boolean;
+  tools: { name: string; effect: Effect; title: string }[];
+  connection: {
+    /** The Linear account's email. */
+    account: string;
+    name: string | null;
+    workspace: string | null;
+    status: "active" | "needs_auth" | "error";
+    lastError: string | null;
+    connectedAt: string;
+  } | null;
+}
+
 // ---------- Endpoints ----------
 
 export interface SessionUser {
@@ -598,12 +613,16 @@ export const api = {
     get<{ results: SearchResult[] }>(`/api/documents/search?q=${enc(q)}`, { signal }),
 
   integrations: () =>
-    get<{ google: GoogleIntegration; slack: SlackIntegration }>("/api/integrations"),
+    get<{ google: GoogleIntegration; slack: SlackIntegration; linear: LinearIntegration }>(
+      "/api/integrations",
+    ),
   connectGoogle: () => post<{ url: string }>("/api/integrations/google/connect", {}),
   disconnectGoogle: () => del("/api/integrations/google"),
   connectSlack: () => post<{ url: string }>("/api/integrations/slack/connect", {}),
   testSlack: () => post<{ ok: true }>("/api/integrations/slack/test", {}),
   disconnectSlack: () => del("/api/integrations/slack"),
+  connectLinear: () => post<{ url: string }>("/api/integrations/linear/connect", {}),
+  disconnectLinear: () => del("/api/integrations/linear"),
   automations: () => get<{ automations: Automation[] }>("/api/automations"),
   automationTemplates: () =>
     get<{ categories: string[]; googleAvailable: boolean; templates: AutomationTemplate[] }>(

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { LinearCommentView, LinearIssueView } from "@/components/approval/linear";
 import { EmailAttachments } from "@/components/task/files";
 import { Switch } from "@/components/ui";
 import { cx, humanize } from "@/lib/format";
@@ -456,6 +457,9 @@ export function PayloadView({ input, tool }: { input: unknown; tool?: string }) 
   if (tool === "schedule_task" && isPlainObject(input)) return <ScheduleView obj={input} />;
   if (tool === "slack_post_message" && isPlainObject(input)) return <SlackPostView obj={input} />;
   if (tool === "drive_create_doc" && isPlainObject(input)) return <DocView obj={input} />;
+  if (tool === "linear_create_issue" && isPlainObject(input))
+    return <LinearIssueView obj={input} />;
+  if (tool === "linear_comment" && isPlainObject(input)) return <LinearCommentView obj={input} />;
   if (tool && SHEET_WRITES.has(tool) && isPlainObject(input))
     return <SheetView obj={input} tool={tool} />;
   if (isEmailLike(input)) return <EmailView obj={input} />;
