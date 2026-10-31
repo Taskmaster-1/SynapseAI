@@ -28,12 +28,12 @@ export function runCodeTool(db: Db, embedder: Embedder | null): ToolDefinition {
     // Saving a file only stores a private copy in the user's own files: nothing leaves, and
     // sending it anywhere is a separate call that policy sees. So this is a read.
     effect: "read",
-    // The flag is per tool, not per call, so it has to cover the case with input files, whose
-    // content flows into the output. Without files the output is computed from the model's
-    // own code; trustedTargets already ignores trusted outputs once a chat is tainted, so that
-    // case alone would be safe either way. Erring towards taint is the safe choice: a run
-    // that computed something still asks before writing anywhere new.
+    // Files' content flows into the output, so a call with files taints the run. Without
+    // files the output comes from the model's own code, which can only hold what the run has
+    // already seen: taint is already set if that included outside content. Addresses in the
+    // output never count as ones the user put in play (`untrustedOutput` covers every call).
     untrustedOutput: true,
+    taints: (input) => ((input as { files?: unknown[] }).files ?? []).length > 0,
     source: "builtin",
     preview: (input) => {
       const code = String((input as { code?: unknown }).code ?? "");

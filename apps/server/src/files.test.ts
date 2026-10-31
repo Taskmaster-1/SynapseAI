@@ -355,3 +355,23 @@ test("run_code totals an attached CSV and saves a file the user can open", async
     .where(eq(schema.runs.id, chat.json.runId));
   expect(run!.tainted).toBe(true);
 });
+
+test("run_code without files is just arithmetic and leaves the run untainted", async () => {
+  const ada = await signUp("math@files.test");
+  const chat = await ada("/api/chats", {
+    method: "POST",
+    json: { content: "What's 17.5% of 2,340?" },
+  });
+  script([
+    { toolCalls: [{ name: "run_code", id: "m1", input: { code: "2340 * 0.175" } }] },
+    { text: "409.5" },
+  ]);
+  await worker.processNow(chat.json.runId);
+  const call = await toolCall(chat.json.runId, "m1");
+  expect((call.output as unknown as { value: { result: number } }).value.result).toBe(409.5);
+  const [run] = await services.database.db
+    .select()
+    .from(schema.runs)
+    .where(eq(schema.runs.id, chat.json.runId));
+  expect(run!.tainted).toBe(false);
+});
