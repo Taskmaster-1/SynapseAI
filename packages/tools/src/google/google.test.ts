@@ -4,6 +4,7 @@ import { createDatabase, type Database, SecretBox, schema } from "@synapse/db";
 import type { JSONValue } from "ai";
 import { eq } from "drizzle-orm";
 import { buildToolset } from "..";
+import { fileReadTool, saveFile } from "../builtin/files";
 import { calendarTools } from "./calendar";
 import {
   completeGoogleAuth,
@@ -14,7 +15,8 @@ import {
 } from "./client";
 import { contactsTools } from "./contacts";
 import { docHtml, driveQuery, driveTools } from "./drive";
-import { buildMime, gmailTools, newMessagesSince } from "./gmail";
+import { attachmentType, buildMime, gmailTools, newMessagesSince } from "./gmail";
+import { parseSpreadsheet, prettyRange, quoteSheet, sheetsTools } from "./sheets";
 import { fakeGoogle, LEGACY_GOOGLE_SCOPE, tinyPdf } from "./testing";
 
 let database: Database;
@@ -65,11 +67,15 @@ async function tools(now?: () => number): Promise<Map<string, ToolDefinition>> {
   const client = await GoogleClient.forUser(app, database.db, box, USER);
   if (!client) throw new Error("not connected");
   const get = async () => client;
+  const save = (userId: string, file: { name: string; mimeType: string; data: Uint8Array }) =>
+    saveFile(database.db, null, { userId, ...file });
   const all = [
-    ...gmailTools(get),
+    ...gmailTools(get, undefined, save),
     ...calendarTools(get, { now }),
     ...driveTools(get),
     ...contactsTools(get),
+    ...sheetsTools(get),
+    fileReadTool(database.db),
   ];
   return new Map(all.map((t) => [t.name, t]));
 }
@@ -346,7 +352,7 @@ describe("scopes", () => {
     slack: null,
   });
 
-  test("an older grant keeps Gmail and Calendar; Drive and Contacts wait for a reconnect", async () => {
+  test("an older grant keeps Gmail and Calendar; Drive, Contacts and Sheets wait for a reconnect", async () => {
     google.state.grantedScope = LEGACY_GOOGLE_SCOPE;
     await connect();
     const old = await buildToolset(cfg(), USER);
@@ -354,7 +360,10 @@ describe("scopes", () => {
     expect(old.registry.get("calendar_find_free_time")).toBeDefined();
     expect(old.registry.get("drive_search")).toBeUndefined();
     expect(old.registry.get("contacts_search")).toBeUndefined();
-    expect(old.google?.missing).toEqual(["Drive", "Contacts"]);
+    expect(old.registry.get("sheets_append")).toBeUndefined();
+    // Attachments need nothing beyond gmail.modify.
+    expect(old.registry.get("gmail_save_attachment")?.effect).toBe("read");
+    expect(old.google?.missing).toEqual(["Drive", "Contacts", "Sheets"]);
     await old.close();
 
     google.state.grantedScope = `${LEGACY_GOOGLE_SCOPE} https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly`;
@@ -362,18 +371,30 @@ describe("scopes", () => {
     const some = await buildToolset(cfg(), USER);
     expect(some.registry.get("contacts_search")?.untrustedOutput).toBe(false);
     expect(some.registry.get("drive_read")).toBeUndefined();
-    expect(some.google?.missing).toEqual(["Drive"]);
+    expect(some.google?.missing).toEqual(["Drive", "Sheets"]);
     await some.close();
+
+    google.state.grantedScope = `${LEGACY_GOOGLE_SCOPE} https://www.googleapis.com/auth/spreadsheets`;
+    await connect();
+    const sheets = await buildToolset(cfg(), USER);
+    expect(sheets.registry.get("sheets_read")?.untrustedOutput).toBe(true);
+    expect(sheets.registry.get("drive_read")).toBeUndefined();
+    expect(sheets.google?.missing).toEqual(["Drive", "Contacts"]);
+    await sheets.close();
   });
 
   test("a full grant gets every tool", async () => {
     const url = await connect();
-    for (const s of ["drive.readonly", "drive.file", "contacts.other.readonly"])
+    for (const s of ["drive.readonly", "drive.file", "contacts.other.readonly", "spreadsheets"])
       expect(url.searchParams.get("scope")).toContain(`/auth/${s}`);
     const all = await buildToolset(cfg(), USER);
     expect(all.registry.get("drive_read")?.untrustedOutput).toBe(true);
     expect(all.registry.get("drive_create_doc")?.effect).toBe("write");
     expect(all.registry.get("drive_create_doc")?.defaultDecision).toBeUndefined();
+    for (const name of ["sheets_append", "sheets_update", "sheets_create"]) {
+      expect(all.registry.get(name)?.effect).toBe("write");
+      expect(all.registry.get(name)?.defaultDecision).toBeUndefined();
+    }
     expect(all.google?.missing).toEqual([]);
     await all.close();
   });
@@ -588,5 +609,297 @@ describe("free time", () => {
       type: "error",
     });
     expect(tool.untrustedOutput).toBe(false);
+  });
+});
+
+// A 1×1 PNG.
+const PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  ),
+  (c) => c.charCodeAt(0),
+);
+
+describe("gmail attachments", () => {
+  beforeEach(async () => {
+    await connect();
+    await database.db.delete(schema.files);
+  });
+
+  type Listed = { attachmentId: string | null; filename: string; mimeType: string; size: number };
+  const listed = async (t: Map<string, ToolDefinition>, threadId: string) =>
+    (
+      (await run(t.get("gmail_read_thread"), { threadId })) as unknown as {
+        value: { messages: { id: string; attachments: Listed[] }[] };
+      }
+    ).value.messages[0]!;
+  type Saved = { value: { fileId: string; name: string; mimeType: string; bytes: number } };
+  const stored = async (id: string) =>
+    (await database.db.select().from(schema.files).where(eq(schema.files.id, id)))[0]!;
+
+  test("threads list attachments; text and PDFs are saved, extracted and indexed", async () => {
+    const m = google.receive({
+      from: "billing@vendor.example",
+      subject: "Invoice 4471",
+      body: "Attached.",
+      attachments: [
+        { filename: "invoice.pdf", mimeType: "application/pdf", data: tinyPdf("Total 1234.50") },
+        { filename: "notes.txt", mimeType: "text/plain", data: "Paid by card", inline: true },
+      ],
+    });
+    const t = await tools();
+    const msg = await listed(t, m.threadId);
+    expect(msg.attachments).toEqual([
+      {
+        attachmentId: expect.stringMatching(/^att-/),
+        filename: "invoice.pdf",
+        mimeType: "application/pdf",
+        size: expect.any(Number),
+      },
+      { attachmentId: null, filename: "notes.txt", mimeType: "text/plain", size: 12 },
+    ]);
+
+    const tool = t.get("gmail_save_attachment")!;
+    expect(tool.effect).toBe("read");
+    expect(tool.untrustedOutput).toBe(true);
+    expect(tool.preview?.({ messageId: m.id, attachmentId: "x", filename: "invoice.pdf" })).toBe(
+      "Save the attachment “invoice.pdf”",
+    );
+    // The id the model saw is from an earlier fetch; it still finds the file.
+    const pdf = (await run(tool, {
+      messageId: msg.id,
+      attachmentId: msg.attachments[0]!.attachmentId,
+      filename: "invoice.pdf",
+    })) as unknown as Saved;
+    expect(pdf.value).toMatchObject({ name: "invoice.pdf", mimeType: "application/pdf" });
+    const row = await stored(pdf.value.fileId);
+    expect(row.userId).toBe(USER);
+    expect(row.text).toContain("Total 1234.50");
+    expect(row.documentId).toBeTruthy();
+    expect(google.state.calls.some((c) => c.includes("/attachments/"))).toBe(true);
+
+    // A part with its data inline needs no second request.
+    const before = google.state.calls.filter((c) => c.includes("/attachments/")).length;
+    const txt = (await run(tool, {
+      messageId: m.id,
+      attachmentId: "gone",
+      filename: "notes.txt",
+    })) as unknown as Saved;
+    expect((await stored(txt.value.fileId)).text).toBe("Paid by card");
+    expect(google.state.calls.filter((c) => c.includes("/attachments/"))).toHaveLength(before);
+
+    const read = (await run(t.get("file_read"), { file: txt.value.fileId })) as unknown as {
+      value: { text: string };
+    };
+    expect(read.value.text).toBe("Paid by card");
+  });
+
+  test("a photo becomes viewable with file_read, even sent as octet-stream", async () => {
+    const m = google.receive({
+      from: "sam@x.example",
+      subject: "Receipt",
+      attachments: [{ filename: "IMG_0042", mimeType: "application/octet-stream", data: PNG }],
+    });
+    const t = await tools();
+    const { attachments } = await listed(t, m.threadId);
+    // No filename: the only attachment is the one meant.
+    const saved = (await run(t.get("gmail_save_attachment"), {
+      messageId: m.id,
+      attachmentId: attachments[0]!.attachmentId,
+    })) as unknown as Saved;
+    expect(saved.value).toMatchObject({ mimeType: "image/png", bytes: PNG.length });
+    expect(await run(t.get("file_read"), { file: saved.value.fileId })).toEqual({
+      type: "image",
+      fileId: saved.value.fileId,
+      name: "IMG_0042",
+      mimeType: "image/png",
+      bytes: PNG.length,
+    });
+  });
+
+  test("over 25 MB is refused before downloading; unknown attachments name the real ones", async () => {
+    const m = google.receive({
+      from: "a@x.example",
+      subject: "Big",
+      attachments: [
+        { filename: "huge.mov", mimeType: "video/quicktime", data: "x", size: 26 * 1024 * 1024 },
+        { filename: "small.txt", mimeType: "text/plain", data: "hi" },
+      ],
+    });
+    const t = await tools();
+    const tool = t.get("gmail_save_attachment");
+    const big = await run(tool, { messageId: m.id, attachmentId: "old", filename: "huge.mov" });
+    expect(big).toEqual({ type: "error", value: expect.stringContaining("over 25 MB") });
+    expect(google.state.calls.some((c) => c.includes("/attachments/"))).toBe(false);
+
+    const unknown = await run(tool, { messageId: m.id, attachmentId: "old" });
+    expect(unknown).toEqual({
+      type: "error",
+      value: expect.stringContaining("huge.mov, small.txt"),
+    });
+    expect(await database.db.select().from(schema.files)).toHaveLength(0);
+  });
+
+  test("types come from the declared type, then the name, then the bytes", () => {
+    const none = new Uint8Array();
+    expect(attachmentType("a.bin", "text/csv; charset=utf-8", none)).toBe("text/csv");
+    expect(attachmentType("scan.PDF", "application/octet-stream", none)).toBe("application/pdf");
+    expect(attachmentType("blob", undefined, new TextEncoder().encode("%PDF-1.7"))).toBe(
+      "application/pdf",
+    );
+    expect(attachmentType("blob", "application/octet-stream", PNG)).toBe("image/png");
+    expect(attachmentType("blob", "", none)).toBe("application/octet-stream");
+  });
+});
+
+describe("sheets", () => {
+  beforeEach(() => connect());
+
+  const ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+  const LINK = `https://docs.google.com/spreadsheets/d/${ID}/edit#gid=7`;
+  const expenses = () =>
+    google.state.spreadsheets.push({
+      id: ID,
+      title: "Expenses",
+      sheets: [
+        {
+          sheetId: 0,
+          title: "Sheet1",
+          rows: [
+            ["Date", "Vendor", "Total"],
+            ["2026-10-01", "Acme", "12.00"],
+          ],
+        },
+        { sheetId: 7, title: "Q4 costs", rows: [["Item", "Cost"]] },
+      ],
+    });
+  type Out = { type: string; value: Record<string, unknown> };
+
+  test("ids and links, A1 quoting and readable ranges", () => {
+    expect(parseSpreadsheet(ID)).toEqual({ id: ID, gid: null });
+    expect(parseSpreadsheet(` ${LINK} `)).toEqual({ id: ID, gid: 7 });
+    expect(parseSpreadsheet(`https://docs.google.com/spreadsheets/u/1/d/${ID}/view`).id).toBe(ID);
+    expect(() => parseSpreadsheet("my expenses sheet")).toThrow("isn't a spreadsheet");
+    expect(quoteSheet("Sheet1")).toBe("Sheet1");
+    expect(quoteSheet("Q4 costs")).toBe("'Q4 costs'");
+    expect(quoteSheet("Bob's")).toBe("'Bob''s'");
+    expect(quoteSheet("AB12")).toBe("'AB12'");
+    expect(prettyRange("'Bob''s'!A1:C3")).toBe("Bob's › A1:C3");
+    expect(prettyRange("Sheet1")).toBe("Sheet1");
+  });
+
+  test("read lists the tabs, then the cells, and pages long sheets", async () => {
+    expenses();
+    const t = await tools();
+    const tabs = (await run(t.get("sheets_read"), { spreadsheet: LINK })) as unknown as Out;
+    expect(tabs.value).toMatchObject({ title: "Expenses", spreadsheetId: ID });
+    expect(tabs.value.sheets).toEqual([
+      expect.objectContaining({ title: "Sheet1", range: "Sheet1" }),
+      expect.objectContaining({ title: "Q4 costs", range: "'Q4 costs'" }),
+    ]);
+
+    const cells = (await run(t.get("sheets_read"), {
+      spreadsheet: ID,
+      range: "Sheet1",
+    })) as unknown as Out;
+    expect(cells.value).toMatchObject({
+      range: "Sheet1!A1:C2",
+      totalRows: 2,
+      nextRange: null,
+      rows: [
+        ["Date", "Vendor", "Total"],
+        ["2026-10-01", "Acme", "12.00"],
+      ],
+    });
+
+    const sheet = google.state.spreadsheets[0]!.sheets[0]!;
+    for (let i = 0; i < 250; i++) sheet.rows.push([`r${i}`, "x", i]);
+    const first = (await run(t.get("sheets_read"), {
+      spreadsheet: ID,
+      range: "Sheet1",
+    })) as unknown as Out;
+    expect(first.value.rows as unknown[]).toHaveLength(200);
+    expect(first.value.nextRange).toBe("Sheet1!A201:C252");
+    expect(first.value.note).toContain("first 200 of 252");
+    const next = (await run(t.get("sheets_read"), {
+      spreadsheet: ID,
+      range: first.value.nextRange,
+    })) as unknown as Out;
+    expect((next.value.rows as unknown[][])[0]).toEqual(["r198", "x", "198"]);
+    expect(next.value.nextRange).toBeNull();
+  });
+
+  test("append adds rows as typed to the tab the link points at, after its title checks out", async () => {
+    expenses();
+    const t = await tools();
+    const tool = t.get("sheets_append")!;
+    const input = {
+      spreadsheet: LINK,
+      spreadsheetTitle: "Expenses",
+      rows: [
+        ["Laptop", 1299.5],
+        ["Mouse", "25"],
+      ],
+    };
+    expect(tool.preview?.(input)).toBe("Add 2 rows to “Expenses” › first sheet");
+    expect(tool.preview?.({ ...input, range: "Sheet1", rows: [[1], [2], [3]] })).toBe(
+      "Add 3 rows to “Expenses” › Sheet1",
+    );
+    const out = (await run(tool, input)) as unknown as Out;
+    expect(out.value).toMatchObject({ title: "Expenses", addedRows: 2 });
+    expect(google.state.spreadsheets[0]!.sheets[1]!.rows).toEqual([
+      ["Item", "Cost"],
+      ["Laptop", 1299.5],
+      ["Mouse", "25"],
+    ]);
+    expect(google.state.sheetWrites).toEqual([
+      { kind: "append", range: "'Q4 costs'", valueInputOption: "USER_ENTERED" },
+    ]);
+
+    // A title that doesn't match writes nothing.
+    await expect(run(tool, { ...input, spreadsheetTitle: "Budget" })).rejects.toThrow(
+      "This spreadsheet is “Expenses”, not “Budget”",
+    );
+    expect(google.state.sheetWrites).toHaveLength(1);
+  });
+
+  test("update overwrites the range it names", async () => {
+    expenses();
+    const t = await tools();
+    const tool = t.get("sheets_update")!;
+    const input = {
+      spreadsheet: ID,
+      spreadsheetTitle: "Expenses",
+      range: "Sheet1!C2:C3",
+      values: [["13.00"], ["=SUM(C2:C2)"]],
+    };
+    expect(tool.preview?.(input)).toBe("Change “Expenses” › Sheet1 › C2:C3");
+    const out = (await run(tool, input)) as unknown as Out;
+    expect(out.value).toMatchObject({ updatedRange: "Sheet1!C2:C3", updatedCells: 2 });
+    expect(google.state.spreadsheets[0]!.sheets[0]!.rows.slice(1)).toEqual([
+      ["2026-10-01", "Acme", "13.00"],
+      ["", "", "=SUM(C2:C2)"],
+    ]);
+  });
+
+  test("create makes a sheet with a header and rows, and returns its link", async () => {
+    const t = await tools();
+    const tool = t.get("sheets_create")!;
+    const input = { title: "Trip budget", header: ["Item", "Cost"], rows: [["Flights", 420]] };
+    expect(tool.preview?.(input)).toBe("Create spreadsheet “Trip budget” with 1 row");
+    expect(tool.preview?.({ title: "Empty" })).toBe("Create spreadsheet “Empty”");
+    const out = (await run(tool, input)) as unknown as Out;
+    expect(out.value.link).toStartWith("https://docs.google.com/spreadsheets/d/");
+    expect(out.value.rows).toBe(2);
+    const [made] = google.state.spreadsheets;
+    expect(made?.title).toBe("Trip budget");
+    expect(made?.sheets[0]?.rows).toEqual([
+      ["Item", "Cost"],
+      ["Flights", 420],
+    ]);
+    expect(google.state.sheetWrites[0]).toMatchObject({
+      range: "Sheet1!A1",
+      valueInputOption: "USER_ENTERED",
+    });
   });
 });

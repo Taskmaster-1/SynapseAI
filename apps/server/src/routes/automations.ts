@@ -1,5 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
-import { nextRun, schema, sendMessage, startTriggeredTask, validateSchedule } from "@synapse/db";
+import {
+  nextRun,
+  planSchedule,
+  schema,
+  sendMessage,
+  startTriggeredTask,
+  validateSchedule,
+} from "@synapse/db";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -21,6 +28,10 @@ const Fields = z.object({
   schedule: z.string().trim().max(100),
   timezone: z.string().trim().min(1).max(64),
   enabled: z.boolean(),
+  /** One-off schedules: fire once at this time (ISO with offset) instead of on `schedule`. */
+  runAt: z.iso.datetime({ offset: true }).nullable(),
+  /** `reminder` only notifies; `task` runs the prompt. */
+  kind: z.enum(["task", "reminder"]),
 });
 
 export const Create = Fields.extend({
@@ -28,6 +39,8 @@ export const Create = Fields.extend({
   schedule: Fields.shape.schedule.default(""),
   timezone: Fields.shape.timezone.default("UTC"),
   enabled: Fields.shape.enabled.default(true),
+  runAt: Fields.shape.runAt.default(null),
+  kind: Fields.shape.kind.default("task"),
 });
 
 /** No defaults here: a field the client leaves out keeps its current value. */
@@ -39,8 +52,14 @@ type Row = typeof schema.automations.$inferSelect;
 async function triggerState(
   s: Services,
   userId: string,
-  a: Pick<Row, "trigger" | "schedule" | "timezone" | "enabled">,
+  a: Pick<Row, "trigger" | "schedule" | "timezone" | "enabled" | "runAt">,
 ) {
+  if (a.trigger.type === "schedule" && a.runAt) {
+    if (!a.enabled) return { nextRunAt: null };
+    const plan = planSchedule({ when: a.runAt.toISOString(), timezone: a.timezone });
+    if (typeof plan === "string") apiError(422, "invalid_schedule", plan);
+    return { nextRunAt: plan.nextRunAt };
+  }
   if (a.trigger.type === "schedule") {
     const problem = validateSchedule(a.schedule, a.timezone);
     if (problem) apiError(422, "invalid_schedule", problem);
@@ -118,8 +137,9 @@ export const automations = new Hono<AppEnv>()
 
   .post("/", async (c) => {
     const s = c.var.services;
-    const input = await body(c, Create);
-    const state = await triggerState(s, c.var.user.id, input);
+    const { runAt: at, ...input } = await body(c, Create);
+    const runAt = input.trigger.type === "schedule" && at ? new Date(at) : null;
+    const state = await triggerState(s, c.var.user.id, { ...input, runAt });
     const webhookSecret = input.trigger.type === "webhook" ? await s.box.seal(newToken()) : null;
     const { db } = s.database;
     const automation = await db.transaction(async (tx) => {
@@ -132,7 +152,8 @@ export const automations = new Hono<AppEnv>()
         .values({
           ...input,
           ...state,
-          schedule: input.trigger.type === "schedule" ? input.schedule : "",
+          runAt,
+          schedule: input.trigger.type === "schedule" && !runAt ? input.schedule : "",
           userId: c.var.user.id,
           chatId: chat!.id,
           webhookSecret,
@@ -149,8 +170,10 @@ export const automations = new Hono<AppEnv>()
     const s = c.var.services;
     const input = await body(c, Update);
     const current = await own(c, c.req.param("id"));
-    const { rotateWebhook, ...changes } = input;
+    const { rotateWebhook, runAt: at, ...rest } = input;
+    const changes = { ...rest, ...(at !== undefined ? { runAt: at ? new Date(at) : null } : {}) };
     const merged = { ...current, ...changes };
+    if (merged.trigger.type !== "schedule") merged.runAt = null;
     const triggerChanged =
       changes.trigger !== undefined &&
       JSON.stringify(changes.trigger) !== JSON.stringify(current.trigger);
@@ -162,7 +185,8 @@ export const automations = new Hono<AppEnv>()
       .set({
         ...changes,
         ...state,
-        ...(merged.trigger.type === "schedule" ? {} : { schedule: "" }),
+        runAt: merged.runAt,
+        ...(merged.trigger.type === "schedule" && !merged.runAt ? {} : { schedule: "" }),
         ...(needsSecret ? { webhookSecret: await s.box.seal(newToken()) } : {}),
         ...(merged.trigger.type !== "webhook" ? { webhookSecret: null } : {}),
         ...(triggerChanged || (changes.enabled && !current.enabled)
@@ -187,6 +211,8 @@ export const automations = new Hono<AppEnv>()
 
   .post("/:id/run", async (c) => {
     const current = await own(c, c.req.param("id"));
+    if (current.kind === "reminder")
+      apiError(422, "reminder", "Reminders notify you at their time; there is nothing to run.");
     const sent = await sendMessage(c.var.services.database.db, {
       userId: c.var.user.id,
       chatId: current.chatId,

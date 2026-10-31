@@ -345,6 +345,8 @@ export interface Settings {
   remindMinutes: number;
   /** Deny an undecided approval after this many hours; 0 is never. */
   expireHours: number;
+  /** IANA time zone for scheduled tasks and the agent's "today"; null until set. */
+  timezone: string | null;
 }
 
 export interface SettingsUpdate {
@@ -356,6 +358,7 @@ export interface SettingsUpdate {
   providerKeys?: Partial<Record<ProviderName, string | null>>;
   undoSeconds?: number;
   emailAlerts?: boolean;
+  timezone?: string | null;
 }
 
 export interface PushConfig {
@@ -412,8 +415,12 @@ export interface Automation {
   name: string;
   prompt: string;
   trigger: AutomationTrigger;
-  /** Cron; empty for event triggers. */
+  /** Cron; empty for event triggers and one-offs. */
   schedule: string;
+  /** One-offs: the single time it fires (then it turns itself off). */
+  runAt: string | null;
+  /** `reminder` only notifies; `task` runs the prompt. */
+  kind: "task" | "reminder";
   /** Secret URL for webhook triggers. */
   webhookUrl: string | null;
   lastError: string | null;
@@ -431,6 +438,8 @@ export interface AutomationInput {
   schedule?: string;
   timezone?: string;
   enabled?: boolean;
+  runAt?: string | null;
+  kind?: "task" | "reminder";
   rotateWebhook?: boolean;
 }
 
@@ -460,7 +469,7 @@ export interface Onboarding {
 export interface GoogleIntegration {
   /** False when the server has no Google OAuth app configured. */
   available: boolean;
-  /** `group` is the scope group a tool needs: gmail, calendar, drive or contacts. */
+  /** `group` is the scope group a tool needs: gmail, calendar, drive, contacts or sheets. */
   tools: { name: string; group: string; effect: Effect; title: string }[];
   connection: {
     account: string;

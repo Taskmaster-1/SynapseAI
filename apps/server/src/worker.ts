@@ -3,6 +3,7 @@ import {
   claimRun,
   continuePendingInputs,
   fireDueAutomations,
+  fireDueReminders,
   PgRunStore,
   releaseRun,
   renewLease,
@@ -77,6 +78,13 @@ export class Worker {
       if (fired.length) log.info("automations fired", { count: fired.length });
     } catch (error) {
       log.error("automation scheduler failed", { error: String(error) });
+    }
+    try {
+      const reminded = await fireDueReminders(this.s.database.db);
+      await this.s.notifier.reminders(reminded);
+      if (reminded.length) log.info("reminders sent", { count: reminded.length });
+    } catch (error) {
+      log.error("reminder scheduler failed", { error: String(error) });
     }
     try {
       const fired = await pollGmailTriggers(this.s);
@@ -238,10 +246,14 @@ export class Worker {
         );
       if (toolset.google) {
         const { missing } = toolset.google;
-        const extra = ["Drive", "Contacts"].filter((g) => !missing.includes(g));
+        const extra = ["Drive", "Contacts", "Sheets"].filter((g) => !missing.includes(g));
         // Withheld groups are named so the agent can tell the user how to get them.
-        const later = missing.length
-          ? ` (${missing.join(" and ")}: not granted yet; the user can reconnect Google under Connections)`
+        const names =
+          missing.length > 1
+            ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`
+            : missing[0];
+        const later = names
+          ? ` (${names}: not granted yet; the user can reconnect Google under Connections)`
           : "";
         conns.unshift({
           name: `Gmail, Google Calendar${extra.map((g) => `, Google ${g}`).join("")}${later}`,
@@ -255,6 +267,7 @@ export class Worker {
         writingStyle: await loadWritingStyle(db, run.userId),
         connections: conns.map((c) => c.name),
         skills: skillsPromptBlock(toolset.skills),
+        timezone: settings?.timezone ?? null,
       });
 
       const summary = this.modelOverride

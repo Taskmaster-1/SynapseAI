@@ -17,6 +17,7 @@ import type {
   NotificationChannel,
   PendingApproval,
   ResolvedApproval,
+  UserNotice,
 } from "./types";
 
 /** Slack block, loosely typed: we only build a handful of kinds. */
@@ -295,6 +296,41 @@ export class SlackChannel implements NotificationChannel {
         return refuse("Your team needs an admin to decide this one.");
       if (error instanceof DecisionInputError) return refuse(error.message);
       throw error;
+    }
+  }
+
+  /** Reminders as plain DMs, with a link to the conversation. */
+  async notice(notices: UserNotice[]) {
+    const app = this.app;
+    if (!app || notices.length === 0) return;
+    const accounts = await this.services()
+      .database.db.select()
+      .from(schema.slackAccounts)
+      .where(
+        and(
+          inArray(schema.slackAccounts.userId, [...new Set(notices.map((n) => n.userId))]),
+          eq(schema.slackAccounts.status, "active"),
+        ),
+      );
+    for (const account of accounts) {
+      try {
+        const token = await this.services().box.open(account.botToken);
+        const channel = await openDm(app, token, account.slackUserId);
+        for (const n of notices.filter((x) => x.userId === account.userId)) {
+          await slackCall(app, token, "chat.postMessage", {
+            channel,
+            text: `${n.title}\n${n.body}`,
+            blocks: [
+              section(`*${esc(n.title)}*\n${esc(clip(n.body, 2500))}`),
+              context(`<${n.url}|Open in Synapse>`),
+            ],
+            unfurl_links: false,
+            unfurl_media: false,
+          });
+        }
+      } catch (error) {
+        await this.failed(account.userId, error);
+      }
     }
   }
 

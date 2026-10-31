@@ -66,6 +66,17 @@ export interface ResolvedApproval {
 /** Where a decision was made; `expiry` is nobody deciding in time. */
 export type DecisionSource = "web" | "push" | "slack" | "email" | "expiry";
 
+/** Something to tell a person that is not an approval, e.g. a reminder they scheduled. */
+export interface UserNotice {
+  userId: string;
+  title: string;
+  body: string;
+  /** Where to open it in the web app. */
+  url: string;
+  /** Replaces an earlier notice with the same tag on a device. */
+  tag: string;
+}
+
 /**
  * A way to reach a person about approvals: web push, Slack, email. Channels decide for
  * themselves whether a user has them set up; `notify` is called for every new approval.
@@ -76,4 +87,6 @@ export interface NotificationChannel {
   notify(approvals: PendingApproval[]): Promise<void>;
   /** Optional: the approvals were decided (anywhere). */
   resolved?(decided: ResolvedApproval[]): Promise<void>;
+  /** Optional: plain notices, such as reminders, for people who set this channel up. */
+  notice?(notices: UserNotice[]): Promise<void>;
 }

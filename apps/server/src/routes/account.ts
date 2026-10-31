@@ -3,6 +3,7 @@ import {
   DEFAULT_EXPIRE_HOURS,
   DEFAULT_REMIND_MINUTES,
   DEFAULT_UNDO_SECONDS,
+  isTimeZone,
   MAX_EXPIRE_HOURS,
   MAX_REMIND_MINUTES,
   MAX_UNDO_SECONDS,
@@ -256,6 +257,13 @@ export const settings = new Hono<AppEnv>()
         emailAlerts: z.boolean().optional(),
         remindMinutes: z.number().int().min(0).max(MAX_REMIND_MINUTES).optional(),
         expireHours: z.number().int().min(0).max(MAX_EXPIRE_HOURS).optional(),
+        timezone: z
+          .string()
+          .trim()
+          .max(64)
+          .refine(isTimeZone, "Unknown time zone.")
+          .nullable()
+          .optional(),
       }),
     );
     const { db } = c.var.services.database;
@@ -277,6 +285,7 @@ export const settings = new Hono<AppEnv>()
       ...(input.emailAlerts !== undefined ? { emailAlerts: input.emailAlerts } : {}),
       ...(input.remindMinutes !== undefined ? { remindMinutes: input.remindMinutes } : {}),
       ...(input.expireHours !== undefined ? { expireHours: input.expireHours } : {}),
+      ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
       providerKeys: keys,
     };
     await db
@@ -304,6 +313,7 @@ async function loadSettings(c: { var: AppEnv["Variables"] }) {
     emailAlerts: s?.emailAlerts ?? false,
     remindMinutes: s?.remindMinutes ?? DEFAULT_REMIND_MINUTES,
     expireHours: s?.expireHours ?? DEFAULT_EXPIRE_HOURS,
+    timezone: s?.timezone ?? null,
   };
 }
 

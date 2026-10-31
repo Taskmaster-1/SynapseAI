@@ -4,6 +4,7 @@ import {
   approvalTiming,
   claimAnnouncement,
   type DueCall,
+  type FiredReminder,
   membershipOf,
   schema,
   workspaceAdminIds,
@@ -12,7 +13,13 @@ import { and, eq, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { log } from "../log";
 import type { Services } from "../services";
-import type { NoticeKind, NotificationChannel, PendingApproval, ResolvedApproval } from "./types";
+import type {
+  NoticeKind,
+  NotificationChannel,
+  PendingApproval,
+  ResolvedApproval,
+  UserNotice,
+} from "./types";
 
 /**
  * Tells people about approvals through every registered channel: when they start waiting,
@@ -58,6 +65,21 @@ export class Notifier {
   async resolved(decided: ResolvedApproval[]) {
     if (decided.length === 0) return;
     await this.each("resolved", (c) => c.resolved?.(decided));
+  }
+
+  /** Reminders the user scheduled, on every channel they set up. Returns what was sent. */
+  async reminders(fired: FiredReminder[]): Promise<UserNotice[]> {
+    if (fired.length === 0) return [];
+    const { config } = this.services();
+    const notices = fired.map((r) => ({
+      userId: r.userId,
+      title: `Reminder: ${r.title}`,
+      body: r.text,
+      url: `${config.PUBLIC_URL}/t/${r.chatId}`,
+      tag: `reminder:${r.automationId}`,
+    }));
+    await this.each("notice", (c) => c.notice?.(notices));
+    return notices;
   }
 
   private async byRun(calls: DueCall[], kind: NoticeKind) {

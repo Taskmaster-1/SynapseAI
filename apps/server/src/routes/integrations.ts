@@ -17,6 +17,12 @@ import { slackStatus } from "./slack";
 const GOOGLE_TOOLS = [
   { name: "gmail_search", group: "gmail", effect: "read", title: "Search email" },
   { name: "gmail_read_thread", group: "gmail", effect: "read", title: "Read a conversation" },
+  {
+    name: "gmail_save_attachment",
+    group: "gmail",
+    effect: "read",
+    title: "Open attachments",
+  },
   { name: "gmail_create_draft", group: "gmail", effect: "write", title: "Save a draft" },
   { name: "gmail_organize", group: "gmail", effect: "write", title: "Label, archive, mark read" },
   { name: "gmail_send", group: "gmail", effect: "send", title: "Send email" },
@@ -41,6 +47,10 @@ const GOOGLE_TOOLS = [
   { name: "drive_read", group: "drive", effect: "read", title: "Read Docs, Sheets, PDFs" },
   { name: "drive_create_doc", group: "drive", effect: "write", title: "Create Google Docs" },
   { name: "contacts_search", group: "contacts", effect: "read", title: "Look up contacts" },
+  { name: "sheets_read", group: "sheets", effect: "read", title: "Read Sheets" },
+  { name: "sheets_append", group: "sheets", effect: "write", title: "Add rows to Sheets" },
+  { name: "sheets_update", group: "sheets", effect: "write", title: "Change cells" },
+  { name: "sheets_create", group: "sheets", effect: "write", title: "Create Sheets" },
 ] as const satisfies readonly {
   name: string;
   group: GoogleScopeGroup;

@@ -276,10 +276,188 @@ function DocView({ obj }: { obj: Obj }) {
   );
 }
 
+/** "'Q4 costs'!A1:C3" → "Q4 costs › A1:C3". */
+function prettyRange(range: string): string {
+  const bang = range.lastIndexOf("!");
+  const unquote = (s: string) => s.replace(/^'(.*)'$/, "$1").replace(/''/g, "'");
+  return bang < 0 ? unquote(range) : `${unquote(range.slice(0, bang))} › ${range.slice(bang + 1)}`;
+}
+
+const SHEET_ROWS_SHOWN = 50;
+
+/** Rows as a small grid. Formulas are set in mono so they stand out from plain values. */
+function CellTable({ rows, header }: { rows: unknown[][]; header?: unknown[] }) {
+  const shown = rows.slice(0, SHEET_ROWS_SHOWN);
+  const width = Math.max(header?.length ?? 0, ...shown.map((r) => r.length), 1);
+  const cell = (v: unknown, key: number, head = false) => {
+    const s =
+      v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+    const formula = typeof v === "string" && v.trimStart().startsWith("=");
+    const Tag = head ? "th" : "td";
+    return (
+      <Tag
+        key={key}
+        className={cx(
+          "max-w-56 border border-line px-2 py-1 text-left align-top break-words",
+          head ? "bg-sunken font-medium text-fg" : "text-fg",
+          typeof v === "number" && "tabular text-right",
+          formula && "font-mono text-12 text-accent",
+        )}
+      >
+        {s}
+      </Tag>
+    );
+  };
+  const pad = (r: unknown[]) => [...r, ...Array(Math.max(0, width - r.length)).fill("")];
+  return (
+    <div>
+      <div className="scroll-thin max-h-80 overflow-auto rounded-[8px] border border-line">
+        <table className="w-full border-collapse text-13 [&_td:first-child]:border-l-0 [&_th:first-child]:border-l-0">
+          {header?.length ? (
+            <thead>
+              <tr>{pad(header).map((v, i) => cell(v, i, true))}</tr>
+            </thead>
+          ) : null}
+          <tbody>
+            {shown.map((r, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: positional rows
+              <tr key={i}>{pad(r).map((v, j) => cell(v, j))}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > shown.length ? (
+        <p className="mt-1.5 text-12 text-fg-muted">
+          and {rows.length - shown.length} more {rows.length - shown.length === 1 ? "row" : "rows"}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const asRows = (v: unknown): unknown[][] =>
+  Array.isArray(v) ? v.map((r) => (Array.isArray(r) ? r : [r])) : [];
+
+/** A spreadsheet write: which sheet and range, then the rows as they'll land. */
+function SheetView({ obj, tool }: { obj: Obj; tool: string }) {
+  const create = tool === "sheets_create";
+  const rows = asRows(tool === "sheets_update" ? obj.values : obj.rows);
+  const header = create && Array.isArray(obj.header) ? obj.header : undefined;
+  const title = String((create ? obj.title : obj.spreadsheetTitle) ?? "");
+  const range = typeof obj.range === "string" && obj.range.trim() ? obj.range.trim() : null;
+  const where =
+    tool === "sheets_update"
+      ? `Overwrites ${range ? prettyRange(range) : "a range"}`
+      : tool === "sheets_append"
+        ? `Adds ${rows.length === 1 ? "1 row" : `${rows.length} rows`} at the end of ${range ? prettyRange(range) : "the first sheet"}`
+        : "A new private spreadsheet in your Drive";
+  const known = ["spreadsheet", "spreadsheetTitle", "title", "range", "rows", "values", "header"];
+  const rest = Object.keys(obj).filter((k) => !known.includes(k));
+  return (
+    <div>
+      <p className="eyebrow mb-1.5">{create ? "New Google Sheet" : "Google Sheet"}</p>
+      <h3 className="font-serif text-[24px] leading-[1.15] break-words text-fg">
+        {title || <span className="text-fg-faint italic">Untitled</span>}
+      </h3>
+      <p className="mt-1 text-13 text-fg-muted">{where}</p>
+      {!create && typeof obj.spreadsheet === "string" ? (
+        <p className="mt-0.5 truncate font-mono text-12 text-fg-faint" title={obj.spreadsheet}>
+          {obj.spreadsheet}
+        </p>
+      ) : null}
+      {rows.length || header?.length ? (
+        <div className="mt-4">
+          <CellTable rows={rows} {...(header ? { header } : {})} />
+        </div>
+      ) : null}
+      {rest.length > 0 ? (
+        <div className="mt-5 border-t border-dashed border-line-strong pt-4">
+          <Fields obj={obj} skip={known} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const REPEAT_LABELS: Record<string, string> = {
+  none: "Once",
+  daily: "Every day",
+  weekdays: "Every weekday",
+  weekly: "Every week",
+  monthly: "Every month",
+};
+
+/**
+ * When it fires, in the zone given, else at the offset the agent wrote, so it matches the
+ * card's title (which the server writes in the user's zone).
+ */
+function scheduledTime(when: unknown, timezone: unknown): string {
+  const s = typeof when === "string" ? when : "";
+  const d = new Date(s);
+  if (!s || Number.isNaN(d.getTime())) return s || "—";
+  const parts = {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  } as const;
+  if (typeof timezone === "string" && timezone) {
+    try {
+      return d.toLocaleString(undefined, { ...parts, timeZone: timezone, timeZoneName: "short" });
+    } catch {}
+  }
+  const m = /([+-])(\d{2}):?(\d{2})$/.exec(s);
+  const offset = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+  const local = new Date(d.getTime() + offset * 60_000).toLocaleString(undefined, {
+    ...parts,
+    timeZone: "UTC",
+  });
+  return `${local} ${offset === 0 ? "UTC" : `UTC${m![1]}${m![2]}:${m![3]}`}`;
+}
+
+/** Scheduling for later: what kind, when, how often, then the instructions as a page. */
+function ScheduleView({ obj }: { obj: Obj }) {
+  const reminder = obj.kind === "reminder";
+  const repeat = typeof obj.repeat === "string" && obj.repeat ? obj.repeat : "none";
+  const rows: [string, string][] = [
+    ["When", scheduledTime(obj.when, obj.timezone)],
+    ["Repeats", REPEAT_LABELS[repeat] ?? `Custom (${repeat})`],
+    ["Then", reminder ? "Notify you" : "The agent carries out the instructions in this chat"],
+  ];
+  const text = typeof obj.instructions === "string" ? obj.instructions.trim() : "";
+  return (
+    <div>
+      <p className="eyebrow mb-1.5">{reminder ? "Reminder" : "Scheduled task"}</p>
+      <h3 className="font-serif text-[24px] leading-[1.15] break-words text-fg">
+        {String(obj.title ?? "") || <span className="text-fg-faint italic">Untitled</span>}
+      </h3>
+      <dl className="mt-4 space-y-1.5">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline gap-3 sm:gap-4">
+            <dt className="w-16 shrink-0 text-13 text-fg-muted">{k}</dt>
+            <dd className="min-w-0 flex-1 text-14 text-fg">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="scroll-thin mt-4 max-h-[320px] overflow-auto border-l-2 border-line-strong pl-3 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
+        {text || <span className="text-fg-faint italic">empty</span>}
+      </div>
+    </div>
+  );
+}
+
+const SHEET_WRITES = new Set(["sheets_append", "sheets_update", "sheets_create"]);
+
 /** Tool input rendered as something a person reads, not JSON. `tool` picks a tailored view. */
 export function PayloadView({ input, tool }: { input: unknown; tool?: string }) {
+  if (tool === "schedule_task" && isPlainObject(input)) return <ScheduleView obj={input} />;
   if (tool === "slack_post_message" && isPlainObject(input)) return <SlackPostView obj={input} />;
   if (tool === "drive_create_doc" && isPlainObject(input)) return <DocView obj={input} />;
+  if (tool && SHEET_WRITES.has(tool) && isPlainObject(input))
+    return <SheetView obj={input} tool={tool} />;
   if (isEmailLike(input)) return <EmailView obj={input} />;
   if (isPlainObject(input)) {
     if (Object.keys(input).length === 0)
