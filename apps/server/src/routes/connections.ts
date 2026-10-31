@@ -1,48 +1,48 @@
+import type { Effect as ToolEffect } from "@synapse/core";
 import { schema } from "@synapse/db";
 import { assertPublicUrl, clientMetadata, effectFromAnnotations, McpSession } from "@synapse/tools";
 import { and, asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { APP_CATEGORIES, CATALOG, catalogAppFor, sameServer } from "../catalog";
 import { type AppEnv, apiError, body } from "../http";
 
 const Effect = z.enum(["read", "write", "send", "destructive"]);
 
-/** Well-known remote MCP servers. Users can add any other URL. */
-export const PRESETS = [
-  {
-    name: "github",
-    url: "https://api.githubcopilot.com/mcp/",
-    description: "Repositories, issues, pull requests",
-    docs: "https://github.com/github/github-mcp-server",
-  },
-  {
-    name: "linear",
-    url: "https://mcp.linear.app/mcp",
-    description: "Issues, projects, cycles",
-    docs: "https://linear.app/docs/mcp",
-  },
-  {
-    name: "notion",
-    url: "https://mcp.notion.com/mcp",
-    description: "Pages and databases",
-    docs: "https://developers.notion.com/docs/mcp",
-  },
-  {
-    name: "atlassian",
-    url: "https://mcp.atlassian.com/v1/mcp",
-    description: "Jira and Confluence",
-    docs: "https://support.atlassian.com/rovo/docs/getting-started-with-the-atlassian-remote-mcp-server/",
-  },
-  {
-    name: "sentry",
-    url: "https://mcp.sentry.dev/mcp",
-    description: "Errors and issues",
-    docs: "https://docs.sentry.io/product/sentry-mcp/",
-  },
-];
-
 export const connections = new Hono<AppEnv>()
-  .get("/presets", (c) => c.json({ presets: PRESETS }))
+  .get("/catalog", async (c) => {
+    const rows = await c.var.services.database.db
+      .select({ id: schema.connections.id, url: schema.connections.url })
+      .from(schema.connections)
+      .where(eq(schema.connections.userId, c.var.user.id));
+    return c.json({
+      categories: APP_CATEGORIES,
+      apps: CATALOG.map((app) => ({
+        ...app,
+        connectionId: rows.find((r) => sameServer(r.url, app.url))?.id ?? null,
+      })),
+    });
+  })
+
+  /** One-click connect: the server and its name come from the directory, not the request. */
+  .post("/catalog/:id", async (c) => {
+    const app = CATALOG.find((a) => a.id === c.req.param("id"));
+    if (!app) apiError(404, "not_found", "That app isn't in the directory.");
+    const { db } = c.var.services.database;
+    const mine = await db
+      .select({ name: schema.connections.name, url: schema.connections.url })
+      .from(schema.connections)
+      .where(eq(schema.connections.userId, c.var.user.id));
+    if (mine.some((r) => sameServer(r.url, app.url)))
+      apiError(409, "conflict", `${app.title} is already connected.`);
+    const taken = new Set(mine.map((r) => r.name));
+    let name = app.id;
+    for (let i = 2; taken.has(name); i++) name = `${app.id}-${i}`;
+    return c.json(
+      await createConnection(c, { name, url: app.url, toolEffects: app.toolEffects }),
+      201,
+    );
+  })
 
   .get("/", async (c) => {
     const { db } = c.var.services.database;
@@ -72,9 +72,12 @@ export const connections = new Hono<AppEnv>()
               effect: effectFromAnnotations(t, r.toolEffects),
             })) ?? null;
         }
+        const app = catalogAppFor(r.url);
         return {
           id: r.id,
           name: r.name,
+          title: app?.title ?? null,
+          examples: app?.examples ?? [],
           url: r.url,
           status: r.status,
           authType: r.auth.type,
@@ -103,13 +106,7 @@ export const connections = new Hono<AppEnv>()
         token: z.string().min(1).max(4000).optional(),
       }),
     );
-    try {
-      await assertPublicUrl(input.url);
-    } catch (error) {
-      apiError(422, "blocked_url", error instanceof Error ? error.message : "URL not allowed");
-    }
     const { db } = c.var.services.database;
-    const box = c.var.services.box;
     const [existing] = await db
       .select({ id: schema.connections.id })
       .from(schema.connections)
@@ -117,35 +114,7 @@ export const connections = new Hono<AppEnv>()
         and(eq(schema.connections.userId, c.var.user.id), eq(schema.connections.name, input.name)),
       );
     if (existing) apiError(409, "conflict", `A connection named "${input.name}" already exists.`);
-
-    const [conn] = await db
-      .insert(schema.connections)
-      .values({
-        userId: c.var.user.id,
-        name: input.name,
-        url: input.url,
-        status: "needs_auth",
-        auth: input.token
-          ? { type: "bearer", secret: await box.seal(input.token) }
-          : { type: "none" },
-      })
-      .returning();
-    const session = new McpSession(db, box, c.var.services.toolset.app);
-    const result = await session.check(conn!);
-    await session.close();
-    return c.json(
-      {
-        connection: {
-          id: conn!.id,
-          name: conn!.name,
-          url: conn!.url,
-          status: result.status,
-          lastError: result.error ?? null,
-        },
-        ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}),
-      },
-      201,
-    );
+    return c.json(await createConnection(c, input), 201);
   })
 
   .post("/:id/check", async (c) => {
@@ -231,6 +200,46 @@ export const oauthCallback = new Hono<AppEnv>().get("/", async (c) => {
 
 export function clientMetadataDocument(c: { var: AppEnv["Variables"] }) {
   return clientMetadata(c.var.services.toolset.app);
+}
+
+/** Saves the connection, then tries it: active, or the URL to sign in at. */
+async function createConnection(
+  c: { var: AppEnv["Variables"] },
+  input: { name: string; url: string; token?: string; toolEffects?: Record<string, ToolEffect> },
+) {
+  try {
+    await assertPublicUrl(input.url);
+  } catch (error) {
+    apiError(422, "blocked_url", error instanceof Error ? error.message : "URL not allowed");
+  }
+  const { db } = c.var.services.database;
+  const box = c.var.services.box;
+  const [conn] = await db
+    .insert(schema.connections)
+    .values({
+      userId: c.var.user.id,
+      name: input.name,
+      url: input.url,
+      status: "needs_auth",
+      auth: input.token
+        ? { type: "bearer", secret: await box.seal(input.token) }
+        : { type: "none" },
+      ...(input.toolEffects ? { toolEffects: input.toolEffects } : {}),
+    })
+    .returning();
+  const session = new McpSession(db, box, c.var.services.toolset.app);
+  const result = await session.check(conn!);
+  await session.close();
+  return {
+    connection: {
+      id: conn!.id,
+      name: conn!.name,
+      url: conn!.url,
+      status: result.status,
+      lastError: result.error ?? null,
+    },
+    ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}),
+  };
 }
 
 async function ownConnection(c: { var: AppEnv["Variables"] }, id: string) {

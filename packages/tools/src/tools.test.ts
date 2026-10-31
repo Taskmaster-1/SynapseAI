@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createDatabase, type Database, SecretBox, schema } from "@synapse/db";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { extractText } from "./builtin/files";
 import { chunkText, ingestDocument, searchKnowledge } from "./builtin/knowledge";
@@ -81,6 +82,37 @@ describe("with a database", () => {
     server = Bun.serve({
       port: 0,
       fetch: async (req) => {
+        const path = new URL(req.url).pathname;
+        const origin = `http://127.0.0.1:${server.port}`;
+        // A server that wants OAuth, with dynamic client registration, at /oauth-mcp.
+        if (path === "/.well-known/oauth-protected-resource/oauth-mcp")
+          return Response.json({
+            resource: `${origin}/oauth-mcp`,
+            authorization_servers: [origin],
+          });
+        if (path === "/.well-known/oauth-authorization-server")
+          return Response.json({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            registration_endpoint: `${origin}/register`,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+          });
+        if (path === "/register")
+          return Response.json(
+            { ...((await req.json()) as object), client_id: "registered-client" },
+            {
+              status: 201,
+            },
+          );
+        if (path === "/oauth-mcp")
+          return new Response("unauthorized", {
+            status: 401,
+            headers: {
+              "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/oauth-mcp"`,
+            },
+          });
         if (req.headers.get("authorization") !== "Bearer secret-token")
           return new Response("unauthorized", { status: 401 });
         const mcp = new McpServer({ name: "test", version: "1.0.0" });
@@ -166,6 +198,39 @@ describe("with a database", () => {
     });
     const result = await session.check(conn!);
     expect(result.status).not.toBe("active");
+  });
+
+  test("a server that wants OAuth comes back with the URL to sign in at", async () => {
+    const box = await SecretBox.fromSecret("s".repeat(32));
+    const [conn] = await database.db
+      .insert(schema.connections)
+      .values({
+        userId: "u1",
+        name: "signin",
+        url: `http://127.0.0.1:${server.port}/oauth-mcp`,
+        status: "needs_auth",
+        auth: { type: "none" },
+      })
+      .returning();
+    const session = new McpSession(database.db, box, {
+      publicUrl: "http://localhost:3000",
+      appName: "t",
+    });
+    const result = await session.check(conn!);
+    expect(result.status).toBe("needs_auth");
+    const url = new URL(result.authorizationUrl!);
+    expect(`${url.origin}${url.pathname}`).toBe(`http://127.0.0.1:${server.port}/authorize`);
+    expect(url.searchParams.get("client_id")).toBe("registered-client");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("redirect_uri")).toBe(
+      "http://localhost:3000/api/connections/oauth/callback",
+    );
+    const [row] = await database.db
+      .select()
+      .from(schema.connections)
+      .where(eq(schema.connections.id, conn!.id));
+    expect(row!.auth.type).toBe("oauth");
+    await session.close();
   });
 
   test("knowledge search (full-text only) finds and ranks passages per user", async () => {

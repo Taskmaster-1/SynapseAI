@@ -8,7 +8,7 @@ their own Linear from **Connections → Linear**.
 Tokens are encrypted with `SYNAPSE_SECRET` and never leave your server. Disconnecting revokes
 them at Linear and deletes them.
 
-Prefer Linear's hosted MCP server? It is still in the **Add connection** presets. The built-in
+Prefer Linear's hosted MCP server? It is in the **App directory** on the Connections page. The built-in
 tools add tailored approval cards, plain-language risk facts and the "a read never widens the
 write" check on teams and issues; you can use either, or both.
 

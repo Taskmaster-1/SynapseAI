@@ -60,10 +60,15 @@ function suggestionsFor(conns: Connection[] | undefined): string[] {
   const out: string[] = [];
   for (const c of conns ?? []) {
     if (c.status !== "active") continue;
+    // Directory apps bring their own starter asks; one each, so several apps all get a turn.
+    if (c.examples[0]) {
+      out.push(c.examples[0]);
+      continue;
+    }
     const key = Object.keys(SUGGESTIONS).find((k) => c.name.toLowerCase().includes(k));
     if (key) out.push(...SUGGESTIONS[key]!);
   }
-  return [...out, ...GENERAL].slice(0, 4);
+  return [...new Set([...out, ...GENERAL])].slice(0, 4);
 }
 
 const GUIDE_HIDDEN_KEY = "synapse-guide-hidden";
@@ -491,7 +496,7 @@ function FirstRunGuide({
       case "tool":
         return {
           title: "Connect a tool",
-          body: "GitHub, Linear, Notion or any MCP server. The agent works inside them.",
+          body: "Notion, Jira, Stripe and dozens more in one click, or any MCP server. The agent works inside them.",
           art: (
             <div className="flex items-center">
               {["GitHub", "Linear", "Notion"].map((n, i) => (
@@ -508,7 +513,7 @@ function FirstRunGuide({
           action: done ? (
             <DoneLine>Connected</DoneLine>
           ) : (
-            <InkLink href="/connections?add=1">Add a connection</InkLink>
+            <InkLink href="/connections?add=1">Browse the app directory</InkLink>
           ),
         };
       case "style":

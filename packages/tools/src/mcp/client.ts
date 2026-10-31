@@ -93,13 +93,16 @@ export class McpSession {
     private readonly app: OAuthAppConfig,
   ) {}
 
+  private async provider(conn: Connection): Promise<ConnectionOAuthProvider | null> {
+    return conn.auth.type === "oauth"
+      ? ConnectionOAuthProvider.load(this.db, this.box, conn.id, this.app)
+      : null;
+  }
+
   private async open(
     conn: Connection,
+    provider: ConnectionOAuthProvider | null,
   ): Promise<{ client: Client; provider: ConnectionOAuthProvider | null }> {
-    const provider =
-      conn.auth.type === "oauth"
-        ? await ConnectionOAuthProvider.load(this.db, this.box, conn.id, this.app)
-        : null;
     const headers: Record<string, string> = {};
     if (conn.auth.type === "bearer" && conn.auth.secret)
       headers.authorization = `Bearer ${await this.box.open(conn.auth.secret)}`;
@@ -115,10 +118,10 @@ export class McpSession {
 
   /** Connects (or re-checks) a connection and records its status. Used by the connections API. */
   async check(conn: Connection): Promise<ConnectResult> {
-    let provider: ConnectionOAuthProvider | null = null;
+    // Made before connecting: when the server wants a sign-in, the SDK leaves the URL on it.
+    const provider = await this.provider(conn);
     try {
-      const opened = await this.open(conn);
-      provider = opened.provider;
+      const opened = await this.open(conn, provider);
       const { tools } = await opened.client.listTools();
       await opened.client.close();
       await this.db
@@ -207,7 +210,7 @@ export class McpSession {
   private async client(conn: Connection): Promise<Client> {
     let client = this.clients.get(conn.id);
     if (!client) {
-      client = (await this.open(conn)).client;
+      client = (await this.open(conn, await this.provider(conn))).client;
       this.clients.set(conn.id, client);
     }
     return client;
