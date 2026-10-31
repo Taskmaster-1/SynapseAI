@@ -219,8 +219,25 @@ function EmailView({ obj }: { obj: Obj }) {
   );
 }
 
-/** Tool input rendered as something a person reads, not JSON. */
-export function PayloadView({ input }: { input: unknown }) {
+/** A new document reads like one: the title, then the body set like a page. */
+function DocView({ obj }: { obj: Obj }) {
+  const body = typeof obj.body === "string" ? obj.body.trim() : "";
+  return (
+    <div>
+      <p className="eyebrow mb-1.5">New Google Doc</p>
+      <h3 className="font-serif text-[24px] leading-[1.15] break-words text-fg">
+        {String(obj.title ?? "") || <span className="text-fg-faint italic">Untitled</span>}
+      </h3>
+      <div className="scroll-thin mt-4 max-h-[420px] overflow-auto border-l-2 border-line-strong pl-3 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
+        {body || <span className="text-fg-faint italic">empty</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Tool input rendered as something a person reads, not JSON. `tool` picks a tailored view. */
+export function PayloadView({ input, tool }: { input: unknown; tool?: string }) {
+  if (tool === "drive_create_doc" && isPlainObject(input)) return <DocView obj={input} />;
   if (isEmailLike(input)) return <EmailView obj={input} />;
   if (isPlainObject(input)) {
     if (Object.keys(input).length === 0)

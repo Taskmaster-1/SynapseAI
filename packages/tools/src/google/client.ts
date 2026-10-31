@@ -1,12 +1,43 @@
 import { type Db, type SecretBox, schema } from "@synapse/db";
 import { and, eq } from "drizzle-orm";
 
+const AUTH = "https://www.googleapis.com/auth/";
+
+/**
+ * Scopes by the tools they unlock. Gmail and Calendar are required to connect at all; the
+ * rest are optional, so a connection made before they existed (or one where the user
+ * unticked a box) keeps working and only those tools are withheld until a reconnect.
+ */
+export const GOOGLE_SCOPE_GROUPS = {
+  gmail: { label: "Gmail", required: true, scopes: [`${AUTH}gmail.modify`] },
+  calendar: { label: "Calendar", required: true, scopes: [`${AUTH}calendar.events`] },
+  drive: {
+    label: "Drive",
+    required: false,
+    scopes: [`${AUTH}drive.readonly`, `${AUTH}drive.file`],
+  },
+  contacts: {
+    label: "Contacts",
+    required: false,
+    scopes: [`${AUTH}contacts.readonly`, `${AUTH}contacts.other.readonly`],
+  },
+} as const;
+
+export type GoogleScopeGroup = keyof typeof GOOGLE_SCOPE_GROUPS;
+
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
-  "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/calendar.events",
+  ...Object.values(GOOGLE_SCOPE_GROUPS).flatMap((g) => g.scopes),
 ];
+
+/** The tool groups a granted scope string (space-separated, as Google returns it) lacks. */
+export function missingGoogleGroups(granted: string): GoogleScopeGroup[] {
+  const have = new Set(granted.split(/\s+/));
+  return (Object.keys(GOOGLE_SCOPE_GROUPS) as GoogleScopeGroup[]).filter((g) =>
+    GOOGLE_SCOPE_GROUPS[g].scopes.some((s) => !have.has(s)),
+  );
+}
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -116,10 +147,9 @@ export async function completeGoogleAuth(
     throw new GoogleAuthError(token.error_description ?? token.error ?? "Google sign-in failed.");
   if (!token.refresh_token)
     throw new GoogleAuthError("Google did not grant offline access. Try connecting again.");
-  const missing = GOOGLE_SCOPES.filter(
-    (s) => s.startsWith("https://") && !(token.scope ?? "").split(" ").includes(s),
-  );
-  if (missing.length > 0)
+  // Drive and Contacts are optional: without them those tools are simply left out.
+  const missing = missingGoogleGroups(token.scope ?? "");
+  if (missing.some((g) => GOOGLE_SCOPE_GROUPS[g].required))
     throw new GoogleAuthError(
       "Gmail and Calendar access were not granted. Tick both boxes on Google's consent screen.",
     );
@@ -197,7 +227,14 @@ export class GoogleClient {
     private readonly integrationId: string,
     private tokens: GoogleTokens,
     readonly account: string,
+    /** Granted scopes, space-separated. */
+    readonly scopes: string,
   ) {}
+
+  /** True when the grant covers every scope a tool group needs. */
+  has(group: GoogleScopeGroup): boolean {
+    return !missingGoogleGroups(this.scopes).includes(group);
+  }
 
   static async forUser(
     app: GoogleAppConfig,
@@ -217,7 +254,7 @@ export class GoogleClient {
       );
     if (!row) return null;
     const tokens = JSON.parse(await box.open(row.secret)) as GoogleTokens;
-    return new GoogleClient(app, db, box, row.id, tokens, row.account);
+    return new GoogleClient(app, db, box, row.id, tokens, row.account, row.scopes || tokens.scope);
   }
 
   private get f() {
@@ -266,17 +303,19 @@ export class GoogleClient {
   }
 
   /** Calls a Google REST endpoint and returns its JSON. Errors carry Google's message. */
-  async request<T>(
-    url: string,
-    init: {
-      method?: string;
-      query?: Record<string, string | number | boolean | undefined>;
-      body?: unknown;
-      /** A non-JSON body, e.g. a multipart upload. */
-      raw?: { contentType: string; data: string | Uint8Array };
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<T> {
+  async request<T>(url: string, init: GoogleRequest = {}): Promise<T> {
+    const res = await this.send(url, init);
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
+  /** Calls an endpoint that returns a file's bytes (a Drive download or export). */
+  async download(url: string, init: GoogleRequest = {}): Promise<Uint8Array> {
+    return new Uint8Array(await (await this.send(url, init)).arrayBuffer());
+  }
+
+  private async send(url: string, init: GoogleRequest): Promise<Response> {
     const u = new URL(url);
     for (const [k, v] of Object.entries(init.query ?? {}))
       if (v !== undefined) u.searchParams.set(k, String(v));
@@ -291,15 +330,23 @@ export class GoogleClient {
       ...(init.raw ? { body: init.raw.data } : {}),
       ...(init.signal ? { signal: init.signal } : {}),
     });
-    if (res.status === 204) return undefined as T;
-    const text = await res.text();
     if (!res.ok) {
+      const text = await res.text();
       let message = text.slice(0, 300);
       try {
         message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message;
       } catch {}
       throw new Error(`Google API error (${res.status}): ${message}`);
     }
-    return (text ? JSON.parse(text) : undefined) as T;
+    return res;
   }
+}
+
+interface GoogleRequest {
+  method?: string;
+  query?: Record<string, string | number | boolean | undefined>;
+  body?: unknown;
+  /** A non-JSON body, e.g. a multipart upload. */
+  raw?: { contentType: string; data: string | Uint8Array };
+  signal?: AbortSignal;
 }

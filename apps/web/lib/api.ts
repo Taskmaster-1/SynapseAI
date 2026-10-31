@@ -460,12 +460,15 @@ export interface Onboarding {
 export interface GoogleIntegration {
   /** False when the server has no Google OAuth app configured. */
   available: boolean;
-  tools: { name: string; effect: Effect; title: string }[];
+  /** `group` is the scope group a tool needs: gmail, calendar, drive or contacts. */
+  tools: { name: string; group: string; effect: Effect; title: string }[];
   connection: {
     account: string;
     status: "active" | "needs_auth" | "error";
     lastError: string | null;
     connectedAt: string;
+    /** Tool groups the grant lacks (it predates them, or a box was unticked). */
+    missing: { group: string; label: string }[];
   } | null;
 }
 

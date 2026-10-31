@@ -230,8 +230,17 @@ export class Worker {
         .where(
           and(eq(schema.connections.userId, run.userId), eq(schema.connections.status, "active")),
         );
-      if (toolset.registry.get("gmail_search"))
-        conns.unshift({ name: "Gmail and Google Calendar" });
+      if (toolset.google) {
+        const { missing } = toolset.google;
+        const extra = ["Drive", "Contacts"].filter((g) => !missing.includes(g));
+        // Withheld groups are named so the agent can tell the user how to get them.
+        const later = missing.length
+          ? ` (${missing.join(" and ")}: not granted yet; the user can reconnect Google under Connections)`
+          : "";
+        conns.unshift({
+          name: `Gmail, Google Calendar${extra.map((g) => `, Google ${g}`).join("")}${later}`,
+        });
+      }
       const system = buildSystemPrompt({
         userName: user?.name ?? "there",
         instructions: settings?.instructions ?? null,
