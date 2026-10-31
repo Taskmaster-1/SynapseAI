@@ -400,7 +400,8 @@ async function execute(
       });
       return;
     }
-    if (def.untrustedOutput && full.type !== "error" && !run.tainted) {
+    const taints = def.untrustedOutput && (def.taints?.(call.input) ?? true);
+    if (taints && full.type !== "error" && !run.tainted) {
       run.tainted = true;
       await opts.store.updateRun(run.id, { tainted: true });
     }

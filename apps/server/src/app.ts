@@ -6,7 +6,9 @@ import { automations, hooks } from "./routes/automations";
 import { chats } from "./routes/chats";
 import { clientMetadataDocument, connections, oauthCallback } from "./routes/connections";
 import { files } from "./routes/files";
+import { githubIntegration } from "./routes/github";
 import { googleCallback, integrations } from "./routes/integrations";
+import { linearIntegration } from "./routes/linear";
 import { models } from "./routes/models";
 import { onboarding } from "./routes/onboarding";
 import { push } from "./routes/push";
@@ -54,7 +56,12 @@ export function createApp(services: Services) {
         github: Boolean(config.GITHUB_CLIENT_ID),
         google: Boolean(config.GOOGLE_CLIENT_ID),
       },
-      integrations: { google: Boolean(config.google), slack: Boolean(config.slack) },
+      integrations: {
+        google: Boolean(config.google),
+        slack: Boolean(config.slack),
+        github: Boolean(config.github),
+        linear: Boolean(config.linear),
+      },
       features: {
         webSearch: Boolean(config.webSearch),
         embeddings: Boolean(config.embedding),
@@ -80,6 +87,8 @@ export function createApp(services: Services) {
   api.route("/connections", connections);
   api.route("/integrations/google/callback", googleCallback);
   api.route("/integrations/slack", slackIntegration);
+  api.route("/integrations/github", githubIntegration);
+  api.route("/integrations/linear", linearIntegration);
   api.route("/integrations", integrations);
   api.route("/policy/suggestions", suggestions);
   api.route("/policy", policy);

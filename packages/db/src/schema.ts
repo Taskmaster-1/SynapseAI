@@ -439,7 +439,7 @@ export const connections = pgTable(
 );
 
 /**
- * First-party integrations (Google today). One row per user and provider; tokens are
+ * First-party integrations (Google, GitHub, Linear). One row per user and provider; tokens are
  * sealed with the server secret. Tools for these are built in, not served over MCP.
  */
 export const integrations = pgTable(
@@ -449,7 +449,7 @@ export const integrations = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    provider: text("provider").$type<"google">().notNull(),
+    provider: text("provider").$type<"google" | "github" | "linear">().notNull(),
     /** The account the user connected, e.g. their Google email address. */
     account: text("account").notNull(),
     status: text("status").$type<"active" | "needs_auth" | "error">().notNull(),

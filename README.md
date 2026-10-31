@@ -2,7 +2,7 @@
 
 **An open-source agent that does real work in your tools — and can't be talked into doing the wrong thing.**
 
-SynapseAI works in the services you already use (Gmail, Google Calendar, Drive, Sheets, Contacts and Slack built in; GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. It doesn't wait to be asked: automations start work on a schedule, when an email arrives, or when another app calls a webhook. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
+SynapseAI works in the services you already use (Gmail, Google Calendar, Drive, Sheets, Contacts, Slack, GitHub and Linear built in; Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. It doesn't wait to be asked: automations start work on a schedule, when an email arrives, or when another app calls a webhook. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
 
 ![A task waiting for approval: the agent drafted an email and shows it as an editable card, with the activity timeline on the right](docs/screenshots/task.png)
 
@@ -39,12 +39,15 @@ Agent products that act in your tools share three problems: approvals that live 
 - Approve from your phone: install Synapse as an app and get push notifications with Approve and Deny buttons (the undo window still applies), or opt in to email alerts ([setup](docs/notifications.md))
 - Approve from Slack: approvals arrive as a DM with Approve and Deny buttons, and the message updates wherever you decide ([setup](docs/slack.md))
 - Built-in Slack tools that act as you: search messages, read channels and threads, find people, and post in a channel, a DM or a thread. Posting asks for approval by default, and a channel that only showed up in a message the agent read is flagged as new ([setup](docs/slack.md))
+- Built-in GitHub tools that act as you: search issues and pull requests, read a PR with its changed files, reviews and checks, see what's waiting on your review, read code, and comment, open, close, label or assign issues with approval. A repository that only showed up in something the agent read is flagged as new ([setup](docs/github.md))
+- Built-in Linear tools that act as you: search and read issues, see what's assigned to you, file issues, move, reassign and relabel them, and comment. Every change asks for approval by default, with the new issue or comment shown as it will appear, and a team or issue that only showed up in content the agent read is flagged as new ([setup](docs/linear.md))
 - Undo window: approved sends and deletes wait a few seconds (default 10, configurable) with an Undo button
 - Team workspaces: one set of rules for everyone in the team (the strictest answer wins, a team block can't be overridden), risky actions routed to an admin for sign-off, invite links, and a CSV audit export. Tasks, connections and memory stay personal ([how it works](docs/teams.md))
 - Skills in the open Agent Skills format: six built in (inbox triage, meeting prep, follow-ups, weekly calendar review, polite declines, status updates), plus your own, written on the Skills page, imported as a `SKILL.md`, or saved from a chat. The agent sees one line per skill and loads the rest only when a task needs it; every use is recorded with the skill's version. Skills are instructions, never permissions ([how they work](docs/skills.md))
 - Approvals that don't wait forever: one reminder, escalation to team admins, then expiry as an ordinary deny the agent sees. Optional two-person sign-off for irreversible actions (and sends): two different people, any deny ends it
 - Plain-language risk facts on every approval, in the app and in push, Slack and email ("Sends to 2 people outside acme.com", "Can't be undone", "After reading outside content")
 - Attach any file in chat (photos, videos, PDFs, documents; up to 25 MB each) with the paperclip, drag and drop, or paste. The agent reads text files and PDFs, looks at photos (PNG, JPEG, GIF, WebP up to 5 MB; text in a photo is treated as untrusted, like an email), and can attach any of your files to an email; the approval card shows exactly which files go out
+- Exact numbers: the agent runs JavaScript in a QuickJS WebAssembly sandbox (`run_code`: no network, no disk, 5 s and 64 MB limits, fresh each call) for totals, averages, date math and reshaping data, instead of doing arithmetic in its head. It can read your attached CSV, JSON, text and PDF files and save a result file you can open or have it attach to an email
 - Knowledge base: upload docs, hybrid full-text + vector search (pgvector, reciprocal rank fusion)
 - Memory you can read and edit; the agent can add notes, but not from a tainted run without asking
 - Web search (Tavily, Brave or Exa) and SSRF-guarded web fetch
@@ -98,7 +101,7 @@ The server is stateless apart from Postgres. Run the API and workers separately 
 |---|---|
 | `packages/core` | Host-agnostic agent runtime: run loop, approval state machine, policy, compaction, model fallback, client event reducer. No database or HTTP. |
 | `packages/db` | Drizzle schema and migrations, Postgres store for the runtime, run leasing, ordered event log, secret encryption. |
-| `packages/tools` | Gmail, Calendar, Drive, Sheets and Contacts, Slack, MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
+| `packages/tools` | Gmail, Calendar, Drive, Sheets and Contacts, Slack, GitHub, Linear, MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
 | `packages/evals` | Scenario harness (task + safety) with simulated users; `bun run evals`. |
 | `apps/server` | HTTP API, auth, SSE, worker. |
 | `apps/web` | Next.js UI. |

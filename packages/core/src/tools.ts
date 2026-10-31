@@ -19,6 +19,13 @@ export interface ToolDefinition {
   /** True when output can contain third-party content (email bodies, web pages, files). */
   untrustedOutput: boolean;
   /**
+   * Narrows `untrustedOutput` per call: whether this call's output taints the run. For tools
+   * whose output is third-party content only with some inputs (run_code reading files).
+   * Elsewhere, e.g. when deciding which addresses the user put in play, `untrustedOutput`
+   * still applies to every call.
+   */
+  taints?: (input: JSONValue) => boolean;
+  /**
    * Decision when no user rule matches, overriding the effect default. Taint still applies:
    * a tainted run never auto-allows a non-read call.
    */

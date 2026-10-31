@@ -79,6 +79,11 @@ const DESTINATION_FIELDS = new Set([
   "hostname",
   "phone",
   "phonenumber",
+  // Trackers (Linear): the team an issue is filed in, the issue a change or comment lands on.
+  "team",
+  "teamid",
+  "issue",
+  "issueid",
 ]);
 
 const FIELD_NOUNS: Record<string, string> = {
@@ -100,6 +105,8 @@ const FIELD_NOUNS: Record<string, string> = {
   repo: "repository",
   org: "organization",
   phonenumber: "phone number",
+  teamid: "team",
+  issueid: "issue",
 };
 
 function normalizeKey(key: string): string {

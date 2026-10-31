@@ -260,6 +260,8 @@ export class Worker {
         });
       }
       if (toolset.registry.get("slack_search")) conns.unshift({ name: "Slack" });
+      if (toolset.registry.get("github_search")) conns.unshift({ name: "GitHub" });
+      if (toolset.registry.get("linear_search")) conns.unshift({ name: "Linear" });
       const system = buildSystemPrompt({
         userName: user?.name ?? "there",
         instructions: settings?.instructions ?? null,

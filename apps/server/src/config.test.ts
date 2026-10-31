@@ -24,4 +24,19 @@ describe("config", () => {
     const c = loadConfig({ ...base, AI_GATEWAY_API_KEY: "g", SYNAPSE_MODELS: "openai:gpt-5" });
     expect(c.SYNAPSE_MODELS).toEqual(["openai:gpt-5"]);
   });
+
+  test("the GitHub tools share the sign-in app unless a dedicated one is set", () => {
+    expect(loadConfig(base).github).toBeNull();
+    const signIn = { ...base, GITHUB_CLIENT_ID: "a", GITHUB_CLIENT_SECRET: "b" };
+    expect(loadConfig(signIn).github).toMatchObject({ clientId: "a", sharedWithSignIn: true });
+    const own = { ...signIn, GITHUB_TOOLS_CLIENT_ID: "c", GITHUB_TOOLS_CLIENT_SECRET: "d" };
+    expect(loadConfig(own).github).toEqual({
+      clientId: "c",
+      clientSecret: "d",
+      publicUrl: "http://localhost:3000",
+    });
+    expect(() => loadConfig({ ...signIn, GITHUB_TOOLS_CLIENT_ID: "c" })).toThrow(
+      "Set both GITHUB_TOOLS_CLIENT_ID",
+    );
+  });
 });

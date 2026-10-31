@@ -94,6 +94,8 @@ export async function createServices(
       embedder: config.embedding ? createEmbedder(config.embedding) : null,
       google: config.google,
       slack: config.slack,
+      github: config.github,
+      linear: config.linear,
     },
     notifier: new Notifier(() => services),
     slack: config.slack ? new SlackChannel(() => services) : null,

@@ -1,6 +1,7 @@
 import { type ToolDefinition, ToolRegistry } from "@synapse/core";
 import { type Db, type SecretBox, schema } from "@synapse/db";
 import { eq } from "drizzle-orm";
+import { runCodeTool } from "./builtin/code";
 import { fileReadTool, loadFiles, saveFile } from "./builtin/files";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
@@ -8,6 +9,8 @@ import { planTool } from "./builtin/plan";
 import { scheduleTools } from "./builtin/schedule";
 import { enabledSkills, skillTools } from "./builtin/skills";
 import { type WebSearchConfig, webFetchTool, webSearchTool } from "./builtin/web";
+import { type GitHubAppConfig, GitHubClient } from "./github/client";
+import { githubTools } from "./github/tools";
 import { calendarTools } from "./google/calendar";
 import {
   GOOGLE_SCOPE_GROUPS,
@@ -19,15 +22,19 @@ import { contactsTools } from "./google/contacts";
 import { driveTools } from "./google/drive";
 import { gmailTools } from "./google/gmail";
 import { sheetsTools } from "./google/sheets";
+import { type LinearAppConfig, LinearClient } from "./linear/client";
+import { linearTools } from "./linear/tools";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
 import { slackTools } from "./slack/tools";
 
+export { runCodeTool } from "./builtin/code";
 export * from "./builtin/files";
 export * from "./builtin/knowledge";
 export { loadMemoryBlock, loadWritingStyle } from "./builtin/memory";
 export { PLAN_TOOL } from "./builtin/plan";
+export { runInSandbox, runSandboxed, SANDBOX_LIMITS } from "./builtin/sandbox";
 export { formatWhen, MAX_SCHEDULED, schedulePreview } from "./builtin/schedule";
 export {
   BUILTIN_SKILL_FILES,
@@ -40,6 +47,8 @@ export {
   skillFromFiles,
 } from "./builtin/skills";
 export { htmlToText, type WebSearchConfig } from "./builtin/web";
+export * from "./github/client";
+export { parseIssueRef, parseRepo } from "./github/tools";
 export * from "./google/client";
 export {
   buildMime,
@@ -49,6 +58,8 @@ export {
   type SentSample,
   sentSamples,
 } from "./google/gmail";
+export * from "./linear/client";
+export { linearIssueRef } from "./linear/tools";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
 export * from "./slack/client";
@@ -64,6 +75,10 @@ export interface ToolsetConfig {
   google: GoogleAppConfig | null;
   /** Set when the operator configured a Slack app (the server's Slack config fits). */
   slack: SlackToolsConfig | null;
+  /** Set when the operator configured a GitHub OAuth app for the tools. */
+  github?: GitHubAppConfig | null;
+  /** Set when the operator configured a Linear OAuth app. Optional: older callers omit it. */
+  linear?: LinearAppConfig | null;
 }
 
 /**
@@ -82,6 +97,7 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     webFetchTool(),
     knowledgeTool(cfg.db, cfg.embedder),
     fileReadTool(cfg.db),
+    runCodeTool(cfg.db, cfg.embedder),
     ...memoryTools(cfg.db),
     planTool(cfg.db),
     ...scheduleTools(cfg.db, settings?.timezone ?? null),
@@ -110,6 +126,15 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     // Only with a user token: installs from before it existed reconnect first.
     const slack = await SlackUserClient.forUser(cfg.slack, cfg.db, cfg.box, userId);
     if (slack) builtin.push(...slackTools(async () => slack));
+  }
+  if (cfg.github) {
+    const gh = await GitHubClient.forUser(cfg.github, cfg.db, cfg.box, userId);
+    if (gh) builtin.push(...githubTools(async () => gh));
+  }
+  if (cfg.linear) {
+    // Not offered while the integration needs a reconnect (status other than active).
+    const linear = await LinearClient.forUser(cfg.linear, cfg.db, cfg.box, userId);
+    if (linear) builtin.push(...linearTools(async () => linear));
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {

@@ -259,7 +259,7 @@ function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; fo
               </div>
               <div>
                 <div className="eyebrow mb-1.5">Output</div>
-                <OutputView output={p.output} reason={p.reason} />
+                <OutputView output={p.output} reason={p.reason} tool={p.name} />
               </div>
             </div>
           ) : null}
@@ -274,11 +274,13 @@ const LIMIT = 600;
 export function OutputView({
   output,
   reason,
+  tool,
 }: {
   output: ToolOutput | null;
   reason?: string | null;
+  /** The tool's name, for outputs with their own layout (run_code). */
+  tool?: string;
 }) {
-  const [all, setAll] = useState(false);
   if (!output) return <p className="text-12 text-fg-faint">No output yet.</p>;
   if (output.type === "denied")
     return (
@@ -293,11 +295,18 @@ export function OutputView({
         <FileChip file={output} href={fileUrl(output.fileId)} previewUrl={fileUrl(output.fileId)} />
       </div>
     );
+  if (tool === "run_code" && output.type === "json" && isCodeRun(output.value))
+    return <CodeRunView run={output.value} />;
   const text = output.type === "json" ? prettyJson(output.value) : output.value;
+  return <LongText text={text} danger={output.type === "error"} />;
+}
+
+function LongText({ text, danger }: { text: string; danger?: boolean }) {
+  const [all, setAll] = useState(false);
   const long = text.length > LIMIT;
   return (
     <div>
-      <pre className={cx("code max-h-96", output.type === "error" && "text-danger")}>
+      <pre className={cx("code max-h-96", danger && "text-danger")}>
         {long && !all ? `${text.slice(0, LIMIT)}…` : text}
       </pre>
       {long ? (
@@ -309,6 +318,58 @@ export function OutputView({
           {all ? "Show less" : `Show all (${Math.round(text.length / 100) / 10}k chars)`}
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/** run_code's output: `{ result?, output?, outputTruncated?, files?, note? }`. */
+interface CodeRun {
+  result?: unknown;
+  output?: string;
+  outputTruncated?: boolean;
+  files?: { fileId: string; name: string; mimeType: string; bytes: number }[];
+  note?: string;
+}
+
+const CODE_RUN_KEYS = ["result", "output", "outputTruncated", "files", "note"];
+
+function isCodeRun(value: unknown): value is CodeRun {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).every((k) => CODE_RUN_KEYS.includes(k))
+  );
+}
+
+function CodeRunView({ run }: { run: CodeRun }) {
+  return (
+    <div className="space-y-2.5">
+      {"result" in run ? (
+        <div>
+          <p className="mb-1 text-12 text-fg-muted">Result</p>
+          <LongText text={typeof run.result === "string" ? run.result : prettyJson(run.result)} />
+        </div>
+      ) : null}
+      {run.output ? (
+        <div>
+          <p className="mb-1 text-12 text-fg-muted">
+            Printed{run.outputTruncated ? " (cut off at the output limit)" : ""}
+          </p>
+          <LongText text={run.output.replace(/\n$/, "")} />
+        </div>
+      ) : null}
+      {run.files?.length ? (
+        <div>
+          <p className="mb-1 text-12 text-fg-muted">Saved</p>
+          <div className="flex flex-wrap gap-2">
+            {run.files.map((f) => (
+              <FileChip key={f.fileId} file={f} href={fileUrl(f.fileId)} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {run.note ? <p className="text-12 text-fg-faint">{run.note}</p> : null}
     </div>
   );
 }
