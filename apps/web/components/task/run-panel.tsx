@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { approvalTitle } from "@/components/approval/approval-card";
 import { PayloadView } from "@/components/approval/payload";
 import { useTimeLeft } from "@/components/approval/undo-window";
+import { FileChip, fileUrl } from "@/components/task/files";
 import { EffectPill, Monogram, StepStatusIcon, Tabs } from "@/components/ui";
 import type { TaskRun } from "@/lib/api";
 import {
@@ -284,6 +285,13 @@ export function OutputView({
       <p className="text-13 text-danger">
         Denied{denialReason(output, reason) ? `: ${denialReason(output, reason)}` : ""}
       </p>
+    );
+  if (output.type === "image")
+    return (
+      <div className="flex flex-col gap-1.5">
+        <p className="text-12 text-fg-muted">Looked at this photo:</p>
+        <FileChip file={output} href={fileUrl(output.fileId)} previewUrl={fileUrl(output.fileId)} />
+      </div>
     );
   const text = output.type === "json" ? prettyJson(output.value) : output.value;
   const long = text.length > LIMIT;

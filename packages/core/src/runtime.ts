@@ -13,11 +13,13 @@ import {
 import { jsonrepair } from "jsonrepair";
 import { cachedInstructions, cachedMessages, cachedTools } from "./cache";
 import {
+  attachImages,
   buildHistory,
   capToolOutput,
   clearOldToolOutputs,
   estimateTokens,
   HANDOVER_PROMPT,
+  type ImageLoader,
   toModelOutput,
 } from "./context";
 import { costUsd, isRetryable, type ModelSpec } from "./models";
@@ -82,6 +84,11 @@ export interface RunAgentOptions {
   limits?: Partial<RuntimeLimits>;
   /** Aborts in-flight model and tool calls ("stop now"). */
   signal?: AbortSignal;
+  /**
+   * Loads a photo a tool result shows the model (file_read on an image), for the run's
+   * user. Without it, images reach the model as a note saying it can't see them.
+   */
+  loadImage?: (userId: string, fileId: string) => ReturnType<ImageLoader>;
 }
 
 const TERMINAL: ToolCallStatus[] = ["succeeded", "failed", "denied", "unknown"];
@@ -470,6 +477,11 @@ async function modelStep(
   for (const candidate of opts.models) {
     let messages = buildHistory(rows, candidate.spec.ref);
     messages = await compactIfNeeded(opts, run, candidate, messages, limits);
+    const { loadImage } = opts;
+    messages = await attachImages(
+      messages,
+      loadImage ? (fileId) => loadImage(run.userId, fileId) : undefined,
+    );
 
     const attempt = await streamOneStep(opts, run, rows, candidate, messages, limits, signal);
     if (attempt.ok) return;
@@ -779,7 +791,8 @@ async function compactIfNeeded(
     model: summarizer.model,
     instructions: HANDOVER_PROMPT,
     messages: [
-      ...clearOldToolOutputs(before, 2),
+      // The summary is text, so images stay out of it.
+      ...(await attachImages(clearOldToolOutputs(before, 2), undefined)),
       { role: "user", content: "Write the handover note now." },
     ],
     maxOutputTokens: 4_000,
