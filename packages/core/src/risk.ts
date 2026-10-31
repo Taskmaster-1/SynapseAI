@@ -104,6 +104,38 @@ function slackFact(input: unknown): string {
   return `Posts as you in ${where}`;
 }
 
+const GITHUB_WRITES = new Set(["github_comment", "github_create_issue", "github_update_issue"]);
+
+/** A GitHub write goes out under the person's own account; @mentions notify people. */
+function githubFacts(call: RiskInput): string[] {
+  const i = (call.input ?? {}) as {
+    repo?: unknown;
+    number?: unknown;
+    body?: unknown;
+    state?: unknown;
+  };
+  const repo =
+    typeof i.repo === "string" && i.repo.trim() ? i.repo.trim().slice(0, 100) : "a repository";
+  const where = typeof i.number === "number" ? `${repo}#${i.number}` : repo;
+  const out = [
+    call.name === "github_comment"
+      ? `Comments as you on ${where}`
+      : call.name === "github_create_issue"
+        ? `Opens an issue as you in ${repo}`
+        : i.state === "closed"
+          ? `Closes ${where} as you`
+          : `Changes ${where} as you`,
+  ];
+  const body = typeof i.body === "string" ? i.body.slice(0, 20_000) : "";
+  const mentions = new Set(
+    [...body.matchAll(/(?:^|[^\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[\w.-]+)?)/g)].map((m) =>
+      m[1]!.toLowerCase(),
+    ),
+  );
+  if (mentions.size > 0) out.push(`Notifies ${people(mentions.size)} by @mention`);
+  return out;
+}
+
 /**
  * A spreadsheet write: how many cells an overwrite replaces, and whether any cell is a
  * formula (cells are entered as typed, so `=IMPORTDATA("https://…")` would fetch, and could
@@ -140,6 +172,8 @@ export function riskFacts(call: RiskInput): string[] {
     }
   } else if (call.name === "slack_post_message") {
     facts.push(slackFact(call.input));
+  } else if (GITHUB_WRITES.has(call.name)) {
+    facts.push(...githubFacts(call));
   } else if (call.effect === "send") {
     facts.push("Reaches other people");
   }

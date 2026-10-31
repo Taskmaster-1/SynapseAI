@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseModelRef } from "@synapse/core";
-import type { GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
+import type { GitHubAppConfig, GoogleAppConfig, WebSearchConfig } from "@synapse/tools";
 import webpush from "web-push";
 import { z } from "zod";
 import type { SlackAppConfig } from "./notify/slack-api";
@@ -58,8 +58,12 @@ const Env = z.object({
   RUN_MAX_COST_USD: z.coerce.number().default(2),
   DAY_MAX_COST_USD: z.coerce.number().default(20),
 
+  /** One GitHub OAuth app can serve both sign-in and the GitHub tools (docs/github.md). */
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  /** A separate OAuth app for the GitHub tools; overrides the sign-in app for them. */
+  GITHUB_TOOLS_CLIENT_ID: optional(z.string()),
+  GITHUB_TOOLS_CLIENT_SECRET: optional(z.string()),
   /** One Google OAuth app serves both "Sign in with Google" and the Gmail/Calendar integration. */
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
@@ -116,6 +120,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         }
       : null;
 
+  const github = githubConfig(parsed);
+
   const slack: SlackAppConfig | null =
     parsed.SLACK_CLIENT_ID && parsed.SLACK_CLIENT_SECRET && parsed.SLACK_SIGNING_SECRET
       ? {
@@ -129,6 +135,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   return {
     ...parsed,
     google,
+    github,
     slack,
     push: pushConfig(parsed),
     email:
@@ -162,6 +169,26 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         : {}),
     },
   };
+}
+
+/** The GitHub tools' OAuth app: a dedicated one when both override keys are set. */
+function githubConfig(parsed: z.infer<typeof Env>): GitHubAppConfig | null {
+  if (Boolean(parsed.GITHUB_TOOLS_CLIENT_ID) !== Boolean(parsed.GITHUB_TOOLS_CLIENT_SECRET))
+    throw new Error("Set both GITHUB_TOOLS_CLIENT_ID and GITHUB_TOOLS_CLIENT_SECRET, or neither");
+  if (parsed.GITHUB_TOOLS_CLIENT_ID && parsed.GITHUB_TOOLS_CLIENT_SECRET)
+    return {
+      clientId: parsed.GITHUB_TOOLS_CLIENT_ID,
+      clientSecret: parsed.GITHUB_TOOLS_CLIENT_SECRET,
+      publicUrl: parsed.PUBLIC_URL,
+    };
+  if (parsed.GITHUB_CLIENT_ID && parsed.GITHUB_CLIENT_SECRET)
+    return {
+      clientId: parsed.GITHUB_CLIENT_ID,
+      clientSecret: parsed.GITHUB_CLIENT_SECRET,
+      publicUrl: parsed.PUBLIC_URL,
+      sharedWithSignIn: true,
+    };
+  return null;
 }
 
 /** Claude models, through the gateway when that is the only key configured. */
