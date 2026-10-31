@@ -149,7 +149,8 @@ Tabs **Documents** (drop zone, list, search with highlighted passages) and **Mem
 ### Connections `/connections`
 Grid of connection cards (monogram, name, URL host, status pill, tools count) → detail
 sheet listing tools with effect selector per tool and a short explainer of effects.
-"Add connection" sheet: presets grid + custom URL/token form. OAuth "Authorize" flow and
+App directory below: search, category chips, one-click Connect per app (starter ask quoted
+on each card). "Add custom server" sheet: URL/token form. OAuth "Authorize" flow and
 `?connected=` / `?error=` toasts.
 
 ### Settings `/settings`

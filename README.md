@@ -31,7 +31,8 @@ Agent products that act in your tools share three problems: approvals that live 
 - Built-in Google Sheets: read any sheet by link, add rows, update cells and create spreadsheets, each write shown as a table on the approval card ("save the invoice from that email and add its total to my Expenses sheet")
 - Automations triggered by a cron schedule, new Gmail messages matching a search, or a secret webhook URL
 - Reminders and follow-ups from chat: "remind me Friday at 9 to send the report" notifies you by push, Slack or email at that time; "in 3 days, check whether Sam replied and nudge him if not" brings the agent back to the same conversation, with its context, to do it. One-off or repeating, in your time zone, listed (and cancellable) under Automations. Scheduling from a task that read an email or web page always asks first, so outside content can't plant a scheduled instruction ([how it works](docs/api.md#scheduled-from-chat))
-- MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
+- An app directory of 41 remote MCP servers that connect in one click (Notion, Jira and Confluence, Asana, Stripe, Intercom, Granola, Supabase, Sentry and more), each with starter asks; sign-in happens on the app's own site and its tools fall under your approval rules
+- Any other MCP server over Streamable HTTP, with OAuth 2.1 + PKCE or a bearer token
 - Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
 - Approve a plan, not every step: the agent proposes the exact actions it will take, you untick what you don't want, and the kept actions run without asking again (even after the task read outside content, because you saw each one, unless a step names a recipient that first appeared in that content)
 - Several pending actions from one step can be ticked and signed off together

@@ -1084,10 +1084,7 @@ function TemplateCard({
           blocked ? (
             <span className="text-12 text-fg-muted">Needs Google on this server</span>
           ) : (
-            <Link
-              href={missing === "google" ? "/connections" : "/connections?add=1"}
-              className="btn btn-sm"
-            >
+            <Link href="/connections" className="btn btn-sm">
               Connect {REQUIREMENT_NAMES[missing]}
             </Link>
           )

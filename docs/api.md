@@ -78,13 +78,14 @@ Event types (`RunEvent` in `packages/core/src/types.ts`): `run.status`, `message
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/connections` | | `{ connections: { id, name, url, status, authType, lastError, tools: { name, title, description, effect }[] \| null }[] }` |
+| GET | `/api/connections` | | `{ connections: { id, name, title, examples, url, status, authType, lastError, tools: { name, title, description, effect }[] \| null }[] }` — `title` and `examples` come from the app directory when the URL is one of its servers, else `null` and `[]` |
 | POST | `/api/connections` | `{ name, url, token?: string }` | `{ connection, authorizationUrl?: string }` — open `authorizationUrl` in the browser to finish OAuth |
 | POST | `/api/connections/:id/check` | | `{ status, authorizationUrl?, error? }` |
 | PATCH | `/api/connections/:id` | `{ toolEffects?: Record<string, Effect>, status?: "active" \| "disabled" }` | `{ connection }` |
 | DELETE | `/api/connections/:id` | | `204` |
 | GET | `/api/connections/oauth/callback?code&state` | | redirects to `${WEB_URL}/connections?connected=<id>` or `?error=…` |
-| GET | `/api/connections/presets` | | `{ presets: { name, url, description, docs }[] }` — well-known remote MCP servers |
+| GET | `/api/connections/catalog` | | `{ categories, apps: { id, title, url, category, description, auth: "oauth" \| "none", examples, connectionId }[] }` — the app directory; `connectionId` is set when you've connected that server |
+| POST | `/api/connections/catalog/:id` | | `{ connection, authorizationUrl?: string }` — one-click connect: URL and name come from the directory. `409` if that server is already connected, `404` for an unknown id |
 
 ## Integrations (built in)
 

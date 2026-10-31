@@ -280,6 +280,10 @@ export type ConnectionStatus = "active" | "needs_auth" | "error" | "disabled" | 
 export interface Connection {
   id: string;
   name: string;
+  /** Its name in the app directory, when it came from there. */
+  title: string | null;
+  /** Things to ask it, from the app directory. */
+  examples: string[];
   url: string;
   status: ConnectionStatus;
   authType: string;
@@ -287,11 +291,17 @@ export interface Connection {
   tools: ConnectionTool[] | null;
 }
 
-export interface Preset {
-  name: string;
+/** An app in the directory: a remote MCP server that connects in one click. */
+export interface CatalogApp {
+  id: string;
+  title: string;
   url: string;
+  category: string;
   description: string;
-  docs: string;
+  auth: "oauth" | "none";
+  examples: string[];
+  /** Set when you've already connected it. */
+  connectionId: string | null;
 }
 
 export interface Memory {
@@ -581,7 +591,11 @@ export const api = {
   approvals: () => get<{ approvals: Approval[] }>("/api/approvals"),
 
   connections: () => get<{ connections: Connection[] }>("/api/connections"),
-  presets: () => get<{ presets: Preset[] }>("/api/connections/presets"),
+  catalog: () => get<{ categories: string[]; apps: CatalogApp[] }>("/api/connections/catalog"),
+  connectApp: (id: string) =>
+    post<{ connection: Connection; authorizationUrl?: string }>(
+      `/api/connections/catalog/${enc(id)}`,
+    ),
   addConnection: (body: { name: string; url: string; token?: string }) =>
     post<{ connection: Connection; authorizationUrl?: string }>("/api/connections", body),
   checkConnection: (id: string) =>

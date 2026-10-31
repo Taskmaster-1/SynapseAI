@@ -18,10 +18,8 @@ import { LinearCard } from "@/components/linear-card";
 import { Sheet } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import {
-  BrandGlyph,
   EFFECT_EXPLAINER,
   EffectPill,
-  EmptyState,
   ErrorNote,
   Field,
   Monogram,
@@ -38,11 +36,11 @@ import {
   type ConnectionStatus,
   errorMessage,
   type GoogleIntegration,
-  type Preset,
   type SlackIntegration,
 } from "@/lib/api";
 import { hostOf, humanize } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
+import { AppDirectory } from "./directory";
 import { GitHubCard } from "./github-card";
 
 const EFFECTS: Effect[] = ["read", "write", "send", "destructive"];
@@ -73,10 +71,15 @@ export default function ConnectionsPage() {
   const router = useRouter();
   const toast = useToast();
   const conns = useApi(() => api.connections());
-  const presets = useApi(() => api.presets());
   const integrations = useApi(() => api.integrations());
   const [adding, setAdding] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  // Bumped whenever connections change, so the directory's "Connected" marks follow.
+  const [version, setVersion] = useState(0);
+  const changed = () => {
+    setVersion((v) => v + 1);
+    return conns.reload();
+  };
 
   // Result of an OAuth round-trip.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once on mount
@@ -90,7 +93,12 @@ export default function ConnectionsPage() {
     else if (connected === "linear") toast("Linear connected", "success");
     else if (connected) toast("Connection authorized", "success");
     if (error) toast(error.includes(" ") ? error : `Authorization failed: ${error}`, "error");
-    if (q.has("add")) setAdding(true);
+    // "Add a connection" links land on the directory.
+    if (q.has("add"))
+      setTimeout(() => {
+        document.getElementById("directory-title")?.scrollIntoView({ behavior: "smooth" });
+        document.getElementById("directory-search")?.focus({ preventScroll: true });
+      }, 300);
     if (connected || error || q.has("add")) router.replace("/connections");
   }, []);
 
@@ -110,7 +118,7 @@ export default function ConnectionsPage() {
     }
     toast(`Connected ${res.connection.name}`, "success");
     setAdding(false);
-    await conns.reload();
+    await changed();
   }
 
   return (
@@ -118,11 +126,11 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Tools"
         title="Connections"
-        description="Where the agent can work. Google (Gmail, Calendar, Drive, Sheets, Contacts), Slack, GitHub and Linear are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
+        description="Where the agent can work. Google (Gmail, Calendar, Drive, Sheets, Contacts), Slack, GitHub and Linear are built in; the app directory below adds dozens more in one click. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
+          <button type="button" className="btn" onClick={() => setAdding(true)}>
             <Plus />
-            Add connection
+            Add custom server
           </button>
         }
       />
@@ -154,63 +162,58 @@ export default function ConnectionsPage() {
         )}
       </section>
 
-      <h2 className="eyebrow mb-3">MCP servers</h2>
       {conns.error ? <ErrorNote>{errorMessage(conns.error)}</ErrorNote> : null}
-      {!list ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-32 rounded-card" />
-          ))}
-        </div>
-      ) : list.length === 0 ? (
-        <EmptyState
-          illustration={<SampleConnections />}
-          title="No connections yet"
-          action={
-            <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-              Add your first connection
-            </button>
-          }
-        >
-          Connect GitHub, Linear or any MCP server, and the agent can work inside it.
-        </EmptyState>
-      ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {list.map((c) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                onClick={() => setOpenId(c.id)}
-                className="group flex h-full w-full flex-col rounded-[16px] border border-line bg-surface p-5 text-left transition-[border-color,box-shadow,translate] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[var(--slip-shadow)]"
-              >
-                <div className="flex items-start gap-3.5">
-                  <Monogram name={c.name} size={40} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-serif text-[24px] leading-[1.1] text-fg">
-                      {humanizeName(c.name)}
+      {list && list.length > 0 ? (
+        <section aria-labelledby="yours-title">
+          <h2 id="yours-title" className="eyebrow mb-3">
+            Your apps
+          </h2>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {list.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => setOpenId(c.id)}
+                  className="group flex h-full w-full flex-col rounded-[16px] border border-line bg-surface p-5 text-left transition-[border-color,box-shadow,translate] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[var(--slip-shadow)]"
+                >
+                  <div className="flex items-start gap-3.5">
+                    <Monogram name={displayName(c)} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-serif text-[24px] leading-[1.1] text-fg">
+                        {displayName(c)}
+                      </div>
+                      <div className="truncate text-12 text-fg-faint" title={c.url}>
+                        {hostOf(c.url) ?? c.url}
+                      </div>
                     </div>
-                    <div className="truncate text-12 text-fg-faint" title={c.url}>
-                      {hostOf(c.url) ?? c.url}
-                    </div>
+                    <ChevronRight className="mt-1 text-fg-faint transition-transform duration-150 group-hover:translate-x-0.5" />
                   </div>
-                  <ChevronRight className="mt-1 text-fg-faint transition-transform duration-150 group-hover:translate-x-0.5" />
-                </div>
-                <div className="mt-6 flex items-center justify-between gap-2 border-t border-dashed border-line pt-3.5">
-                  <StatusPill status={c.status} />
-                  <span className="tabular font-mono text-[11px] tracking-[0.06em] text-fg-muted uppercase">
-                    {c.tools ? `${c.tools.length} tools` : "Tools not loaded"}
-                  </span>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+                  <div className="mt-6 flex items-center justify-between gap-2 border-t border-dashed border-line pt-3.5">
+                    <StatusPill status={c.status} />
+                    <span className="tabular font-mono text-[11px] tracking-[0.06em] text-fg-muted uppercase">
+                      {c.tools ? `${c.tools.length} tools` : "Tools not loaded"}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : !list && !conns.error ? (
+        <Skeleton className="h-32 rounded-card" />
+      ) : null}
+
+      <AppDirectory
+        version={version}
+        onOpen={setOpenId}
+        onConnected={() => void conns.reload()}
+        onAuthorize={startOAuth}
+      />
 
       <Sheet
         open={open !== null}
         onClose={() => setOpenId(null)}
-        title={open ? humanizeName(open.name) : ""}
+        title={open ? displayName(open) : ""}
         description={open ? (hostOf(open.url) ?? open.url) : undefined}
         width={560}
       >
@@ -220,20 +223,15 @@ export default function ConnectionsPage() {
             onChange={replace}
             onRemoved={() => {
               setOpenId(null);
-              void conns.reload();
+              void changed();
             }}
             onReload={() => void conns.reload()}
           />
         ) : null}
       </Sheet>
 
-      <Sheet open={adding} onClose={() => setAdding(false)} title="Add a connection" width={600}>
-        <AddConnection
-          presets={(presets.data?.presets ?? []).filter(
-            (p) => !(list ?? []).some((c) => c.url === p.url),
-          )}
-          onAdd={add}
-        />
+      <Sheet open={adding} onClose={() => setAdding(false)} title="Add a custom server" width={600}>
+        <AddConnection onAdd={add} />
       </Sheet>
     </Page>
   );
@@ -251,6 +249,9 @@ function humanizeName(name: string) {
   if (known) return known;
   return name.length <= 3 ? name.toUpperCase() : name[0]!.toUpperCase() + name.slice(1);
 }
+
+/** The directory's name for it ("Jira & Confluence"), else its own name, tidied. */
+const displayName = (c: Connection): string => c.title ?? humanizeName(c.name);
 
 function ConnectionDetail({
   connection: c,
@@ -282,7 +283,7 @@ function ConnectionDetail({
       const res = await api.checkConnection(c.id);
       if (res.authorizationUrl && authorize) return startOAuth(res.authorizationUrl);
       if (res.error) toast(res.error, "error");
-      else if (res.status === "active") toast(`${humanizeName(c.name)} is working`, "success");
+      else if (res.status === "active") toast(`${displayName(c)} is working`, "success");
       else if (res.status === "needs_auth") toast("This connection needs authorization", "info");
       onReload();
     });
@@ -307,9 +308,7 @@ function ConnectionDetail({
 
       {c.status === "needs_auth" ? (
         <div className="rounded-[10px] border border-attention/30 bg-attention-soft px-4 py-3.5">
-          <p className="text-14 text-fg">
-            Authorize {humanizeName(c.name)} so the agent can use it.
-          </p>
+          <p className="text-14 text-fg">Authorize {displayName(c)} so the agent can use it.</p>
           <p className="mt-0.5 text-13 text-fg-muted">
             You'll sign in on their site, then come back here.
           </p>
@@ -431,11 +430,7 @@ function ConnectionDetail({
           className="btn btn-danger"
           disabled={busy !== null}
           onClick={() => {
-            if (
-              !window.confirm(
-                `Remove ${humanizeName(c.name)}? The agent loses access to its tools.`,
-              )
-            )
+            if (!window.confirm(`Remove ${displayName(c)}? The agent loses access to its tools.`))
               return;
             void act("delete", async () => {
               await api.deleteConnection(c.id);
@@ -452,95 +447,39 @@ function ConnectionDetail({
 }
 
 function AddConnection({
-  presets,
   onAdd,
 }: {
-  presets: Preset[];
   onAdd: (b: { name: string; url: string; token?: string }) => Promise<void>;
 }) {
-  const toast = useToast();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(key: string, body: { name: string; url: string; token?: string }) {
-    setBusy(key);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
     setError(null);
     try {
-      await onAdd(body);
+      await onAdd({
+        name: name.trim(),
+        url: url.trim(),
+        ...(token.trim() ? { token: token.trim() } : {}),
+      });
     } catch (err) {
-      if (key === "custom") setError(errorMessage(err));
-      else toast(errorMessage(err), "error");
+      setError(errorMessage(err));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
-  }
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    void run("custom", {
-      name: name.trim(),
-      url: url.trim(),
-      ...(token.trim() ? { token: token.trim() } : {}),
-    });
   }
 
   return (
     <div className="space-y-8">
-      {presets.length > 0 ? (
-        <section>
-          <h3 className="mb-3 text-13 font-medium text-fg-muted">Popular servers</h3>
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {presets.map((p) => (
-              <li key={p.url}>
-                <div className="flex h-full flex-col rounded-[10px] border border-line p-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <Monogram name={p.name} size={28} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-14 font-medium text-fg">
-                        {humanizeName(p.name)}
-                      </div>
-                      <div className="truncate text-12 text-fg-faint">{hostOf(p.url)}</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        void run(p.url, {
-                          name: p.name.toLowerCase().replace(/\s+/g, "-"),
-                          url: p.url,
-                        })
-                      }
-                    >
-                      {busy === p.url ? <LoaderCircle className="anim-spin size-3.5" /> : null}
-                      Add
-                    </button>
-                  </div>
-                  <p className="mt-2 line-clamp-2 flex-1 text-13 text-fg-muted">{p.description}</p>
-                  {p.docs ? (
-                    <a
-                      href={p.docs}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-2 inline-flex items-center gap-1 text-12 text-fg-faint hover:text-fg"
-                    >
-                      Docs · {hostOf(p.docs)} <ExternalLink className="size-3" />
-                    </a>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       <section>
-        <h3 className="text-13 font-medium text-fg-muted">Custom server</h3>
-        <p className="mt-1 mb-4 text-13 text-fg-faint">
-          Any remote MCP server (Streamable HTTP). OAuth is detected automatically.
+        <p className="mb-4 text-13 text-fg-muted">
+          Any remote MCP server (Streamable HTTP) that isn't in the app directory. OAuth is detected
+          automatically; for servers that use API keys, paste one as the bearer token.
         </p>
         <form onSubmit={submit} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
@@ -581,63 +520,12 @@ function AddConnection({
             />
           </Field>
           {error ? <ErrorNote>{error}</ErrorNote> : null}
-          <button type="submit" className="btn btn-primary" disabled={busy !== null}>
-            {busy === "custom" ? <LoaderCircle className="anim-spin" /> : null}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? <LoaderCircle className="anim-spin" /> : null}
             Connect
           </button>
         </form>
       </section>
-    </div>
-  );
-}
-
-/** Empty-state art: three tools wired into the agent with dotted lines. */
-function SampleConnections() {
-  const tools = [
-    { name: "GitHub", y: 34, note: "read" },
-    { name: "Linear", y: 100, note: "write" },
-    { name: "Notion", y: 166, note: "read" },
-  ];
-  return (
-    <div className="relative h-[200px] w-[290px]">
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 290 200"
-        className="absolute inset-0 h-full w-full"
-        fill="none"
-      >
-        {tools.map((t) => (
-          <path
-            key={t.name}
-            d={`M 112 ${t.y} C 170 ${t.y}, 180 100, 228 100`}
-            stroke="var(--fg-faint)"
-            strokeWidth="1.5"
-            strokeDasharray="1 5"
-            strokeLinecap="round"
-          />
-        ))}
-        <circle cx="228" cy="100" r="3" fill="var(--accent)" />
-      </svg>
-      {tools.map((t, i) => (
-        <div
-          key={t.name}
-          className="slip absolute left-0 flex h-11 w-[112px] items-center gap-2 rounded-full py-1 pr-3 pl-1.5"
-          style={{ top: t.y - 22, rotate: `${[-2, 1.5, -1][i]}deg` }}
-        >
-          <Monogram name={t.name} size={30} round />
-          <span className="min-w-0">
-            <span className="block truncate text-[12px] leading-tight font-medium text-fg">
-              {t.name}
-            </span>
-            <span className="block font-mono text-[9px] tracking-[0.08em] text-fg-faint uppercase">
-              {t.note}
-            </span>
-          </span>
-        </div>
-      ))}
-      <div className="absolute top-[72px] right-0 grid size-14 place-items-center rounded-[16px] bg-fg text-canvas shadow-[var(--slip-shadow)]">
-        <BrandGlyph className="size-7" />
-      </div>
     </div>
   );
 }
