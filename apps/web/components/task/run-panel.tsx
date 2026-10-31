@@ -254,7 +254,7 @@ function TimelineStep({ step, taint, focused }: { step: Step; taint: boolean; fo
               <div>
                 <div className="eyebrow mb-1.5">Input</div>
                 <div className="rounded-[8px] border border-line bg-surface p-2.5 text-13">
-                  <PayloadView input={p.input} />
+                  <PayloadView input={p.input} tool={p.name} />
                 </div>
               </div>
               <div>

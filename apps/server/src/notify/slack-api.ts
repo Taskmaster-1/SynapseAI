@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { type Db, type SecretBox, schema } from "@synapse/db";
+import { SLACK_USER_SCOPES } from "@synapse/tools";
 import { and, eq, ne } from "drizzle-orm";
 
 /** Bot scopes: post and update DMs, open the DM with the person who connected. */
@@ -53,6 +54,8 @@ export async function slackAuthorizationUrl(
   url.search = new URLSearchParams({
     client_id: app.clientId,
     scope: SLACK_SCOPES.join(","),
+    // A user token too, so the agent's Slack tools can search, read and post as this person.
+    user_scope: SLACK_USER_SCOPES.join(","),
     redirect_uri: slackRedirectUri(app),
     state,
   }).toString();
@@ -67,7 +70,7 @@ interface OAuthAccess {
   scope?: string;
   bot_user_id?: string;
   team?: { id: string; name: string };
-  authed_user?: { id: string };
+  authed_user?: { id: string; scope?: string; access_token?: string };
 }
 
 /** Exchanges the callback code and saves the Slack account for the user who started it. */
@@ -120,6 +123,14 @@ export async function completeSlackAuth(
   if (taken)
     throw new SlackAuthError("That Slack account is already connected to another Synapse user.");
 
+  // Without every user scope the agent's Slack tools stay off; approvals in Slack still work.
+  const user = token.authed_user;
+  const userGranted = (user.scope ?? "").split(",");
+  const userToken =
+    user.access_token && SLACK_USER_SCOPES.every((s) => userGranted.includes(s))
+      ? await box.seal(user.access_token)
+      : null;
+
   const values = {
     teamId: token.team.id,
     teamName: token.team.name,
@@ -127,6 +138,8 @@ export async function completeSlackAuth(
     botUserId: token.bot_user_id ?? null,
     botToken: await box.seal(token.access_token),
     scopes: token.scope ?? "",
+    userToken,
+    userScopes: userToken ? (user.scope ?? "") : "",
     status: "active" as const,
     lastError: null,
   };
@@ -138,8 +151,9 @@ export async function completeSlackAuth(
 }
 
 /**
- * Deletes the user's Slack account. The bot token is revoked at Slack unless someone else
- * on this server uses the same workspace install (Slack issues one bot token per workspace).
+ * Deletes the user's Slack account. The user token is always revoked at Slack; the bot token
+ * is too unless someone else on this server uses the same workspace install (Slack issues
+ * one bot token per workspace).
  */
 export async function disconnectSlack(
   app: SlackAppConfig | null,
@@ -158,13 +172,15 @@ export async function disconnectSlack(
     .where(
       and(eq(schema.slackAccounts.teamId, row.teamId), ne(schema.slackAccounts.userId, userId)),
     );
-  if (app && !shared) {
-    try {
-      await slackCall(app, await box.open(row.botToken), "auth.revoke", {});
-    } catch {
-      // Revocation is a courtesy; the token is deleted either way.
+  const revoke = [...(row.userToken ? [row.userToken] : []), ...(shared ? [] : [row.botToken])];
+  if (app)
+    for (const sealed of revoke) {
+      try {
+        await slackCall(app, await box.open(sealed), "auth.revoke", {});
+      } catch {
+        // Revocation is a courtesy; the token is deleted either way.
+      }
     }
-  }
   await db.delete(schema.slackAccounts).where(eq(schema.slackAccounts.userId, userId));
 }
 

@@ -114,7 +114,7 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Tools"
         title="Connections"
-        description="Where the agent can work. Gmail and Calendar are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
+        description="Where the agent can work. Google (Gmail, Calendar, Drive, Contacts) and Slack are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus />
@@ -632,12 +632,15 @@ function SampleConnections() {
 
 const GOOGLE_SETUP = "https://github.com/Taskmaster-1/SynapseAI/blob/main/docs/google.md";
 
-/** Gmail and Calendar, built in: one OAuth consent, no MCP server to run. */
+/** Gmail, Calendar, Drive and Contacts, built in: one OAuth consent, no MCP server to run. */
 function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
   const conn = google.connection;
   const connected = conn?.status === "active";
+  // A grant from before Drive and Contacts existed: those tools wait for a reconnect.
+  const missing = connected ? (conn.missing ?? []) : [];
+  const withheld = new Set(missing.map((m) => m.group));
 
   async function connect() {
     setBusy("connect");
@@ -653,7 +656,7 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
   async function disconnect() {
     if (
       !window.confirm(
-        "Disconnect Google? The agent loses access to Gmail and Calendar, and email automations stop.",
+        "Disconnect Google? The agent loses access to Gmail, Calendar, Drive and Contacts, and email automations stop.",
       )
     )
       return;
@@ -675,13 +678,14 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
         <span className="flex -space-x-1.5">
           <Monogram name="Gmail" size={40} className="ring-2 ring-surface" />
           <Monogram name="Calendar" size={40} className="ring-2 ring-surface" />
+          <Monogram name="Drive" size={40} className="ring-2 ring-surface" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="font-serif text-[24px] leading-[1.1] text-fg">Gmail and Calendar</div>
+          <div className="font-serif text-[24px] leading-[1.1] text-fg">Google</div>
           <div className="mt-0.5 truncate text-13 text-fg-muted">
             {conn
               ? conn.account
-              : "Read and answer email, organise your inbox, book and move meetings."}
+              : "Answer email, book meetings, read and write Docs, look up contacts."}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -717,6 +721,27 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
       {conn?.lastError && !connected ? (
         <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
       ) : null}
+      {missing.length > 0 && google.available ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed border-line px-5 py-3">
+          <p className="min-w-0 flex-1 text-13 text-fg-muted">
+            Reconnect to let the agent use {missing.map((m) => m.label).join(" and ")}. Gmail and
+            Calendar keep working until then.
+          </p>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={busy !== null}
+            onClick={() => void connect()}
+          >
+            {busy === "connect" ? (
+              <LoaderCircle className="anim-spin size-3.5" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Reconnect Google
+          </button>
+        </div>
+      ) : null}
       {!google.available ? (
         <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
           This server has no Google app yet. Whoever runs it sets{" "}
@@ -729,7 +754,12 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
           <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
             {google.tools.map((t) => (
               <li key={t.name} className="flex items-center justify-between gap-3 text-13">
-                <span className={connected ? "text-fg" : "text-fg-muted"}>{t.title}</span>
+                <span
+                  className={connected && !withheld.has(t.group) ? "text-fg" : "text-fg-muted"}
+                  title={withheld.has(t.group) ? "Reconnect Google to turn this on" : undefined}
+                >
+                  {t.title}
+                </span>
                 <EffectPill effect={t.effect} />
               </li>
             ))}
@@ -759,6 +789,8 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
   const [busy, setBusy] = useState<"connect" | "disconnect" | "test" | null>(null);
   const conn = slack.connection;
   const connected = conn?.status === "active";
+  /** Connected before the agent tools existed, or Slack revoked the user token. */
+  const needsReconnect = connected && !conn.agentTools;
 
   async function connect() {
     setBusy("connect");
@@ -783,7 +815,12 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
   }
 
   const disconnect = () => {
-    if (!window.confirm("Disconnect Slack? Approvals stop arriving as Slack messages.")) return;
+    if (
+      !window.confirm(
+        "Disconnect Slack? Approvals stop arriving as Slack messages, and the agent loses access to Slack.",
+      )
+    )
+      return;
     void run("disconnect", async () => {
       await api.disconnectSlack();
       toast("Slack disconnected", "success");
@@ -807,7 +844,7 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
           <div className="mt-0.5 truncate text-13 text-fg-muted">
             {conn
               ? `${conn.team} workspace`
-              : "Approve or deny from a Slack message when a task needs your OK."}
+              : "Approve from Slack, and let the agent search, read and post as you."}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -819,7 +856,7 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
             </a>
           ) : conn ? (
             <>
-              {connected ? (
+              {connected && !needsReconnect ? (
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -866,20 +903,38 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
       {conn?.lastError && !connected ? (
         <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
       ) : null}
-      <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
-        {!slack.available ? (
-          <>
-            This server has no Slack app yet. Whoever runs it creates one from the manifest in the
-            guide and sets <code className="font-mono text-12">SLACK_CLIENT_ID</code>,{" "}
-            <code className="font-mono text-12">SLACK_CLIENT_SECRET</code> and{" "}
-            <code className="font-mono text-12">SLACK_SIGNING_SECRET</code>.
-          </>
-        ) : connected ? (
-          "When a task needs your OK, Synapse messages you in Slack. Only you can press its buttons, and the message updates wherever you decide."
-        ) : (
-          "Synapse messages you directly; it can't read your channels or messages."
-        )}
-      </p>
+      {needsReconnect ? (
+        <p className="px-5 pb-3 text-13 text-fg">
+          Reconnect Slack to let the agent search, read and post as you. Approvals keep arriving in
+          Slack meanwhile.
+        </p>
+      ) : null}
+      {!slack.available ? (
+        <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
+          This server has no Slack app yet. Whoever runs it creates one from the manifest in the
+          guide and sets <code className="font-mono text-12">SLACK_CLIENT_ID</code>,{" "}
+          <code className="font-mono text-12">SLACK_CLIENT_SECRET</code> and{" "}
+          <code className="font-mono text-12">SLACK_SIGNING_SECRET</code>.
+        </p>
+      ) : (
+        <div className="border-t border-dashed border-line px-5 py-4">
+          <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {slack.tools.map((t) => (
+              <li key={t.name} className="flex items-center justify-between gap-3 text-13">
+                <span className={connected && !needsReconnect ? "text-fg" : "text-fg-muted"}>
+                  {t.title}
+                </span>
+                <EffectPill effect={t.effect} />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-13 text-fg-muted">
+            {connected
+              ? "When a task needs your OK, Synapse messages you in Slack. Only you can press its buttons, and the message updates wherever you decide. Posting as you asks for your OK by default."
+              : "Synapse messages you about approvals, and the agent reads only the conversations you're in. Posting as you asks for your OK by default."}
+          </p>
+        </div>
+      )}
     </article>
   );
 }

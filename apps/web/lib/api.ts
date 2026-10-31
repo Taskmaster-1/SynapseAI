@@ -460,24 +460,31 @@ export interface Onboarding {
 export interface GoogleIntegration {
   /** False when the server has no Google OAuth app configured. */
   available: boolean;
-  tools: { name: string; effect: Effect; title: string }[];
+  /** `group` is the scope group a tool needs: gmail, calendar, drive or contacts. */
+  tools: { name: string; group: string; effect: Effect; title: string }[];
   connection: {
     account: string;
     status: "active" | "needs_auth" | "error";
     lastError: string | null;
     connectedAt: string;
+    /** Tool groups the grant lacks (it predates them, or a box was unticked). */
+    missing: { group: string; label: string }[];
   } | null;
 }
 
 export interface SlackIntegration {
   /** False when the server has no Slack app configured. */
   available: boolean;
+  /** What the agent can do in Slack as the person once connected. */
+  tools: { name: string; effect: Effect; title: string }[];
   connection: {
     /** Workspace name. */
     team: string;
     status: "active" | "error";
     lastError: string | null;
     connectedAt: string;
+    /** False for installs from before the agent tools: approvals work, tools need a reconnect. */
+    agentTools: boolean;
   } | null;
 }
 

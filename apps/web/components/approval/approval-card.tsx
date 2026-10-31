@@ -398,7 +398,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
         ) : plan ? (
           <PlanSteps steps={plan.steps} kept={kept} onKept={setKept} locked={locked} />
         ) : (
-          <PayloadView input={input} />
+          <PayloadView input={input} tool={name} />
         )}
 
         {denying ? (

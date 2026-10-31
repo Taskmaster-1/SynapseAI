@@ -7,10 +7,19 @@ import { planTool } from "./builtin/plan";
 import { enabledSkills, skillTools } from "./builtin/skills";
 import { type WebSearchConfig, webFetchTool, webSearchTool } from "./builtin/web";
 import { calendarTools } from "./google/calendar";
-import { type GoogleAppConfig, GoogleClient } from "./google/client";
+import {
+  GOOGLE_SCOPE_GROUPS,
+  type GoogleAppConfig,
+  GoogleClient,
+  missingGoogleGroups,
+} from "./google/client";
+import { contactsTools } from "./google/contacts";
+import { driveTools } from "./google/drive";
 import { gmailTools } from "./google/gmail";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
+import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
+import { slackTools } from "./slack/tools";
 
 export * from "./builtin/files";
 export * from "./builtin/knowledge";
@@ -38,6 +47,7 @@ export {
 } from "./google/gmail";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
+export * from "./slack/client";
 export * from "./ssrf";
 
 export interface ToolsetConfig {
@@ -48,6 +58,8 @@ export interface ToolsetConfig {
   embedder: Embedder | null;
   /** Set when the operator configured a Google OAuth app. */
   google: GoogleAppConfig | null;
+  /** Set when the operator configured a Slack app (the server's Slack config fits). */
+  slack: SlackToolsConfig | null;
 }
 
 /**
@@ -67,17 +79,29 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     ...skillTools(cfg.db, skills),
     ...(cfg.webSearch ? [webSearchTool(cfg.webSearch)] : []),
   ];
+  /** Labels of Google tool groups withheld until the user reconnects with more scopes. */
+  let google: { missing: string[] } | null = null;
   if (cfg.google) {
-    const google = await GoogleClient.forUser(cfg.google, cfg.db, cfg.box, userId);
-    if (google) {
-      const client = async () => google;
+    const g = await GoogleClient.forUser(cfg.google, cfg.db, cfg.box, userId);
+    if (g) {
+      const client = async () => g;
       const attachments = (userId: string, ids: string[]) => loadFiles(cfg.db, userId, ids);
       builtin.push(...gmailTools(client, attachments), ...calendarTools(client));
+      if (g.has("drive")) builtin.push(...driveTools(client));
+      if (g.has("contacts")) builtin.push(...contactsTools(client));
+      google = {
+        missing: missingGoogleGroups(g.scopes).map((k) => GOOGLE_SCOPE_GROUPS[k].label),
+      };
     }
+  }
+  if (cfg.slack) {
+    // Only with a user token: installs from before it existed reconnect first.
+    const slack = await SlackUserClient.forUser(cfg.slack, cfg.db, cfg.box, userId);
+    if (slack) builtin.push(...slackTools(async () => slack));
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {
     if (!registry.get(tool.name)) registry.add(tool);
   }
-  return { registry, skills, close: () => mcp.close() };
+  return { registry, skills, google, close: () => mcp.close() };
 }

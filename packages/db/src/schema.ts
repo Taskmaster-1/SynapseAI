@@ -464,7 +464,8 @@ export const integrations = pgTable(
 /**
  * Slack, connected per user to approve from a DM. The bot token is sealed; the Slack user
  * who installed it (`slackUserId` in `teamId`) is the only Slack identity that may act for
- * this Synapse user.
+ * this Synapse user. The user token, when granted, backs the agent's Slack tools, which act
+ * as that person; installs from before it existed have none until they reconnect.
  */
 export const slackAccounts = pgTable(
   "slack_accounts",
@@ -479,6 +480,9 @@ export const slackAccounts = pgTable(
     /** Sealed bot token (xoxb-…). */
     botToken: text("bot_token").notNull(),
     scopes: text("scopes").notNull().default(""),
+    /** Sealed user token (xoxp-…), for the agent's Slack tools. Null: not granted. */
+    userToken: text("user_token"),
+    userScopes: text("user_scopes").notNull().default(""),
     status: text("status").$type<"active" | "error">().notNull(),
     lastError: text("last_error"),
     createdAt: createdAt(),

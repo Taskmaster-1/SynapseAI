@@ -94,6 +94,16 @@ const people = (n: number) => (n === 1 ? "1 person" : `${n} people`);
 
 const IRREVERSIBLE = /delete|remove|trash|purge|destroy|drop|erase|archive|cancel|revoke/i;
 
+/** Where a Slack post lands, said plainly: it goes out under the person's own name. */
+function slackFact(input: unknown): string {
+  const raw = (input as { channel?: unknown } | null)?.channel;
+  const v = typeof raw === "string" ? raw.trim().slice(0, 80) : "";
+  if (/^[UW][A-Z0-9]{6,}$/.test(v) || /^D[A-Z0-9]{6,}$/.test(v))
+    return "Sends a direct message as you";
+  const where = /^[CG][A-Z0-9]{6,}$/.test(v) ? v : `#${v.replace(/^#/, "")}`;
+  return `Posts as you in ${where}`;
+}
+
 /** Up to four short facts about what approving this would do. */
 export function riskFacts(call: RiskInput): string[] {
   const facts: string[] = [];
@@ -108,6 +118,8 @@ export function riskFacts(call: RiskInput): string[] {
     } else {
       facts.push(`Reaches ${people(recipients.length)}`);
     }
+  } else if (call.name === "slack_post_message") {
+    facts.push(slackFact(call.input));
   } else if (call.effect === "send") {
     facts.push("Reaches other people");
   }
