@@ -114,7 +114,7 @@ export default function ConnectionsPage() {
       <PageHeader
         eyebrow="Tools"
         title="Connections"
-        description="Where the agent can work. Google (Gmail, Calendar, Drive, Contacts) and Slack are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
+        description="Where the agent can work. Google (Gmail, Calendar, Drive, Sheets, Contacts) and Slack are built in; add any MCP server for the rest. Every tool has an effect (read, write, send or destructive) and your approval rules key off it."
         actions={
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus />
@@ -630,15 +630,19 @@ function SampleConnections() {
   );
 }
 
+/** "Drive", "Drive and Sheets", "Drive, Contacts and Sheets". */
+const andList = (items: string[]) =>
+  items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : (items[0] ?? "");
+
 const GOOGLE_SETUP = "https://github.com/Taskmaster-1/SynapseAI/blob/main/docs/google.md";
 
-/** Gmail, Calendar, Drive and Contacts, built in: one OAuth consent, no MCP server to run. */
+/** Gmail, Calendar, Drive, Sheets and Contacts, built in: one OAuth consent, no MCP server to run. */
 function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
   const conn = google.connection;
   const connected = conn?.status === "active";
-  // A grant from before Drive and Contacts existed: those tools wait for a reconnect.
+  // A grant from before Drive, Contacts or Sheets existed: those tools wait for a reconnect.
   const missing = connected ? (conn.missing ?? []) : [];
   const withheld = new Set(missing.map((m) => m.group));
 
@@ -656,7 +660,7 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
   async function disconnect() {
     if (
       !window.confirm(
-        "Disconnect Google? The agent loses access to Gmail, Calendar, Drive and Contacts, and email automations stop.",
+        "Disconnect Google? The agent loses access to Gmail, Calendar, Drive, Sheets and Contacts, and email automations stop.",
       )
     )
       return;
@@ -685,7 +689,7 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
           <div className="mt-0.5 truncate text-13 text-fg-muted">
             {conn
               ? conn.account
-              : "Answer email, book meetings, read and write Docs, look up contacts."}
+              : "Answer email, book meetings, read and write Docs and Sheets, look up contacts."}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -724,7 +728,7 @@ function GoogleCard({ google, onChange }: { google: GoogleIntegration; onChange:
       {missing.length > 0 && google.available ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed border-line px-5 py-3">
           <p className="min-w-0 flex-1 text-13 text-fg-muted">
-            Reconnect to let the agent use {missing.map((m) => m.label).join(" and ")}. Gmail and
+            Reconnect to let the agent use {andList(missing.map((m) => m.label))}. Gmail and
             Calendar keep working until then.
           </p>
           <button

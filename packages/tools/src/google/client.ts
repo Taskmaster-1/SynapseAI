@@ -21,6 +21,7 @@ export const GOOGLE_SCOPE_GROUPS = {
     required: false,
     scopes: [`${AUTH}contacts.readonly`, `${AUTH}contacts.other.readonly`],
   },
+  sheets: { label: "Sheets", required: false, scopes: [`${AUTH}spreadsheets`] },
 } as const;
 
 export type GoogleScopeGroup = keyof typeof GOOGLE_SCOPE_GROUPS;
@@ -147,7 +148,7 @@ export async function completeGoogleAuth(
     throw new GoogleAuthError(token.error_description ?? token.error ?? "Google sign-in failed.");
   if (!token.refresh_token)
     throw new GoogleAuthError("Google did not grant offline access. Try connecting again.");
-  // Drive and Contacts are optional: without them those tools are simply left out.
+  // Drive, Contacts and Sheets are optional: without them those tools are simply left out.
   const missing = missingGoogleGroups(token.scope ?? "");
   if (missing.some((g) => GOOGLE_SCOPE_GROUPS[g].required))
     throw new GoogleAuthError(

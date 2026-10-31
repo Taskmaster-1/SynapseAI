@@ -88,12 +88,12 @@ Event types (`RunEvent` in `packages/core/src/types.ts`): `run.status`, `message
 
 ## Integrations (built in)
 
-Gmail and Google Calendar, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
+Gmail, Google Calendar, Drive, Sheets and Contacts, without an MCP server. Needs `GOOGLE_CLIENT_ID` and
 `GOOGLE_CLIENT_SECRET` on the server ([setup](google.md)).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/integrations` | | `{ google: { available, tools: { name, effect, title }[], connection: { account, status, lastError, connectedAt } \| null }, slack: { available, tools: { name, effect, title }[], connection: { team, status, lastError, connectedAt, agentTools } \| null } }` |
+| GET | `/api/integrations` | | `{ google: { available, tools: { name, group, effect, title }[], connection: { account, status, lastError, connectedAt, missing: { group, label }[] } \| null }, slack: { available, tools: { name, effect, title }[], connection: { team, status, lastError, connectedAt, agentTools } \| null } }` |
 | POST | `/api/integrations/google/connect` | | `{ url }` — open it in the browser; Google redirects back to the callback |
 | GET | `/api/integrations/google/callback?code&state` | | redirects to `${PUBLIC_URL}/connections?connected=google` or `?error=<message>` |
 | DELETE | `/api/integrations/google` | | `204` — revokes the grant at Google and deletes the tokens |

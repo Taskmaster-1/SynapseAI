@@ -104,6 +104,26 @@ function slackFact(input: unknown): string {
   return `Posts as you in ${where}`;
 }
 
+/**
+ * A spreadsheet write: how many cells an overwrite replaces, and whether any cell is a
+ * formula (cells are entered as typed, so `=IMPORTDATA("https://…")` would fetch, and could
+ * leak the sheet, when someone opens it).
+ */
+function sheetFacts(call: RiskInput): string[] {
+  const i = (call.input ?? {}) as { values?: unknown; rows?: unknown; header?: unknown };
+  const rows = [i.values, i.rows, i.header ? [i.header] : undefined].flatMap((r) =>
+    Array.isArray(r) ? r.filter(Array.isArray) : [],
+  ) as unknown[][];
+  const out: string[] = [];
+  if (call.name === "sheets_update") {
+    const n = rows.reduce((sum, r) => sum + r.length, 0);
+    out.push(`Overwrites ${n === 1 ? "1 cell" : `${n} cells`}`);
+  }
+  if (rows.some((r) => r.some((c) => typeof c === "string" && c.trimStart().startsWith("="))))
+    out.push("Includes formulas");
+  return out;
+}
+
 /** Up to four short facts about what approving this would do. */
 export function riskFacts(call: RiskInput): string[] {
   const facts: string[] = [];
@@ -127,6 +147,8 @@ export function riskFacts(call: RiskInput): string[] {
   const attached = (call.input as { attachments?: unknown } | null)?.attachments;
   if (Array.isArray(attached) && attached.length > 0 && call.effect !== "read")
     facts.push(`Attaches ${attached.length === 1 ? "1 file" : `${attached.length} files`}`);
+
+  if (call.name.startsWith("sheets_") && call.effect !== "read") facts.push(...sheetFacts(call));
 
   if (call.effect === "destructive") facts.push("Can't be undone");
   else if (call.effect === "send") facts.push("Can't be unsent once it goes");

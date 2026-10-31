@@ -1,6 +1,6 @@
 import { type ToolDefinition, ToolRegistry } from "@synapse/core";
 import type { Db, SecretBox } from "@synapse/db";
-import { fileReadTool, loadFiles } from "./builtin/files";
+import { fileReadTool, loadFiles, saveFile } from "./builtin/files";
 import { type Embedder, knowledgeTool } from "./builtin/knowledge";
 import { memoryTools } from "./builtin/memory";
 import { planTool } from "./builtin/plan";
@@ -16,6 +16,7 @@ import {
 import { contactsTools } from "./google/contacts";
 import { driveTools } from "./google/drive";
 import { gmailTools } from "./google/gmail";
+import { sheetsTools } from "./google/sheets";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
 import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
@@ -86,9 +87,12 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
     if (g) {
       const client = async () => g;
       const attachments = (userId: string, ids: string[]) => loadFiles(cfg.db, userId, ids);
-      builtin.push(...gmailTools(client, attachments), ...calendarTools(client));
+      const save = (userId: string, file: { name: string; mimeType: string; data: Uint8Array }) =>
+        saveFile(cfg.db, cfg.embedder, { userId, ...file });
+      builtin.push(...gmailTools(client, attachments, save), ...calendarTools(client));
       if (g.has("drive")) builtin.push(...driveTools(client));
       if (g.has("contacts")) builtin.push(...contactsTools(client));
+      if (g.has("sheets")) builtin.push(...sheetsTools(client));
       google = {
         missing: missingGoogleGroups(g.scopes).map((k) => GOOGLE_SCOPE_GROUPS[k].label),
       };

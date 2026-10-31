@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { type ScriptedStep, scriptedModel } from "@synapse/core/testing";
 import { schema } from "@synapse/db";
-import { fakeGoogle, LEGACY_GOOGLE_SCOPE } from "@synapse/tools/testing";
+import { fakeGoogle, LEGACY_GOOGLE_SCOPE, tinyPdf } from "@synapse/tools/testing";
 import { and, eq } from "drizzle-orm";
 import { createApp } from "./app";
 import { loadConfig } from "./config";
@@ -89,7 +89,7 @@ async function run(runId: string) {
   return row!;
 }
 
-test("a grant from before Drive and Contacts keeps working and asks for a reconnect", async () => {
+test("a grant from before Drive, Contacts and Sheets keeps working and asks for a reconnect", async () => {
   const ada = await signUp("legacy@gtools.test");
   await connectGoogle(ada, LEGACY_GOOGLE_SCOPE);
   const status = await ada("/api/integrations");
@@ -97,6 +97,7 @@ test("a grant from before Drive and Contacts keeps working and asks for a reconn
   expect(status.json.google.connection.missing.map((m: { label: string }) => m.label)).toEqual([
     "Drive",
     "Contacts",
+    "Sheets",
   ]);
   expect(
     status.json.google.tools.find((t: { name: string }) => t.name === "drive_create_doc").group,
@@ -111,7 +112,7 @@ test("a grant from before Drive and Contacts keeps working and asks for a reconn
   await worker.processNow(chat.json.runId);
   expect((await toolCall(chat.json.runId, "d1")).status).not.toBe("succeeded");
   const prompt = JSON.stringify(model.calls[0]?.prompt);
-  expect(prompt).toContain("Drive and Contacts: not granted yet");
+  expect(prompt).toContain("Drive, Contacts and Sheets: not granted yet");
 
   await connectGoogle(ada);
   expect((await ada("/api/integrations")).json.google.connection.missing).toEqual([]);
@@ -170,4 +171,88 @@ test("creating a Doc asks first, then uploads it as a Google Doc", async () => {
   expect(JSON.stringify(done.output)).toContain("https://docs.google.com/document/d/");
   expect(google.state.createdDocs.map((d) => d.name)).toEqual(["Launch plan"]);
   expect(google.state.createdDocs[0]!.html).toContain("<h1>Launch</h1>");
+});
+
+test("“save the invoice PDF and add its total to my sheet”: reads run, the append asks", async () => {
+  const ada = await signUp("sheets@gtools.test");
+  await connectGoogle(ada);
+  await ada("/api/settings", { method: "PUT", json: { undoSeconds: 0 } });
+  const id = "1ExPeNsEs0123456789abcdefghij";
+  google.state.spreadsheets.push({
+    id,
+    title: "Expenses",
+    sheets: [{ sheetId: 0, title: "Sheet1", rows: [["Date", "Vendor", "Total"]] }],
+  });
+  const mail = google.receive({
+    from: "billing@acme.example",
+    subject: "Invoice 4471",
+    body: "Your invoice is attached.",
+    attachments: [
+      { filename: "invoice-4471.pdf", mimeType: "application/pdf", data: tinyPdf("Total 1234.50") },
+    ],
+  });
+  const link = `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  const chat = await ada("/api/chats", {
+    method: "POST",
+    json: {
+      content: `Save the invoice PDF from Acme's email and add its total to my sheet ${link}`,
+    },
+  });
+  const append = {
+    spreadsheet: link,
+    spreadsheetTitle: "Expenses",
+    range: "Sheet1",
+    rows: [["2026-10-31", "Acme", 1234.5]],
+  };
+  script([
+    { toolCalls: [{ name: "gmail_read_thread", id: "r1", input: { threadId: mail.threadId } }] },
+    {
+      toolCalls: [
+        {
+          name: "gmail_save_attachment",
+          id: "a1",
+          // An id from an earlier fetch: Gmail's change every time, the name still matches.
+          input: { messageId: mail.id, attachmentId: "stale", filename: "invoice-4471.pdf" },
+        },
+        { name: "sheets_read", id: "q1", input: { spreadsheet: link, range: "Sheet1" } },
+      ],
+    },
+    { toolCalls: [{ name: "sheets_append", id: "w1", input: append }] },
+    { text: "Added Acme's 1,234.50 to Expenses." },
+  ]);
+  await worker.processNow(chat.json.runId);
+  for (const read of ["r1", "a1", "q1"])
+    expect((await toolCall(chat.json.runId, read)).status).toBe("succeeded");
+  const saved = (await toolCall(chat.json.runId, "a1")).output as unknown as {
+    value: { fileId: string; mimeType: string };
+  };
+  expect(saved.value.mimeType).toBe("application/pdf");
+  const [file] = await services.database.db
+    .select()
+    .from(schema.files)
+    .where(eq(schema.files.id, saved.value.fileId));
+  expect(file?.text).toContain("Total 1234.50");
+  expect((await ada(`/api/files/${saved.value.fileId}`)).status).toBe(200);
+  expect((await run(chat.json.runId)).tainted).toBe(true);
+
+  const waiting = await toolCall(chat.json.runId, "w1");
+  expect(waiting.status).toBe("awaiting_approval");
+  expect(waiting.preview).toBe("Add 1 row to “Expenses” › Sheet1");
+  expect(google.state.sheetWrites).toHaveLength(0);
+  const [approval] = (await ada("/api/approvals")).json.approvals;
+  expect(approval.facts).toEqual(["After reading outside content"]);
+
+  await ada(`/api/runs/${chat.json.runId}/tool-calls/w1/decision`, {
+    method: "POST",
+    json: { approved: true },
+  });
+  await worker.processNow(chat.json.runId);
+  expect((await toolCall(chat.json.runId, "w1")).status).toBe("succeeded");
+  expect(google.state.spreadsheets[0]!.sheets[0]!.rows).toEqual([
+    ["Date", "Vendor", "Total"],
+    ["2026-10-31", "Acme", 1234.5],
+  ]);
+  expect(google.state.sheetWrites).toEqual([
+    { kind: "append", range: "Sheet1", valueInputOption: "USER_ENTERED" },
+  ]);
 });

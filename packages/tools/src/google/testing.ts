@@ -14,6 +14,23 @@ export interface FakeMessage {
   messageId?: string;
   /** Raw RFC 2822 text for messages sent through the API. */
   raw?: string;
+  attachments?: FakeAttachment[];
+}
+
+export interface FakeAttachment {
+  filename: string;
+  mimeType: string;
+  data: Uint8Array | string;
+  /** Overrides the size Gmail reports, to fake a huge file without allocating one. */
+  size?: number;
+  /** Small parts can come with their data inline instead of an attachmentId. */
+  inline?: boolean;
+}
+
+export interface FakeSpreadsheet {
+  id: string;
+  title: string;
+  sheets: { sheetId: number; title: string; rows: (string | number | boolean)[][] }[];
 }
 
 export interface FakeEvent {
@@ -42,15 +59,19 @@ export interface FakeContact {
   phones?: string[];
 }
 
-/** The grant a connection made before Drive and Contacts existed carries. */
+/** The grant a connection made before Drive, Contacts and Sheets existed carries. */
 export const LEGACY_GOOGLE_SCOPE =
   "openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events";
 
 const ALL_SCOPES = [
   LEGACY_GOOGLE_SCOPE,
-  ...["drive.readonly", "drive.file", "contacts.readonly", "contacts.other.readonly"].map(
-    (s) => `https://www.googleapis.com/auth/${s}`,
-  ),
+  ...[
+    "drive.readonly",
+    "drive.file",
+    "contacts.readonly",
+    "contacts.other.readonly",
+    "spreadsheets",
+  ].map((s) => `https://www.googleapis.com/auth/${s}`),
 ].join(" ");
 
 /** A one-page PDF with a line of Helvetica text, built by hand. */
@@ -129,6 +150,9 @@ export function fakeGoogle(opts: { email?: string } = {}) {
     otherContacts: [] as FakeContact[],
     /** People API searches seen, as "contacts:<query>" or "other:<query>". */
     peopleQueries: [] as string[],
+    spreadsheets: [] as FakeSpreadsheet[],
+    /** Sheets value writes, with the input option each used. */
+    sheetWrites: [] as { kind: "append" | "update"; range: string; valueInputOption: string }[],
   };
   let n = 0;
   const nextId = (p: string) => `${p}${++n}`;
@@ -140,23 +164,48 @@ export function fakeGoogle(opts: { email?: string } = {}) {
     });
 
   const header = (name: string, value: string) => ({ name, value });
-  const asGmail = (m: FakeMessage) => ({
-    id: m.id,
-    threadId: m.threadId,
-    labelIds: m.labelIds,
-    snippet: m.body.slice(0, 80),
-    internalDate: String(m.internalDate),
-    payload: {
-      mimeType: "text/plain",
-      headers: [
-        header("From", m.from),
-        header("To", m.to),
-        header("Subject", m.subject),
-        ...(m.messageId ? [header("Message-ID", m.messageId)] : []),
-      ],
-      body: { data: Buffer.from(m.body).toString("base64url") },
-    },
-  });
+  const bytesOf = (d: Uint8Array | string) =>
+    typeof d === "string" ? new TextEncoder().encode(d) : d;
+  // Like Gmail, every fetch hands out new attachment ids; all of them stay valid.
+  let fetches = 0;
+  const asGmail = (m: FakeMessage) => {
+    const headers = [
+      header("From", m.from),
+      header("To", m.to),
+      header("Subject", m.subject),
+      ...(m.messageId ? [header("Message-ID", m.messageId)] : []),
+    ];
+    const text = { data: Buffer.from(m.body).toString("base64url") };
+    const fetch = ++fetches;
+    return {
+      id: m.id,
+      threadId: m.threadId,
+      labelIds: m.labelIds,
+      snippet: m.body.slice(0, 80),
+      internalDate: String(m.internalDate),
+      payload: m.attachments?.length
+        ? {
+            mimeType: "multipart/mixed",
+            headers,
+            body: { size: 0 },
+            parts: [
+              { mimeType: "text/plain", filename: "", body: text },
+              ...m.attachments.map((a, i) => {
+                const data = bytesOf(a.data);
+                const size = a.size ?? data.byteLength;
+                return {
+                  mimeType: a.mimeType,
+                  filename: a.filename,
+                  body: a.inline
+                    ? { size, data: Buffer.from(data).toString("base64url") }
+                    : { size, attachmentId: `att-${m.id}-${i}-${fetch}` },
+                };
+              }),
+            ],
+          }
+        : { mimeType: "text/plain", headers, body: text },
+    };
+  };
 
   /** Gmail search, just enough of it: `in:sent`, `after:<sec>`, `from:x`, `-from:me`, free words. */
   const matches = (m: FakeMessage, q: string) =>
@@ -299,6 +348,15 @@ export function fakeGoogle(opts: { email?: string } = {}) {
         if (m) m.labelIds = ["TRASH"];
         return json({ id: trash[1] });
       }
+      const att = rest.match(/^messages\/([^/]+)\/attachments\/([^/]+)$/);
+      if (att) {
+        const m = state.messages.find((x) => x.id === decodeURIComponent(att[1]!));
+        const hit = /^att-(.+)-(\d+)-\d+$/.exec(decodeURIComponent(att[2]!));
+        const a = m && hit?.[1] === m.id ? m.attachments?.[Number(hit[2])] : undefined;
+        if (!a) return json({ error: { message: "Invalid attachment token" } }, 400);
+        const data = bytesOf(a.data);
+        return json({ size: data.byteLength, data: Buffer.from(data).toString("base64url") });
+      }
       const one = rest.match(/^messages\/([^/]+)$/);
       if (one) {
         const m = state.messages.find((x) => x.id === decodeURIComponent(one[1]!));
@@ -416,6 +474,11 @@ export function fakeGoogle(opts: { email?: string } = {}) {
       });
     }
 
+    if (url.host === "sheets.googleapis.com") {
+      const res = sheetsRoute(path, method, url, body);
+      if (res) return res;
+    }
+
     if (url.host === "people.googleapis.com") {
       const source =
         path === "/v1/people:searchContacts"
@@ -444,6 +507,107 @@ export function fakeGoogle(opts: { email?: string } = {}) {
       }
     }
     return json({ error: { message: `fake google: no route for ${method} ${url}` } }, 404);
+  }
+
+  const col = (letters: string) =>
+    [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const letters = (i: number): string =>
+    (i >= 26 ? letters(Math.floor(i / 26) - 1) : "") + String.fromCharCode(65 + (i % 26));
+  const quote = (t: string) =>
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(t) ? t : `'${t.replace(/'/g, "''")}'`;
+
+  /** Resolves an A1 range: the sheet, and the cell bounds (0-based) when it names any. */
+  function a1(s: FakeSpreadsheet, range: string) {
+    const bang = range.lastIndexOf("!");
+    let name = bang >= 0 ? range.slice(0, bang) : range;
+    let ref = bang >= 0 ? range.slice(bang + 1) : "";
+    if (bang < 0 && /^[A-Z]+\d+(:[A-Z]+\d+)?$/.test(range)) {
+      name = s.sheets[0]!.title;
+      ref = range;
+    }
+    name = name.replace(/^'(.*)'$/, "$1").replace(/''/g, "'");
+    const sheet = s.sheets.find((x) => x.title === name);
+    const m = ref ? /^([A-Z]+)(\d+)?(?::([A-Z]+)(\d+)?)?$/.exec(ref) : null;
+    if (!sheet || (ref && !m)) return null;
+    const single = m && !m[3];
+    return {
+      sheet,
+      r1: m?.[2] ? Number(m[2]) - 1 : 0,
+      c1: m ? col(m[1]!) : 0,
+      r2: m?.[4] ? Number(m[4]) - 1 : single && m[2] ? Number(m[2]) - 1 : Infinity,
+      c2: m?.[3] ? col(m[3]) : single ? col(m[1]!) : Infinity,
+    };
+  }
+
+  function sheetsRoute(path: string, method: string, url: URL, body: string | undefined) {
+    const meta = (s: FakeSpreadsheet) => ({
+      spreadsheetId: s.id,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${s.id}/edit`,
+      properties: { title: s.title },
+      sheets: s.sheets.map((x) => ({
+        properties: {
+          sheetId: x.sheetId,
+          title: x.title,
+          gridProperties: {
+            rowCount: Math.max(1000, x.rows.length),
+            columnCount: Math.max(26, ...x.rows.map((r) => r.length)),
+          },
+        },
+      })),
+    });
+    if (path === "/v4/spreadsheets" && method === "POST") {
+      const b = JSON.parse(body!) as { properties: { title: string } };
+      const s: FakeSpreadsheet = {
+        id: nextId("sheet-0123456789-"),
+        title: b.properties.title,
+        sheets: [{ sheetId: 0, title: "Sheet1", rows: [] }],
+      };
+      state.spreadsheets.push(s);
+      return json(meta(s));
+    }
+    const m = path.match(/^\/v4\/spreadsheets\/([^/]+)(?:\/values\/([^/:]+)(:append)?)?$/);
+    if (!m) return null;
+    const s = state.spreadsheets.find((x) => x.id === decodeURIComponent(m[1]!));
+    if (!s) return json({ error: { message: "Requested entity was not found." } }, 404);
+    if (!m[2]) return json(meta(s));
+    const range = decodeURIComponent(m[2]);
+    const r = a1(s, range);
+    if (!r) return json({ error: { message: `Unable to parse range: ${range}` } }, 400);
+    if (method === "GET") {
+      const rows = r.sheet.rows
+        .slice(r.r1, r.r2 + 1)
+        .map((row) => row.slice(r.c1, r.c2 === Infinity ? undefined : r.c2 + 1).map(String));
+      const width = Math.max(1, ...rows.map((x) => x.length));
+      const end = `${letters(r.c1 + width - 1)}${r.r1 + Math.max(rows.length, 1)}`;
+      return json({
+        range: `${quote(r.sheet.title)}!${letters(r.c1)}${r.r1 + 1}:${end}`,
+        majorDimension: "ROWS",
+        ...(rows.length ? { values: rows } : {}),
+      });
+    }
+    const option = url.searchParams.get("valueInputOption");
+    if (!option) return json({ error: { message: "valueInputOption is required" } }, 400);
+    const values = (JSON.parse(body!) as { values: (string | number | boolean)[][] }).values;
+    const start = m[3] ? r.sheet.rows.length : r.r1;
+    const c1 = m[3] ? 0 : r.c1;
+    values.forEach((row, i) => {
+      r.sheet.rows[start + i] ??= [];
+      const target = r.sheet.rows[start + i]!;
+      row.forEach((v, j) => {
+        target[c1 + j] = v;
+      });
+    });
+    for (const row of r.sheet.rows) for (let j = 0; j < row.length; j++) row[j] ??= "";
+    const width = Math.max(...values.map((x) => x.length));
+    const written = `${quote(r.sheet.title)}!${letters(c1)}${start + 1}:${letters(c1 + width - 1)}${start + values.length}`;
+    state.sheetWrites.push({ kind: m[3] ? "append" : "update", range, valueInputOption: option });
+    const result = {
+      spreadsheetId: s.id,
+      updatedRange: written,
+      updatedRows: values.length,
+      updatedCells: values.reduce((n, x) => n + x.length, 0),
+    };
+    return json(m[3] ? { spreadsheetId: s.id, updates: result } : result);
   }
 
   const f = (async (input: string | URL | Request, init: RequestInit = {}) =>

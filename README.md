@@ -2,7 +2,7 @@
 
 **An open-source agent that does real work in your tools — and can't be talked into doing the wrong thing.**
 
-SynapseAI works in the services you already use (Gmail, Google Calendar, Drive, Contacts and Slack built in; GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. It doesn't wait to be asked: automations start work on a schedule, when an email arrives, or when another app calls a webhook. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
+SynapseAI works in the services you already use (Gmail, Google Calendar, Drive, Sheets, Contacts and Slack built in; GitHub, Linear, Notion, Jira, Sentry, or any [MCP](https://modelcontextprotocol.io) server), takes multi-step actions on your behalf, and asks before anything that writes, sends or deletes. It doesn't wait to be asked: automations start work on a schedule, when an email arrives, or when another app calls a webhook. Approvals are enforced in code, not in the prompt; once the agent has read untrusted content such as an email or a web page, every outward action needs your sign-off. Self-host it with one command, bring your own model keys, and see exactly what it did and what it cost.
 
 ![A task waiting for approval: the agent drafted an email and shows it as an editable card, with the activity timeline on the right](docs/screenshots/task.png)
 
@@ -26,8 +26,9 @@ Agent products that act in your tools share three problems: approvals that live 
 ## Features
 
 - Chat with live streaming (reasoning, tool calls, results) that resumes after reconnects
-- Built-in Gmail and Google Calendar: search, read threads, draft, reply in-thread, label and archive, find free time, book and move meetings, answer invitations ([setup](docs/google.md))
+- Built-in Gmail and Google Calendar: search, read threads, open attachments (PDFs read, photos seen), draft, reply in-thread, label and archive, find free time, book and move meetings, answer invitations ([setup](docs/google.md))
 - Built-in Google Drive and Contacts: search Drive and read Docs, Sheets, Slides and PDFs, create Google Docs (with approval), and look people up by name so "email Sam" just works
+- Built-in Google Sheets: read any sheet by link, add rows, update cells and create spreadsheets, each write shown as a table on the approval card ("save the invoice from that email and add its total to my Expenses sheet")
 - Automations triggered by a cron schedule, new Gmail messages matching a search, or a secret webhook URL
 - MCP connections over Streamable HTTP with OAuth 2.1 + PKCE, or bearer tokens; presets for GitHub, Linear, Notion, Atlassian, Sentry
 - Approval inbox, editable approvals, deny-with-reason, cancel now / after this step
@@ -96,7 +97,7 @@ The server is stateless apart from Postgres. Run the API and workers separately 
 |---|---|
 | `packages/core` | Host-agnostic agent runtime: run loop, approval state machine, policy, compaction, model fallback, client event reducer. No database or HTTP. |
 | `packages/db` | Drizzle schema and migrations, Postgres store for the runtime, run leasing, ordered event log, secret encryption. |
-| `packages/tools` | Gmail, Calendar, Drive and Contacts, Slack, MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
+| `packages/tools` | Gmail, Calendar, Drive, Sheets and Contacts, Slack, MCP client with OAuth, SSRF guard, web search/fetch, knowledge base, memory. |
 | `packages/evals` | Scenario harness (task + safety) with simulated users; `bun run evals`. |
 | `apps/server` | HTTP API, auth, SSE, worker. |
 | `apps/web` | Next.js UI. |

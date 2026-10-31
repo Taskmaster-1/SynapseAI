@@ -238,10 +238,14 @@ export class Worker {
         );
       if (toolset.google) {
         const { missing } = toolset.google;
-        const extra = ["Drive", "Contacts"].filter((g) => !missing.includes(g));
+        const extra = ["Drive", "Contacts", "Sheets"].filter((g) => !missing.includes(g));
         // Withheld groups are named so the agent can tell the user how to get them.
-        const later = missing.length
-          ? ` (${missing.join(" and ")}: not granted yet; the user can reconnect Google under Connections)`
+        const names =
+          missing.length > 1
+            ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`
+            : missing[0];
+        const later = names
+          ? ` (${names}: not granted yet; the user can reconnect Google under Connections)`
           : "";
         conns.unshift({
           name: `Gmail, Google Calendar${extra.map((g) => `, Google ${g}`).join("")}${later}`,
