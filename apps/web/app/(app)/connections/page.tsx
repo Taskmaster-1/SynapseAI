@@ -759,6 +759,8 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
   const [busy, setBusy] = useState<"connect" | "disconnect" | "test" | null>(null);
   const conn = slack.connection;
   const connected = conn?.status === "active";
+  /** Connected before the agent tools existed, or Slack revoked the user token. */
+  const needsReconnect = connected && !conn.agentTools;
 
   async function connect() {
     setBusy("connect");
@@ -783,7 +785,12 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
   }
 
   const disconnect = () => {
-    if (!window.confirm("Disconnect Slack? Approvals stop arriving as Slack messages.")) return;
+    if (
+      !window.confirm(
+        "Disconnect Slack? Approvals stop arriving as Slack messages, and the agent loses access to Slack.",
+      )
+    )
+      return;
     void run("disconnect", async () => {
       await api.disconnectSlack();
       toast("Slack disconnected", "success");
@@ -807,7 +814,7 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
           <div className="mt-0.5 truncate text-13 text-fg-muted">
             {conn
               ? `${conn.team} workspace`
-              : "Approve or deny from a Slack message when a task needs your OK."}
+              : "Approve from Slack, and let the agent search, read and post as you."}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -819,7 +826,7 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
             </a>
           ) : conn ? (
             <>
-              {connected ? (
+              {connected && !needsReconnect ? (
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -866,20 +873,38 @@ function SlackCard({ slack, onChange }: { slack: SlackIntegration; onChange: () 
       {conn?.lastError && !connected ? (
         <p className="px-5 pb-3 text-13 text-danger">{conn.lastError}</p>
       ) : null}
-      <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
-        {!slack.available ? (
-          <>
-            This server has no Slack app yet. Whoever runs it creates one from the manifest in the
-            guide and sets <code className="font-mono text-12">SLACK_CLIENT_ID</code>,{" "}
-            <code className="font-mono text-12">SLACK_CLIENT_SECRET</code> and{" "}
-            <code className="font-mono text-12">SLACK_SIGNING_SECRET</code>.
-          </>
-        ) : connected ? (
-          "When a task needs your OK, Synapse messages you in Slack. Only you can press its buttons, and the message updates wherever you decide."
-        ) : (
-          "Synapse messages you directly; it can't read your channels or messages."
-        )}
-      </p>
+      {needsReconnect ? (
+        <p className="px-5 pb-3 text-13 text-fg">
+          Reconnect Slack to let the agent search, read and post as you. Approvals keep arriving in
+          Slack meanwhile.
+        </p>
+      ) : null}
+      {!slack.available ? (
+        <p className="border-t border-dashed border-line px-5 py-3.5 text-13 text-fg-muted">
+          This server has no Slack app yet. Whoever runs it creates one from the manifest in the
+          guide and sets <code className="font-mono text-12">SLACK_CLIENT_ID</code>,{" "}
+          <code className="font-mono text-12">SLACK_CLIENT_SECRET</code> and{" "}
+          <code className="font-mono text-12">SLACK_SIGNING_SECRET</code>.
+        </p>
+      ) : (
+        <div className="border-t border-dashed border-line px-5 py-4">
+          <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {slack.tools.map((t) => (
+              <li key={t.name} className="flex items-center justify-between gap-3 text-13">
+                <span className={connected && !needsReconnect ? "text-fg" : "text-fg-muted"}>
+                  {t.title}
+                </span>
+                <EffectPill effect={t.effect} />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-13 text-fg-muted">
+            {connected
+              ? "When a task needs your OK, Synapse messages you in Slack. Only you can press its buttons, and the message updates wherever you decide. Posting as you asks for your OK by default."
+              : "Synapse messages you about approvals, and the agent reads only the conversations you're in. Posting as you asks for your OK by default."}
+          </p>
+        </div>
+      )}
     </article>
   );
 }

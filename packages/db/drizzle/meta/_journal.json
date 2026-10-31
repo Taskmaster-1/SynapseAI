@@ -64,6 +64,13 @@
       "when": 1793217062459,
       "tag": "0008_chat_files",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793443617268,
+      "tag": "0009_slack_user_token",
+      "breakpoints": true
     }
   ]
 }

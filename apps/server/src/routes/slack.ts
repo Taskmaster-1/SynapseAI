@@ -16,6 +16,15 @@ import {
 const NOT_CONFIGURED =
   "Slack isn't set up on this server. Set SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET (see docs/slack.md).";
 
+/** What the Slack integration adds for the agent, for the Connections page. */
+const SLACK_TOOLS = [
+  { name: "slack_search", effect: "read", title: "Search messages" },
+  { name: "slack_read", effect: "read", title: "Read channels and threads" },
+  { name: "slack_list_channels", effect: "read", title: "List your channels" },
+  { name: "slack_find_user", effect: "read", title: "Find people" },
+  { name: "slack_post_message", effect: "send", title: "Post as you" },
+] as const;
+
 /** The signed-in user's Slack connection, for GET /api/integrations. */
 export async function slackStatus(c: { var: AppEnv["Variables"] }) {
   const [row] = await c.var.services.database.db
@@ -24,12 +33,16 @@ export async function slackStatus(c: { var: AppEnv["Variables"] }) {
     .where(eq(schema.slackAccounts.userId, c.var.user.id));
   return {
     available: Boolean(c.var.services.config.slack),
+    tools: SLACK_TOOLS,
     connection: row
       ? {
           team: row.teamName,
           status: row.status,
           lastError: row.lastError,
           connectedAt: row.createdAt,
+          // Connected before the agent tools existed (or the user token was revoked):
+          // approvals still arrive, the tools need a reconnect.
+          agentTools: row.userToken !== null,
         }
       : null,
   };

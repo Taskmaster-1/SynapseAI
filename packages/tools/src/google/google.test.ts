@@ -154,6 +154,7 @@ describe("google oauth", () => {
       webSearch: null,
       embedder: null,
       google: app,
+      slack: null,
     };
     const before = await buildToolset(cfg, USER);
     expect(before.registry.get("gmail_send")).toBeUndefined();

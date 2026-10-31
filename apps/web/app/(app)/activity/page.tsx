@@ -453,7 +453,7 @@ function RunDetail({ run }: { run: RunRow }) {
                     <div>
                       <div className="eyebrow mb-1.5">Input</div>
                       <div className="rounded-[8px] border border-line p-2.5 text-13">
-                        <PayloadView input={c.input} />
+                        <PayloadView input={c.input} tool={c.name} />
                       </div>
                     </div>
                     <div>

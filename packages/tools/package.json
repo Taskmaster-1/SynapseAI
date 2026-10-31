@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/google/testing.ts"
+    "./testing": "./src/google/testing.ts",
+    "./slack-testing": "./src/slack/testing.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "4.0.82",

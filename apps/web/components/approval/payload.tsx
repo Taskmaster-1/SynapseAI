@@ -219,8 +219,50 @@ function EmailView({ obj }: { obj: Obj }) {
   );
 }
 
-/** Tool input rendered as something a person reads, not JSON. */
-export function PayloadView({ input }: { input: unknown }) {
+/** Where a Slack post goes, in words: "#general", "Direct message to U0…". */
+function slackWhere(channel: unknown): string {
+  const v = typeof channel === "string" ? channel.trim() : "";
+  if (/^[UW][A-Z0-9]{6,}$/.test(v)) return `Direct message to ${v}`;
+  if (/^D[A-Z0-9]{6,}$/.test(v)) return "Direct message";
+  if (/^[CG][A-Z0-9]{6,}$/.test(v)) return `Channel ${v}`;
+  return `#${v.replace(/^#/, "")}`;
+}
+
+/** A Slack post as it will appear: where it lands, as you, then the message. */
+function SlackPostView({ obj }: { obj: Obj }) {
+  const text = typeof obj.text === "string" ? obj.text : "";
+  const thread = typeof obj.thread_ts === "string" && obj.thread_ts ? obj.thread_ts : null;
+  const rest = Object.keys(obj).filter((k) => !["channel", "text", "thread_ts"].includes(k));
+  return (
+    <div>
+      <dl className="space-y-1.5">
+        <div className="flex items-baseline gap-3 sm:gap-4">
+          <dt className="w-14 shrink-0 text-13 text-fg-muted sm:w-16">Where</dt>
+          <dd className="min-w-0 flex-1 text-14 font-medium [overflow-wrap:anywhere] text-fg">
+            {slackWhere(obj.channel)}
+            {thread ? <span className="font-normal text-fg-muted"> · in a thread</span> : null}
+          </dd>
+        </div>
+        <div className="flex items-baseline gap-3 sm:gap-4">
+          <dt className="w-14 shrink-0 text-13 text-fg-muted sm:w-16">As</dt>
+          <dd className="min-w-0 flex-1 text-14 text-fg">You, in Slack</dd>
+        </div>
+      </dl>
+      <div className="mt-5 font-serif text-[20px] leading-[1.35] whitespace-pre-wrap break-words text-fg sm:text-[22px]">
+        {text.trim() ? text.trim() : <span className="text-fg-faint italic">empty</span>}
+      </div>
+      {rest.length > 0 ? (
+        <div className="mt-5 border-t border-dashed border-line-strong pt-4">
+          <Fields obj={obj} skip={["channel", "text", "thread_ts"]} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Tool input rendered as something a person reads, not JSON. `tool` picks a tailored view. */
+export function PayloadView({ input, tool }: { input: unknown; tool?: string }) {
+  if (tool === "slack_post_message" && isPlainObject(input)) return <SlackPostView obj={input} />;
   if (isEmailLike(input)) return <EmailView obj={input} />;
   if (isPlainObject(input)) {
     if (Object.keys(input).length === 0)

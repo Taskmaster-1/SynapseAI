@@ -78,6 +78,7 @@ function ChecklistRow({
   title,
   why,
   meta,
+  tool,
   input,
   locked,
 }: {
@@ -86,6 +87,7 @@ function ChecklistRow({
   title: string;
   why?: string;
   meta?: ReactNode;
+  tool: string;
   input: unknown;
   locked: boolean;
 }) {
@@ -126,7 +128,7 @@ function ChecklistRow({
       </div>
       {open ? (
         <div id={id} className="anim-row-in mt-3 ml-[30px]">
-          <PayloadView input={input} />
+          <PayloadView input={input} tool={tool} />
         </div>
       ) : null}
     </li>
@@ -155,6 +157,7 @@ export function PlanSteps({
           onCheck={(v) => onKept(kept.map((k, j) => (j === i ? v : k)))}
           title={`${i + 1}. ${humanToolName(s.tool)}`}
           why={s.why}
+          tool={s.tool}
           input={s.input}
           locked={locked}
         />
@@ -320,6 +323,7 @@ export function ApprovalBatch({
                   <EffectPill effect={a.effect} />
                 </span>
               }
+              tool={a.name}
               input={a.input}
               locked={locked}
             />

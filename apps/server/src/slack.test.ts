@@ -81,6 +81,7 @@ async function connectSlack(me: Client, slackUser: string) {
   const url = new URL(start.json.url);
   expect(url.host).toBe("slack.com");
   expect(url.searchParams.get("scope")).toBe("chat:write,im:write,users:read");
+  expect(url.searchParams.get("user_scope")?.split(",")).toContain("search:read");
   expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/integrations/slack/callback`);
   const state = url.searchParams.get("state")!;
   const back = await me(
@@ -125,7 +126,7 @@ const lastBlockText = (m: { blocks: { text?: { text: string } }[] }) =>
 test("connecting Slack over HTTP is bound to the user who started it", async () => {
   const me = await signUp("slack-connect@example.com");
   const before = await me("/api/integrations");
-  expect(before.json.slack).toEqual({ available: true, connection: null });
+  expect(before.json.slack).toMatchObject({ available: true, connection: null });
 
   const start = await me("/api/integrations/slack/connect", { method: "POST", json: {} });
   const state = new URL(start.json.url).searchParams.get("state")!;
@@ -141,9 +142,15 @@ test("connecting Slack over HTTP is bound to the user who started it", async () 
 
   await connectSlack(me, "U-conn");
   const after = await me("/api/integrations");
-  expect(after.json.slack.connection).toMatchObject({ team: "Acme", status: "active" });
+  expect(after.json.slack.connection).toMatchObject({
+    team: "Acme",
+    status: "active",
+    agentTools: true,
+  });
   const [row] = await services.database.db.select().from(schema.slackAccounts);
   expect(row?.botToken.startsWith("xoxb-")).toBe(false); // sealed at rest
+  expect(row?.userToken).toBeTruthy();
+  expect(row?.userToken?.startsWith("xoxp-")).toBe(false);
 
   // The same Slack person can't answer for a second Synapse user.
   slack.state.nextUser = "U-conn";
@@ -157,7 +164,9 @@ test("connecting Slack over HTTP is bound to the user who started it", async () 
   expect(slack.dms("U-conn").at(-1)?.text).toContain("Synapse is connected");
 
   expect((await me("/api/integrations/slack", { method: "DELETE" })).status).toBe(204);
-  expect(slack.state.revoked).toHaveLength(1);
+  // Both the user token and the bot token (nobody else uses this workspace install).
+  expect(slack.state.revoked).toHaveLength(2);
+  expect(slack.state.revoked.some((t) => t.startsWith("xoxp-"))).toBe(true);
   expect((await me("/api/integrations")).json.slack.connection).toBeNull();
 });
 

@@ -11,6 +11,8 @@ import { type GoogleAppConfig, GoogleClient } from "./google/client";
 import { gmailTools } from "./google/gmail";
 import { McpSession } from "./mcp/client";
 import type { OAuthAppConfig } from "./mcp/oauth";
+import { type SlackToolsConfig, SlackUserClient } from "./slack/client";
+import { slackTools } from "./slack/tools";
 
 export * from "./builtin/files";
 export * from "./builtin/knowledge";
@@ -38,6 +40,7 @@ export {
 } from "./google/gmail";
 export * from "./mcp/client";
 export * from "./mcp/oauth";
+export * from "./slack/client";
 export * from "./ssrf";
 
 export interface ToolsetConfig {
@@ -48,6 +51,8 @@ export interface ToolsetConfig {
   embedder: Embedder | null;
   /** Set when the operator configured a Google OAuth app. */
   google: GoogleAppConfig | null;
+  /** Set when the operator configured a Slack app (the server's Slack config fits). */
+  slack: SlackToolsConfig | null;
 }
 
 /**
@@ -74,6 +79,11 @@ export async function buildToolset(cfg: ToolsetConfig, userId: string) {
       const attachments = (userId: string, ids: string[]) => loadFiles(cfg.db, userId, ids);
       builtin.push(...gmailTools(client, attachments), ...calendarTools(client));
     }
+  }
+  if (cfg.slack) {
+    // Only with a user token: installs from before it existed reconnect first.
+    const slack = await SlackUserClient.forUser(cfg.slack, cfg.db, cfg.box, userId);
+    if (slack) builtin.push(...slackTools(async () => slack));
   }
   const registry = new ToolRegistry(builtin);
   for (const tool of await mcp.tools(userId)) {

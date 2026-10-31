@@ -230,6 +230,7 @@ export class Worker {
         .where(
           and(eq(schema.connections.userId, run.userId), eq(schema.connections.status, "active")),
         );
+      if (toolset.registry.get("slack_search")) conns.unshift({ name: "Slack" });
       if (toolset.registry.get("gmail_search"))
         conns.unshift({ name: "Gmail and Google Calendar" });
       const system = buildSystemPrompt({

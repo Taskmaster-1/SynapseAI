@@ -93,6 +93,7 @@ export async function createServices(
       webSearch: config.webSearch,
       embedder: config.embedding ? createEmbedder(config.embedding) : null,
       google: config.google,
+      slack: config.slack,
     },
     notifier: new Notifier(() => services),
     slack: config.slack ? new SlackChannel(() => services) : null,
