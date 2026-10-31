@@ -130,6 +130,8 @@ export const userSettings = pgTable("user_settings", {
   remindMinutes: integer("remind_minutes").notNull().default(30),
   /** Deny an approval nobody decided after this many hours. 0: never expires. */
   expireHours: integer("expire_hours").notNull().default(24),
+  /** IANA time zone, e.g. "Europe/London": scheduled tasks and the date in the prompt use it. */
+  timezone: text("timezone"),
   updatedAt: updatedAt(),
 });
 
@@ -636,6 +638,9 @@ export type AutomationTrigger =
   /** POST to the automation's secret webhook URL. */
   | { type: "webhook" };
 
+/** What a scheduled automation does when it fires: run the agent, or only remind. */
+export type AutomationKind = "task" | "reminder";
+
 /** Poll state for event triggers. */
 export interface TriggerCursor {
   /** Newest message time seen, in ms. */
@@ -682,8 +687,15 @@ export const automations = pgTable(
     name: text("name").notNull(),
     prompt: text("prompt").notNull(),
     trigger: jsonb("trigger").$type<AutomationTrigger>().notNull().default({ type: "schedule" }),
-    /** Five-field cron expression, evaluated in `timezone`. Empty for event triggers. */
+    /** Five-field cron expression, evaluated in `timezone`. Empty for event and one-off triggers. */
     schedule: text("schedule").notNull().default(""),
+    /** One-off schedules: fires once at this time, then turns itself off. */
+    runAt: timestamp("run_at", { withTimezone: true }),
+    /**
+     * `task` sends the prompt to the agent; `reminder` only notifies the user (in the chat
+     * and on their channels), without a model call.
+     */
+    kind: text("kind").$type<AutomationKind>().notNull().default("task"),
     timezone: text("timezone").notNull().default("UTC"),
     enabled: boolean("enabled").notNull().default(true),
     chatId: text("chat_id")

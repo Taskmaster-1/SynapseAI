@@ -379,10 +379,72 @@ function SheetView({ obj, tool }: { obj: Obj; tool: string }) {
   );
 }
 
+const REPEAT_LABELS: Record<string, string> = {
+  none: "Once",
+  daily: "Every day",
+  weekdays: "Every weekday",
+  weekly: "Every week",
+  monthly: "Every month",
+};
+
+/** When it fires, in the zone given or the offset the agent wrote (else this device's). */
+function scheduledTime(when: unknown, timezone: unknown): string {
+  const s = typeof when === "string" ? when : "";
+  const d = new Date(s);
+  if (!s || Number.isNaN(d.getTime())) return s || "—";
+  const tz = typeof timezone === "string" && timezone ? timezone : undefined;
+  try {
+    return d.toLocaleString(undefined, {
+      timeZone: tz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    });
+  } catch {
+    return s;
+  }
+}
+
+/** Scheduling for later: what kind, when, how often, then the instructions as a page. */
+function ScheduleView({ obj }: { obj: Obj }) {
+  const reminder = obj.kind === "reminder";
+  const repeat = typeof obj.repeat === "string" && obj.repeat ? obj.repeat : "none";
+  const rows: [string, string][] = [
+    ["When", scheduledTime(obj.when, obj.timezone)],
+    ["Repeats", REPEAT_LABELS[repeat] ?? `Custom (${repeat})`],
+    ["Then", reminder ? "Notify you" : "The agent carries out the instructions in this chat"],
+  ];
+  const text = typeof obj.instructions === "string" ? obj.instructions.trim() : "";
+  return (
+    <div>
+      <p className="eyebrow mb-1.5">{reminder ? "Reminder" : "Scheduled task"}</p>
+      <h3 className="font-serif text-[24px] leading-[1.15] break-words text-fg">
+        {String(obj.title ?? "") || <span className="text-fg-faint italic">Untitled</span>}
+      </h3>
+      <dl className="mt-4 space-y-1.5">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline gap-3 sm:gap-4">
+            <dt className="w-16 shrink-0 text-13 text-fg-muted">{k}</dt>
+            <dd className="min-w-0 flex-1 text-14 text-fg">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="scroll-thin mt-4 max-h-[320px] overflow-auto border-l-2 border-line-strong pl-3 text-14 leading-relaxed whitespace-pre-wrap break-words text-fg">
+        {text || <span className="text-fg-faint italic">empty</span>}
+      </div>
+    </div>
+  );
+}
+
 const SHEET_WRITES = new Set(["sheets_append", "sheets_update", "sheets_create"]);
 
 /** Tool input rendered as something a person reads, not JSON. `tool` picks a tailored view. */
 export function PayloadView({ input, tool }: { input: unknown; tool?: string }) {
+  if (tool === "schedule_task" && isPlainObject(input)) return <ScheduleView obj={input} />;
   if (tool === "slack_post_message" && isPlainObject(input)) return <SlackPostView obj={input} />;
   if (tool === "drive_create_doc" && isPlainObject(input)) return <DocView obj={input} />;
   if (tool && SHEET_WRITES.has(tool) && isPlainObject(input))

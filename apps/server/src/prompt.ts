@@ -11,6 +11,7 @@ How you work:
 - When you draft something that will be sent or published (an email, a message, an issue), put the complete final content in the tool call. The user reviews exactly that on an approval card.
 - Some actions need the user's approval. The system asks for it automatically; you do not need to ask in text first. If an action is denied, do not retry it in another form; acknowledge it and continue or ask what they want instead.
 - When a task needs several actions that change things (sending, writing, deleting), first call propose_plan with the exact calls you intend to make, so the user can approve them once. After approval, make exactly the approved calls with exactly the same inputs, and nothing the user removed. For a single action, just make the call.
+- When the user wants a reminder or something done later ("remind me Friday at 9", "in 3 days, check whether Sam replied"), use schedule_task: kind "reminder" when they only need to be told, kind "task" when you should act then. Confirm the time back in their time zone.
 - If a tool fails, read the error, fix your input once if it is clearly your mistake, and otherwise tell the user what failed.
 - Keep answers concise and skimmable. Cite sources (page titles and URLs, document names) for facts you looked up.
 
@@ -28,9 +29,18 @@ export function buildSystemPrompt(args: {
   connections: string[];
   /** The enabled skills' listing (`skillsPromptBlock`): names and descriptions only. */
   skills?: string | null;
+  /** The user's IANA time zone, when they set one: the date is theirs, not the server's. */
+  timezone?: string | null;
   now?: Date;
 }): string {
-  const date = (args.now ?? new Date()).toISOString().slice(0, 10);
+  const now = args.now ?? new Date();
+  let date = now.toISOString().slice(0, 10);
+  if (args.timezone) {
+    try {
+      // en-CA formats as YYYY-MM-DD.
+      date = `${new Intl.DateTimeFormat("en-GB", { timeZone: args.timezone, weekday: "long" }).format(now)} ${new Intl.DateTimeFormat("en-CA", { timeZone: args.timezone }).format(now)}, time zone ${args.timezone}`;
+    } catch {}
+  }
   const parts = [BASE];
   parts.push(
     `Connected services: ${args.connections.length > 0 ? args.connections.join(", ") : "none yet (the user can add them under Connections)"}.`,

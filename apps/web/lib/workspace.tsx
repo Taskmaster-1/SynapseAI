@@ -132,6 +132,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Scheduled reminders and the agent's sense of "today" need a time zone: until the user
+  // picks one in Settings, use this device's. Checked once per device.
+  useEffect(() => {
+    if (!user) return;
+    const key = `synapse-tz:${user.id}`;
+    try {
+      if (localStorage.getItem(key)) return;
+    } catch {}
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    api
+      .settings()
+      .then(async (s) => {
+        if (!s.timezone && zone) await api.saveSettings({ timezone: zone });
+        try {
+          localStorage.setItem(key, "1");
+        } catch {}
+      })
+      .catch(() => {});
+  }, [user]);
+
   const updateUser = useCallback((u: SessionUser) => {
     setUser(u);
     try {

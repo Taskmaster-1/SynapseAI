@@ -10,6 +10,11 @@ When a task stops to ask, Synapse can tell you where you are:
 Each approval is announced once, when the run starts waiting. Several approvals at once
 become one summary notification per person.
 
+The same channels (push, Slack DM, and email when email alerts are on) also deliver
+reminders you asked the agent for ("remind me Friday at 9 to send the report"): a plain
+notification with the reminder and a link to the conversation. See
+[scheduled from chat](api.md#scheduled-from-chat).
+
 ## Reminders, escalation and expiry
 
 If nobody decides, the same channels hear about it again, once each:
